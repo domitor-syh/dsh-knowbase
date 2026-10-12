@@ -623,6 +623,16 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                                       )
                                       setMaterials(await knowbaseApi()!.listMaterials(selected.id))
                                       await refreshBases()
+                                      // Reload the detail view as well: saving
+                                      // changes the chunk boundaries, so the list
+                                      // above would otherwise keep showing the
+                                      // old cut until a manual refresh.
+                                      const [passages, text] = await Promise.all([
+                                        knowbaseApi()!.readMaterialChunks(detailId),
+                                        knowbaseApi()!.readMaterialText(detailId),
+                                      ])
+                                      setDetailChunks(passages)
+                                      setDetailText(text)
                                       setDetailTitle(material.title)
                                       return `已保存「${material.title}」（${material.chunkCount} 个片段，第 ${material.revision} 版）。`
                                     })
