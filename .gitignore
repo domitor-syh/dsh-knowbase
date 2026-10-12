@@ -1,0 +1,34 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# 本地助手工作数据（记忆、会话状态），非项目源码
+.workbuddy-ai/
+
+# 环境与凭据
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 日志与临时文件
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# 测试与覆盖率
+coverage/
+.nyc_output/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
