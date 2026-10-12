@@ -1,5 +1,7 @@
 # dsh-knowbase
 
+[![CI](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml/badge.svg)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml)
+
 > dsh 知识库插件，为 dsh 提供轻量级知识管理与智能检索能力
 > A lightweight knowledge base plugin for dsh, empowering knowledge management and intelligent retrieval
 
@@ -50,12 +52,27 @@
 
 ```text
 .
-├── outputs/          # 方案与设计文档
-├── .workbuddy-ai/    # 本地助手工作数据（已 gitignore）
+├── .github/workflows/ # CI 流水线
+├── outputs/           # 方案与设计文档
+├── .workbuddy-ai/     # 本地助手工作数据（已 gitignore）
+├── .gitattributes     # 行尾统一为 LF
+├── .gitignore
 └── README.md
 ```
 
 插件实现代码的目录结构将在阶段 0 兼容性验证通过后确定。
+
+## 持续集成
+
+`.github/workflows/ci.yml` 在推送到 `main` 与 PR 时运行，包含三个任务：
+
+| 任务 | 内容 |
+|---|---|
+| 检测项目状态 | 判断是否已初始化 `package.json`，未初始化则跳过 Node 校验 |
+| 文档检查 | Markdown 必须为合法 UTF-8，站内相对链接必须指向真实存在的路径 |
+| 构建与测试 | Node 22 + pnpm，依次执行 `lint` / `typecheck` / `test` / `build`（`--if-present`，脚本定义后自动生效） |
+
+最后汇总为一个名为 `CI` 的稳定检查项，便于在分支保护中只勾选这一条。当前仓库尚无 `package.json`，构建与测试任务会按预期跳过而不会报错；阶段 1 代码落地后无需改动配置即可开始真正校验。
 
 ## 官方来源
 

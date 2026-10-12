@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一分支的新推送取消上一次未完成的运行
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 骨架阶段的守卫：插件代码尚未落地时，Node 校验整体跳过，避免空跑红灯
+  detect:
+    name: 检测项目状态
+    runs-on: ubuntu-latest
+    outputs:
+      has_package: ${{ steps.probe.outputs.has_package }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: probe
+        name: 检查是否已初始化 package.json
+        run: |
+          if [ -f package.json ]; then
+            echo "has_package=true" >> "$GITHUB_OUTPUT"
+            echo "检测到 package.json，将执行 Node 校验。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "has_package=false" >> "$GITHUB_OUTPUT"
+            echo "尚未初始化 package.json，跳过 Node 校验（骨架阶段预期行为）。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  docs:
+    name: 文档检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验 Markdown 编码与相对链接
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+
+          mapfile -d '' files < <(find . -name '*.md' -not -path './.git/*' -print0)
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "未找到 Markdown 文件，跳过。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          for f in "${files[@]}"; do
+            # 1) 必须是合法 UTF-8，防止 Windows 下的编码损坏混入仓库
+            if ! iconv -f UTF-8 -t UTF-8 "$f" > /dev/null 2>&1; then
+              echo "::error file=$f::文件不是合法的 UTF-8 编码"
+              status=1
+            fi
+
+            # 2) 站内相对链接必须指向真实存在的路径
+            dir=$(dirname "$f")
+            while IFS= read -r link; do
+              [ -z "$link" ] && continue
+              case "$link" in
+                http://*|https://*|mailto:*|tel:*|'#'*) continue ;;
+              esac
+              target="${link%%#*}"
+              target="${target%%\?*}"
+              [ -z "$target" ] && continue
+              if [ ! -e "$dir/$target" ]; then
+                echo "::error file=$f::相对链接指向不存在的路径：$link"
+                status=1
+              fi
+            done < <(grep -oE '\]\([^)]+\)' "$f" | sed -E 's/^\]\(//; s/\)$//' || true)
+          done
+
+          if [ "$status" -eq 0 ]; then
+            echo "已检查 ${#files[@]} 个 Markdown 文件，编码与相对链接均正常。" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
+  verify:
+    name: 构建与测试
+    needs: detect
+    if: needs.detect.outputs.has_package == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # dsh 0.2.0-rc.2 要求 Node ^22.19.0 || >=24.0.0，这里对齐最低主版本
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 启用 Corepack（按 packageManager 字段选择 pnpm 版本）
+        run: corepack enable
+
+      - name: 安装依赖
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            echo "::warning::未找到 pnpm-lock.yaml，本次使用非冻结安装；请在本地生成并提交锁文件。"
+            pnpm install --no-frozen-lockfile
+          fi
+
+      # 以下四步使用 --if-present：脚本尚未定义时静默跳过，定义后自动生效
+      - name: Lint
+        run: pnpm run --if-present lint
+
+      - name: 类型检查
+        run: pnpm run --if-present typecheck
+
+      - name: 单元测试
+        run: pnpm run --if-present test
+
+      - name: 构建
+        run: pnpm run --if-present build
+
+  # 单一稳定检查名，便于后续在分支保护里只勾选这一项
+  ci:
+    name: CI
+    if: always()
+    needs: [detect, docs, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 汇总各任务结果
+        run: |
+          echo "detect: ${{ needs.detect.result }}"
+          echo "docs:   ${{ needs.docs.result }}"
+          echo "verify: ${{ needs.verify.result }}"
+          echo "| 任务 | 结果 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 检测项目状态 | ${{ needs.detect.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 文档检查 | ${{ needs.docs.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 构建与测试 | ${{ needs.verify.result }} |" >> "$GITHUB_STEP_SUMMARY"
+      - name: 存在失败或取消的任务
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::本次 CI 存在失败或被取消的任务"
+          exit 1
