@@ -45,12 +45,13 @@ check('exports name', typeof host.name === 'string', `got ${typeof host.name}`)
 check('exports inject array', Array.isArray(host.inject), `got ${typeof host.inject}`)
 check('exports apply()', typeof host.apply === 'function', `got ${typeof host.apply}`)
 
-// `apply` must survive a context whose only surface is the two methods the
-// skeleton uses: `effect` for lifetime and `on` for the pre-step waterfall.
-// A throw here means the host would fail to mount us.
+// `apply` must survive a context offering only what the plugin uses: `effect`
+// for lifetime, `on` for the pre-step waterfall, and `inject` for the services
+// it acquires lazily. A throw here means the host would fail to mount us.
 if (typeof host.apply === 'function') {
   const disposers = []
   const listeners = new Map()
+  const injected = []
   const stubCtx = {
     effect: (factory) => {
       disposers.push(factory())
@@ -59,6 +60,10 @@ if (typeof host.apply === 'function') {
     on: (name, listener) => {
       listeners.set(name, listener)
       return () => true
+    },
+    inject: (services, _callback) => {
+      injected.push(...services)
+      return () => {}
     },
   }
   try {
@@ -71,6 +76,12 @@ if (typeof host.apply === 'function') {
       'subscribes to the agent/pre-step waterfall',
       typeof listeners.get('agent/pre-step') === 'function',
     )
+    // Services must be acquired through `ctx.inject`, never declared in the
+    // static `inject` array: a name no build provides parks the whole host half
+    // in "pending" forever, with no apply and no error anywhere.
+    check('declares no static service requirements', host.inject.length === 0, host.inject.join(','))
+    check('acquires storageDomain dynamically', injected.includes('storageDomain'))
+    check('acquires commands dynamically', injected.includes('commands'))
   } catch (error) {
     check('apply() tolerates a minimal context', false, String(error))
   }

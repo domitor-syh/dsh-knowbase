@@ -48,6 +48,14 @@ export type RetrievalOutcome =
   | { readonly kind: 'no_match' }
   | { readonly kind: 'empty_scope' }
   | { readonly kind: 'not_ready' }
+  /**
+   * The session has the knowledge base switched off.
+   *
+   * Distinct from `no_match` on purpose: "we searched and found nothing" and
+   * "we did not search" produce the same behaviour but must not produce the
+   * same log line or the same status text.
+   */
+  | { readonly kind: 'disabled' }
   | { readonly kind: 'error'; readonly reason: string }
 
 /**
@@ -115,9 +123,28 @@ export interface PreStepOptions {
 
 /** The subset of the waterfall payload this module consumes. */
 export interface PreStepPayload {
+  /** The agent proposing the step; its id keys the per-session selection. */
+  readonly agent: { readonly id: string }
   readonly turn: number
   readonly step: number
   readonly messages: readonly UserMessage[]
+}
+
+/**
+ * Flatten the incoming batch into the text a retrieval query is built from.
+ *
+ * Only text blocks: an image or file block carries no query terms, and feeding
+ * its placeholder text to a keyword index would match on words the user never
+ * wrote.
+ */
+export function queryFrom(messages: readonly UserMessage[]): string {
+  const parts: string[] = []
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block.type === 'text') parts.push(block.text)
+    }
+  }
+  return parts.join('\n').trim()
 }
 
 /**

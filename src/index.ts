@@ -1,75 +1,103 @@
 /**
  * dsh-knowbase — Host half.
  *
- * Native, local-first knowledge base for DeepSeek Harness. Retrieval itself is
- * not implemented yet; what exists is the seam it will plug into, wired and
- * verified against the real host so the risky part is settled before any
- * storage or ranking code is written.
+ * Native, local-first knowledge base for DeepSeek Harness: materials are stored
+ * locally, retrieved with Chinese n-gram BM25, and the hits are attached to the
+ * model request as plugin-sourced evidence.
  *
- * ## The conversation half
+ * ## Shape
  *
- * `agent/pre-step` is a waterfall dispatched after `systemPrompt.assemble()`
- * and before the model request. Its decision is
- * `{ kind: 'reject' } | { kind: 'enter'; messages: UserMessage[] }`, so
- * retrieval results ride along by appending a plugin-owned `UserMessage` to the
- * messages `next()` handed back — no host core change, no DOM injection, no
- * dependence on prompt-assembly timing. See `./pre-step.ts` for the contract
- * and `./source.ts` for how the message is attributed to this plugin.
+ * - `./store.ts`     persistence through the host's `storageDomain`
+ * - `./core/*`       chunking, BM25 and the domain logic — host-free and tested
+ * - `./pre-step.ts`  the `agent/pre-step` waterfall that attaches evidence
+ * - `./commands.ts`  the `/kb` surface
  *
  * ## Why `inject` is empty
  *
  * A name in `inject` that no build provides parks the whole host half in
  * "pending" forever: no apply, no error, nothing in any log. `agent/pre-step`
- * is an EVENT, not a service, so it needs no entry here at all. Every service
- * this plugin eventually needs (storage, web) will be acquired dynamically with
- * `ctx.inject([...], scope => ...)` so a missing one degrades a feature instead
- * of killing the plugin.
+ * is an EVENT and needs no service at all, and both services this plugin does
+ * need are acquired with `ctx.inject([...], scope => ...)`, so a host without
+ * one of them loses a feature instead of losing the plugin.
  *
  * @module @domitor-syh/dsh-knowbase
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { installPreStep, type RetrievalOutcome } from './pre-step.ts'
+import { installCommands, resolveScope, SessionSelectionRegistry } from './commands.ts'
+import { KnowbaseService } from './core/service.ts'
+import { installPreStep, queryFrom } from './pre-step.ts'
+import { openStorageDomainStore } from './store.ts'
 
 export const name = 'knowbase'
 
 /** Required host services — see the module note above before adding a name. */
 export const inject: string[] = []
 
-/**
- * Self-test retrieval, enabled with `DSH_KNOWBASE_SELFTEST=1`.
- *
- * Exists so the injection path can be proven end-to-end against a live host
- * before any index exists: it returns one fixed passage, which must then show
- * up in the conversation as plugin-sourced evidence. Off by default, because a
- * plugin that injects a fake passage into every turn by default would be a bug
- * pretending to be a feature.
- */
-function selfTestRetrieve(): Promise<RetrievalOutcome> {
-  return Promise.resolve({
-    kind: 'hits',
-    passages: [
-      {
-        kbName: '自检库',
-        materialTitle: 'pre-step 注入自检',
-        locator: '固定片段',
-        text: '这是 dsh-knowbase 的 pre-step 注入自检片段。看到它说明插件已成功在模型请求前注入了证据消息。',
-      },
-    ],
-  })
-}
-
 export function apply(ctx: Context): void {
   console.info('[knowbase] host half loaded')
 
-  const selfTest = process.env.DSH_KNOWBASE_SELFTEST === '1'
-  if (selfTest) console.info('[knowbase] 自检模式已开启：每轮都会注入一条测试证据')
+  const selection = new SessionSelectionRegistry()
+  let service: KnowbaseService | undefined
+  let disposed = false
 
+  // The retrieval seam. It exists from the first moment and answers `not_ready`
+  // until storage finishes opening, so a turn that arrives during startup
+  // degrades honestly instead of failing.
   installPreStep(ctx, {
-    retrieve: async () => (selfTest ? selfTestRetrieve() : { kind: 'no_match' }),
+    retrieve: async payload => {
+      const current = service
+      if (current === undefined) return { kind: 'not_ready' }
+
+      const scope = resolveScope(selection.get(payload.agent.id), current)
+      if (scope === null) return { kind: 'disabled' }
+
+      const query = queryFrom(payload.messages)
+      if (query === '') return { kind: 'no_match' }
+
+      return current.retrieve(query, scope)
+    },
+  })
+
+  // Commands are registered as soon as the host offers the service; until
+  // storage is ready they answer with "still initializing" rather than being
+  // undiscoverable.
+  ctx.inject(['commands'], commandScope => {
+    installCommands(commandScope, { service: () => service, selection })
+  })
+
+  ctx.inject(['storageDomain'], storageScope => {
+    void (async () => {
+      try {
+        const opened = await openStorageDomainStore(storageScope.storageDomain)
+        if (disposed) {
+          // The plugin was disabled while storage was still opening; release it
+          // rather than leaking an open unit nobody will close.
+          await opened.close()
+          return
+        }
+
+        const ready = new KnowbaseService(opened.store)
+        await ready.initialize()
+        service = ready
+        ctx.effect(() => () => {
+          void opened.close()
+        })
+
+        const bases = ready.listKnowledgeBases()
+        const materials = ready.listMaterials()
+        console.info(
+          `[knowbase] 已加载 ${bases.length} 个知识库、${materials.length} 份资料`,
+        )
+      } catch (error) {
+        console.error('[knowbase] 知识库存储初始化失败：', error)
+      }
+    })()
   })
 
   ctx.effect(() => () => {
+    disposed = true
+    service = undefined
     console.info('[knowbase] host half disposed')
   })
 }

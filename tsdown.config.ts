@@ -23,7 +23,10 @@ export default defineConfig([
     platform: 'neutral',
     dts: false,
     sourcemap: false,
-    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
+    // `zod` stays external too: it is a declared dependency, so the host
+    // installation resolves it, and inlining a second copy would bloat the
+    // bundle for no benefit.
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/, 'zod'] },
   },
   {
     entry: { client: 'src/client/index.ts' },

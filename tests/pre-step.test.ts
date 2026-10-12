@@ -17,6 +17,7 @@ import {
   createEvidenceMessage,
   formatEvidence,
   installPreStep,
+  queryFrom,
   type PreStepPayload,
   type RetrievalOutcome,
   type RetrievedPassage,
@@ -59,6 +60,39 @@ function captureListener(options: { retrieve: (p: PreStepPayload) => Promise<Ret
 }
 
 const ENTER: PreStepDecision = { kind: 'enter', messages: [incoming()] }
+
+describe('queryFrom', () => {
+  it('flattens the text of the incoming batch', () => {
+    expect(queryFrom([incoming()])).toBe('默认波特率是多少？')
+  })
+
+  it('joins several messages in order', () => {
+    const second = {
+      id: 'm2',
+      role: 'user',
+      content: [{ type: 'text', text: '再补充一句' }],
+      source: { kind: 'user' },
+    } as unknown as UserMessage
+    expect(queryFrom([incoming(), second])).toBe('默认波特率是多少？\n再补充一句')
+  })
+
+  it('ignores non-text blocks so their placeholder text cannot become query terms', () => {
+    const message = {
+      id: 'm3',
+      role: 'user',
+      content: [
+        { type: 'text', text: '看图' },
+        { type: 'image', attachment: { id: 'a1' } },
+      ],
+      source: { kind: 'user' },
+    } as unknown as UserMessage
+    expect(queryFrom([message])).toBe('看图')
+  })
+
+  it('returns an empty string when there is nothing to search', () => {
+    expect(queryFrom([])).toBe('')
+  })
+})
 
 describe('formatEvidence', () => {
   it('labels every passage with its source and locator', () => {
@@ -113,7 +147,7 @@ describe('installPreStep', () => {
     const listener = captureListener({
       retrieve: async () => ({ kind: 'hits', passages: [PASSAGE] }),
     })
-    const result = await listener({ turn: 1, step: 0, messages: [incoming()] }, async () => ENTER)
+    const result = await listener({ agent: { id: 'a1' }, turn: 1, step: 0, messages: [incoming()] }, async () => ENTER)
     expect(result.kind).toBe('enter')
     if (result.kind !== 'enter') throw new Error('unreachable')
     expect(result.messages).toHaveLength(2)
@@ -128,7 +162,7 @@ describe('installPreStep', () => {
         return { kind: 'hits', passages: [PASSAGE] }
       },
     })
-    const result = await listener({ turn: 1, step: 0, messages: [] }, async () => ({ kind: 'reject' }))
+    const result = await listener({ agent: { id: 'a1' }, turn: 1, step: 0, messages: [] }, async () => ({ kind: 'reject' }))
     expect(result).toEqual({ kind: 'reject' })
     expect(called).toBe(false)
   })
@@ -137,19 +171,20 @@ describe('installPreStep', () => {
     { kind: 'no_match' },
     { kind: 'empty_scope' },
     { kind: 'not_ready' },
+    { kind: 'disabled' },
     { kind: 'error', reason: 'boom' },
   ])('injects nothing on $kind', async outcome => {
     // A miss is not evidence. Injecting "I found nothing" as a user message
     // would put the status in the transcript instead of the UI, and would read
     // to the model as content it was given.
     const listener = captureListener({ retrieve: async () => outcome })
-    const result = await listener({ turn: 1, step: 0, messages: [incoming()] }, async () => ENTER)
+    const result = await listener({ agent: { id: 'a1' }, turn: 1, step: 0, messages: [incoming()] }, async () => ENTER)
     expect(result).toEqual(ENTER)
   })
 
   it('treats an empty hit list as a miss', async () => {
     const listener = captureListener({ retrieve: async () => ({ kind: 'hits', passages: [] }) })
-    const result = await listener({ turn: 1, step: 0, messages: [incoming()] }, async () => ENTER)
+    const result = await listener({ agent: { id: 'a1' }, turn: 1, step: 0, messages: [incoming()] }, async () => ENTER)
     expect(result).toEqual(ENTER)
   })
 
@@ -159,7 +194,7 @@ describe('installPreStep', () => {
         throw new Error('index unreadable')
       },
     })
-    const result = await listener({ turn: 1, step: 0, messages: [incoming()] }, async () => ENTER)
+    const result = await listener({ agent: { id: 'a1' }, turn: 1, step: 0, messages: [incoming()] }, async () => ENTER)
     expect(result).toEqual(ENTER)
   })
 })
