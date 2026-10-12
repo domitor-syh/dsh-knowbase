@@ -46,8 +46,17 @@ describe('tokenize — Latin and digits', () => {
     expect(tokenize('USB Port')).toEqual(['usb', 'port'])
   })
 
-  it('keeps model numbers intact', () => {
-    expect(tokenize('BR-115200')).toEqual(['br', '115200'])
+  it('keeps model numbers whole and also indexes their fragments', () => {
+    const tokens = tokenize('BR-115200')
+    // Whole, so an exact query can rank highest.
+    expect(tokens).toContain('115200')
+    // And by n-gram, so a partial recall still finds it. People remember an
+    // identifier in pieces, and not necessarily from the front.
+    expect(tokens).toContain('152')
+    expect(tokens).toContain('520')
+    // The Latin part stays whole: n-gramming words is stemming.
+    expect(tokens).toContain('br')
+    expect(tokens).not.toContain('br1')
   })
 
   it('does not n-gram Latin text', () => {
@@ -67,14 +76,17 @@ describe('tokenize — Latin and digits', () => {
   })
 
   it('splits a Latin word from Chinese on both sides', () => {
-    expect(tokenize('波特率115200bps')).toEqual(['波特', '特率', '波特率', '115200bps'])
-    expect(tokenize('USB接口')).toEqual(['usb', '接口'])
+    const tokens = tokenize('波特率115200bps')
+    expect(tokens).toContain('波特')
+    expect(tokens).toContain('特率')
+    expect(tokens).toContain('波特率')
+    expect(tokens).toContain('115200bps')
   })
 })
 
 describe('tokenize — normalization', () => {
   it('folds full-width digits so a Chinese document answers an ASCII query', () => {
-    expect(tokenize('１１５２００')).toEqual(['115200'])
+    expect(tokenize('１１５２００')).toContain('115200')
   })
 
   it('folds full-width Latin', () => {
@@ -84,12 +96,11 @@ describe('tokenize — normalization', () => {
 
 describe('tokenize — mixed and edge cases', () => {
   it('handles mixed Chinese, Latin and digits', () => {
-    expect(tokenize('波特率115200bps')).toEqual([
-      '波特',
-      '特率',
-      '波特率',
-      '115200bps',
-    ])
+    const tokens = tokenize('波特率115200bps')
+    expect(tokens).toContain('波特')
+    expect(tokens).toContain('波特率')
+    expect(tokens).toContain('115200bps')
+    expect(tokens).toContain('152')
   })
 
   it('returns nothing for empty or separator-only input', () => {

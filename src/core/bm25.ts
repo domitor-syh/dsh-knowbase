@@ -23,33 +23,6 @@
 
 import { termFrequencies, tokenize, type TokenizeOptions } from './tokenize.ts'
 
-/**
- * Shortest query token that gets prefix expansion.
- *
- * Two characters would make a numeric query match most of a phone-number
- * column, which is noise rather than recall.
- */
-const PREFIX_MIN_LENGTH = 3
-
-/** Cap on how many index terms one prefix may expand to. */
-const PREFIX_EXPANSION_LIMIT = 64
-
-/** Whether a token contains a digit. */
-const HAS_DIGIT = /\d/
-
-/**
- * Whether a query token should also match the longer terms it prefixes.
- *
- * Only tokens containing a digit, and deliberately not Latin words: identifiers
- * — phone numbers, order numbers, model numbers — are the things people search
- * by fragment, and the tokenizer keeps them whole on purpose. Applying the same
- * rule to words would turn a search for `port` into a search for `ports`,
- * `portable` and everything else, which is stemming and a different decision.
- */
-function wantsPrefixExpansion(term: string): boolean {
-  return term.length >= PREFIX_MIN_LENGTH && HAS_DIGIT.test(term)
-}
-
 /** One scored result. */
 export interface SearchHit {
   /** Document id, as supplied to {@link Bm25Index.add}. */
@@ -101,9 +74,6 @@ export class Bm25Index {
   readonly #tokenizeOptions: TokenizeOptions
   readonly #documents = new Map<string, IndexedDocument>()
   readonly #postings = new Map<string, Map<string, number>>()
-  /** Sorted term list, rebuilt lazily; the prefix scan needs order. */
-  #sortedTerms: string[] = []
-  #termsDirty = true
   #totalLength = 0
 
   constructor(options: Bm25Options = {}) {
@@ -146,7 +116,6 @@ export class Bm25Index {
       if (posting === undefined) {
         posting = new Map()
         this.#postings.set(term, posting)
-        this.#termsDirty = true
       }
       posting.set(id, frequency)
     }
@@ -167,10 +136,7 @@ export class Bm25Index {
       // An empty posting list is dead weight that would also inflate nothing —
       // document frequency reads `posting.size` — but leaving it keeps a term
       // alive forever after its last document is gone.
-      if (posting.size === 0) {
-        this.#postings.delete(term)
-        this.#termsDirty = true
-      }
+      if (posting.size === 0) this.#postings.delete(term)
     }
 
     return true
@@ -180,8 +146,6 @@ export class Bm25Index {
   clear(): void {
     this.#documents.clear()
     this.#postings.clear()
-    this.#sortedTerms = []
-    this.#termsDirty = false
     this.#totalLength = 0
   }
 
@@ -191,42 +155,6 @@ export class Bm25Index {
    * Distinct query terms are scored once each: a short question that repeats a
    * word is not a stronger request for that word.
    */
-  /** Sorted index terms, rebuilt on demand after a write. */
-  #terms(): readonly string[] {
-    if (this.#termsDirty) {
-      this.#sortedTerms = [...this.#postings.keys()].sort()
-      this.#termsDirty = false
-    }
-    return this.#sortedTerms
-  }
-
-  /**
-   * Index terms starting with `prefix`, capped.
-   *
-   * Binary search to the first term at or after the prefix, then walk forward
-   * while the prefix still holds: scanning every term per query would make a
-   * large index pay for a feature only numeric queries use.
-   */
-  #termsWithPrefix(prefix: string): string[] {
-    const terms = this.#terms()
-    let low = 0
-    let high = terms.length
-    while (low < high) {
-      const middle = (low + high) >>> 1
-      if (terms[middle]! < prefix) low = middle + 1
-      else high = middle
-    }
-
-    const found: string[] = []
-    for (let index = low; index < terms.length; index += 1) {
-      const term = terms[index]!
-      if (!term.startsWith(prefix)) break
-      found.push(term)
-      if (found.length >= PREFIX_EXPANSION_LIMIT) break
-    }
-    return found
-  }
-
   search(query: string, options: SearchOptions = {}): SearchHit[] {
     const { limit = 6, minScore = 0, minCoverage = 0, accept } = options
     if (limit <= 0 || this.#documents.size === 0) return []
@@ -238,41 +166,28 @@ export class Bm25Index {
     const average = this.averageLength || 1
     const accumulated = new Map<string, { score: number; matched: Set<string> }>()
 
-    for (const queryTerm of queryTerms) {
-      // A numeric token also matches the longer terms it is a prefix of, so a
-      // phone number, order id or model number is findable from its first few
-      // characters. Scoring stays per matched INDEX term, so the rarity of the
-      // term that actually matched is what counts. The Set drops the duplicate
-      // when the query token is itself an indexed term.
-      const effective = wantsPrefixExpansion(queryTerm)
-        ? new Set([queryTerm, ...this.#termsWithPrefix(queryTerm)])
-        : new Set([queryTerm])
+    for (const term of queryTerms) {
+      const posting = this.#postings.get(term)
+      if (posting === undefined) continue
 
-      for (const term of effective) {
-        const posting = this.#postings.get(term)
-        if (posting === undefined) continue
+      const documentFrequency = posting.size
+      // Robertson/Sparck-Jones with the +1 shift, so a term present in every
+      // document scores 0 rather than going negative.
+      const idf = Math.log(1 + (total - documentFrequency + 0.5) / (documentFrequency + 0.5))
 
-        const documentFrequency = posting.size
-        // Robertson/Sparck-Jones with the +1 shift, so a term present in every
-        // document scores 0 rather than going negative.
-        const idf = Math.log(1 + (total - documentFrequency + 0.5) / (documentFrequency + 0.5))
+      for (const [id, frequency] of posting) {
+        if (accept !== undefined && !accept(id)) continue
+        const document = this.#documents.get(id)
+        if (document === undefined) continue
 
-        for (const [id, frequency] of posting) {
-          if (accept !== undefined && !accept(id)) continue
-          const document = this.#documents.get(id)
-          if (document === undefined) continue
+        const normalization =
+          frequency + this.#k1 * (1 - this.#b + this.#b * (document.length / average))
+        const contribution = (idf * (frequency * (this.#k1 + 1))) / normalization
 
-          const normalization =
-            frequency + this.#k1 * (1 - this.#b + this.#b * (document.length / average))
-          const contribution = (idf * (frequency * (this.#k1 + 1))) / normalization
-
-          const entry = accumulated.get(id) ?? { score: 0, matched: new Set<string>() }
-          entry.score += contribution
-          // Coverage counts the QUERY term, not the index term it expanded to,
-          // or one prefix match would look like several matched terms.
-          entry.matched.add(queryTerm)
-          accumulated.set(id, entry)
-        }
+        const entry = accumulated.get(id) ?? { score: 0, matched: new Set<string>() }
+        entry.score += contribution
+        entry.matched.add(term)
+        accumulated.set(id, entry)
       }
     }
 

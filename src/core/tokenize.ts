@@ -45,6 +45,9 @@ export function isHan(character: string): boolean {
 /** True for characters that join into a whole word term (letters, digits). */
 const WORD_CHARACTER = /^[\p{L}\p{N}]$/u
 
+/** Whether a run contains a digit, which is what makes it identifier-like. */
+const HAS_DIGIT = /\d/
+
 /**
  * Whether a character extends a Latin/digit word run.
  *
@@ -111,7 +114,21 @@ export function tokenize(text: string, options: TokenizeOptions = {}): string[] 
     if (isWordCharacter(character)) {
       let end = index
       while (end < characters.length && isWordCharacter(characters[end]!)) end += 1
-      tokens.push(characters.slice(index, end).join(''))
+      const run = characters.slice(index, end).join('')
+      tokens.push(run)
+      // An identifier is indexed whole AND by character n-gram. Whole keeps an
+      // exact match rankable; the n-grams make it findable from any fragment.
+      // A phone number, order number or model number is something people recall
+      // partially, and they do not reliably recall the beginning of it — a
+      // prefix-only rule answers `133` and still misses `6353`.
+      if (run.length > 1 && HAS_DIGIT.test(run)) {
+        const parts: string[] = []
+        emitNgrams(Array.from(run), bigrams, trigrams, parts)
+        for (const part of parts) {
+          // The n-grams of a 2- or 3-character run include the run itself.
+          if (part !== run) tokens.push(part)
+        }
+      }
       index = end
       continue
     }

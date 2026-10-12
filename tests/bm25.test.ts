@@ -137,7 +137,7 @@ describe('Bm25Index — incremental maintenance', () => {
   })
 })
 
-describe('Bm25Index — identifier prefix search', () => {
+describe('Bm25Index — identifier fragment search', () => {
   /** Two phone numbers, the shape that exposed the problem. */
   function phoneIndex(): Bm25Index {
     const index = new Bm25Index()
@@ -146,19 +146,34 @@ describe('Bm25Index — identifier prefix search', () => {
     return index
   }
 
-  it('finds an identifier from its first few characters', () => {
-    // The reported failure: the tokenizer keeps a number whole on purpose, so
-    // `133` and `13363537216` were different terms and nothing matched.
-    expect(phoneIndex().search('133').map(hit => hit.id)).toEqual(['phone'])
+  it.each(['133', '1336', '6353', '3363', '7216', '13363537216'])(
+    'finds the number from the fragment %s',
+    fragment => {
+      // The reported failure, twice over. First only the complete number
+      // matched; then only prefixes did, and a middle fragment like `6353` still
+      // found nothing. An identifier is recalled partially and not necessarily
+      // from the front, so any fragment has to work.
+      expect(phoneIndex().search(fragment)[0]?.id).toBe('phone')
+    },
+  )
+
+  it('ranks a fuller fragment match above an incidental one', () => {
+    // `13` really is a substring of both numbers, so both matching is correct —
+    // substring semantics, not a bug. What must hold is that the number the
+    // whole query points at wins, which is what coverage measures.
+    const hits = phoneIndex().search('133')
+    expect(hits).toHaveLength(2)
+    expect(hits[0]!.coverage).toBeGreaterThan(hits[1]!.coverage)
   })
 
-  it('still finds it from the complete number', () => {
-    expect(phoneIndex().search('13363537216').map(hit => hit.id)).toEqual(['phone'])
+  it('matches only the intended number when the fragment is distinctive', () => {
+    // `6353` appears in one number and nowhere near the other, so the result is
+    // unambiguous rather than merely better ranked.
+    expect(phoneIndex().search('6353').map(hit => hit.id)).toEqual(['phone'])
   })
 
-  it('does not expand a two-character numeric query', () => {
-    // `13` would match most of a phone-number column; that is noise, not recall.
-    expect(phoneIndex().search('13')).toEqual([])
+  it('does not match a fragment the number does not contain', () => {
+    expect(phoneIndex().search('999')).toEqual([])
   })
 
   it('does not expand Latin words', () => {
@@ -168,12 +183,12 @@ describe('Bm25Index — identifier prefix search', () => {
     expect(index.search('port')).toEqual([])
   })
 
-  it('counts a prefix match as exactly one matched query term', () => {
-    // Coverage must not inflate: one query token is one term however many index
-    // terms it expanded to.
+  it('counts the whole query token as matched, not each n-gram', () => {
     const [hit] = phoneIndex().search('133')
     expect(hit!.coverage).toBe(1)
-    expect(hit!.matchedTerms).toEqual(['133'])
+    // `133` tokenizes to itself plus its bi-grams, so all three are reported —
+    // but coverage above stays 1 because every one of them matched.
+    expect(hit!.matchedTerms).toContain('133')
   })
 
   it('picks up a newly added identifier without a rebuild', () => {
