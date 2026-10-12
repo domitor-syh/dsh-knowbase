@@ -27,6 +27,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { installCommands, resolveScope, SessionSelectionRegistry } from './commands.ts'
 import { KnowbaseService } from './core/service.ts'
 import { installPreStep, queryFrom } from './pre-step.ts'
+import { KnowbaseRemote } from './remote.ts'
 import { openStorageDomainStore } from './store.ts'
 
 export const name = 'knowbase'
@@ -80,6 +81,13 @@ export function apply(ctx: Context): void {
         const ready = new KnowbaseService(opened.store)
         await ready.initialize()
         service = ready
+
+        // Publishing the Remote service is what makes the settings page able to
+        // reach the Host at all. It is created only once storage is open, so a
+        // call that arrives earlier fails loudly instead of reading a service
+        // that has nothing behind it.
+        new KnowbaseRemote(ctx, ready, selection)
+
         ctx.effect(() => () => {
           void opened.close()
         })
