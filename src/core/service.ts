@@ -279,6 +279,15 @@ export class KnowbaseService {
     if (this.#index.size === 0) return { kind: 'not_ready' }
 
     const allowed = new Set(scope)
+
+    // Emptiness has to be judged against the SELECTION, not the whole index. A
+    // brand-new knowledge base inside a populated install would otherwise be
+    // searched, find nothing, and report `no_match` — telling the user their
+    // question is unrelated to material that does not exist yet. The two states
+    // need different answers: "nothing matched" invites a rephrase, "nothing
+    // here" invites adding material.
+    if (!this.#hasIndexedChunks(allowed)) return { kind: 'not_ready' }
+
     const hits = this.#index.search(query, {
       limit: options.limit ?? 6,
       minCoverage: options.minCoverage ?? 0,
@@ -305,10 +314,27 @@ export class KnowbaseService {
 
   // ------------------------------------------------------------------ internals
 
+  /** Whether any indexed chunk belongs to one of the allowed knowledge bases. */
+  #hasIndexedChunks(allowed: ReadonlySet<string>): boolean {
+    for (const context of this.#chunks.values()) {
+      if (allowed.has(context.kbId)) return true
+    }
+    return false
+  }
+
   #indexMaterial(material: Material): void {
     const kbName = this.#knowledgeBases.get(material.kbId)?.name ?? '未知知识库'
     for (const chunk of material.chunks) {
-      this.#index.add(chunk.id, chunk.text)
+      // The title is indexed with the chunk even though the citation shows the
+      // chunk text alone. A material called 「刘一江的电话」 whose body is just
+      // a number is unfindable otherwise: the words a person naturally searches
+      // for live in the title, and a title that is not searchable is a material
+      // that does not exist as far as retrieval is concerned.
+      //
+      // The knowledge base name is deliberately NOT indexed: it labels a
+      // container, so including it would make every chunk in a base match a
+      // query for that base's name.
+      this.#index.add(chunk.id, `${material.title}\n${chunk.text}`)
       this.#chunks.set(chunk.id, {
         kbId: material.kbId,
         materialId: material.id,

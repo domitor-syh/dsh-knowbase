@@ -78,9 +78,9 @@ function Report(props: { report: SearchReportView }): React.ReactElement {
   const { report } = props
   if (report.outcome !== 'hits') {
     const text: Record<string, string> = {
-      no_match: '未命中：所选知识库中没有相关片段。',
+      no_match: '未命中：所选知识库中没有相关片段。换个说法或换关键词可能命中。',
       empty_scope: '所选知识库不存在或为空。',
-      not_ready: '知识库中还没有已索引的资料。',
+      not_ready: '所选知识库中还没有已索引的资料，先添加文本再检索。',
       error: `检索失败：${report.reason}`,
     }
     return (
@@ -434,7 +434,7 @@ export function KnowbaseSettingsPage(): React.ReactElement {
               {/* retrieval test */}
               <div style={{ ...panel, padding: 10 }}>
                 <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 6 }}>
-                  检索测试（不调用模型）
+                  检索测试（不调用模型）· 本库共 {selected.chunkCount} 个片段
                 </div>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                   <input

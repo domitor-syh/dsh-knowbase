@@ -171,6 +171,21 @@ describe('KnowbaseService — retrieval', () => {
     expect(empty.retrieve('波特率', [id]).kind).toBe('not_ready')
   })
 
+  it('reports an empty base inside a populated install as not_ready, not as a miss', async () => {
+    // Global emptiness is the wrong test. With other bases populated the index
+    // is non-empty, so an empty base would be searched, find nothing, and come
+    // back as `no_match` — which tells the user to rephrase their question
+    // instead of telling them there is no material to search.
+    const empty = await service.createKnowledgeBase('空库')
+    expect(service.retrieve('波特率', [empty.id]).kind).toBe('not_ready')
+  })
+
+  it('still reports a genuine miss when the base has material', () => {
+    // The counterpart: material exists in scope, so `no_match` is the honest
+    // answer and must not be swallowed by the emptiness check.
+    expect(service.retrieve('如何申请差旅报销', [manualId]).kind).toBe('no_match')
+  })
+
   it('never returns a passage from an unselected base', () => {
     const outcome = service.retrieve('以太网', [manualId])
     expect(outcome.kind).toBe('no_match')
@@ -197,6 +212,40 @@ describe('KnowbaseService — retrieval', () => {
     const outcome = service.retrieve('波特率', [manualId])
     if (outcome.kind !== 'hits') throw new Error('unreachable')
     expect(outcome.passages[0]!.kbName).toBe('设备资料')
+  })
+
+  it('finds a material by words in its title, not only in its body', async () => {
+    // The reported failure: a base 「刘一江的信息」 holding a material
+    // 「刘一江的电话」 whose body is only the number. Searching the name found
+    // nothing, because the title was metadata rather than indexed content.
+    const people = await service.createKnowledgeBase('刘一江的信息')
+    await service.addText(people.id, '刘一江的电话', '13363537216')
+
+    const byTitle = service.retrieve('刘一江', [people.id])
+    expect(byTitle.kind).toBe('hits')
+    if (byTitle.kind !== 'hits') throw new Error('unreachable')
+    expect(byTitle.passages[0]!.materialTitle).toBe('刘一江的电话')
+
+    // And the body still works, so indexing the title did not replace it.
+    expect(service.retrieve('13363537216', [people.id]).kind).toBe('hits')
+  })
+
+  it('does not index the knowledge base name', () => {
+    // The name labels a container; indexing it would make every chunk in a base
+    // match a query for that base's name.
+    expect(service.retrieve('产品资料', [manualId]).kind).toBe('no_match')
+  })
+
+  it('cites the chunk text without the indexed title prefix', async () => {
+    const people = await service.createKnowledgeBase('刘一江的信息')
+    await service.addText(people.id, '刘一江的电话', '13363537216')
+
+    const outcome = service.retrieve('刘一江', [people.id])
+    if (outcome.kind !== 'hits') throw new Error('unreachable')
+    // The title is searchable, but the passage shown to the model stays the
+    // chunk text: the citation already carries the title as its source label,
+    // and repeating it inside the body would read as part of the material.
+    expect(outcome.passages[0]!.text).toBe('13363537216')
   })
 
   it('honours the limit', () => {
