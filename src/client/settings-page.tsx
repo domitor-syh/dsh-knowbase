@@ -6,17 +6,24 @@
  * `./api.ts`, so this file contains no transport, no parsing and no knowledge of
  * how a call travels.
  *
- * Deliberate first-iteration boundaries, so the gaps are visible rather than
- * surprising: no file/PDF/OCR ingestion (stage 2), no material text editing, no
- * rename UI (the Host method exists), and no drag-and-drop. Retrieval testing is
- * present because it is the only way to judge ranking without spending model
- * calls, and it costs almost nothing on top of the retrieval that already runs.
+ * ## What is deliberately present
+ *
+ * The chunk view and the text editor are not polish. A user who cannot see what
+ * the plugin actually indexed is guessing about every search result, and a
+ * material with a typo could previously only be fixed by deleting it — an
+ * irreversible action with no confirmation. Both are what makes the plugin
+ * trustworthy rather than merely functional.
+ *
+ * ## Deliberate first-iteration boundaries
+ *
+ * No file/PDF/OCR ingestion (stage 2), no drag-and-drop, no soft delete with a
+ * recycle bin (the plan's next batch) — destructive actions are two-step instead.
  *
  * @module @domitor-syh/dsh-knowbase/client/settings-page
  */
 
 import * as React from 'react'
-import type { KnowledgeBaseView, MaterialView, SearchReportView } from '../remote.ts'
+import type { KnowledgeBaseView, MaterialView, PassageView, SearchReportView } from '../remote.ts'
 import { knowbaseApi, knowbaseChannelError } from './api.ts'
 
 const COLORS = {
@@ -110,6 +117,60 @@ function Report(props: { report: SearchReportView }): React.ReactElement {
   )
 }
 
+/**
+ * A destructive action that asks once.
+ *
+ * The first click arms the row; the second commits and anything else disarms it.
+ * Rendered inline rather than as a modal because it is one row, and because a
+ * page should not grow a dialog stack before it grows a design system.
+ */
+function ConfirmButton(props: {
+  label: string
+  confirmLabel: string
+  disabled?: boolean
+  onConfirm: () => void
+}): React.ReactElement {
+  const [armed, setArmed] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!armed) return
+    const timer = window.setTimeout(() => setArmed(false), 4000)
+    return () => window.clearTimeout(timer)
+  }, [armed])
+
+  if (!armed) {
+    return (
+      <button
+        type="button"
+        style={{ ...button, color: COLORS.danger }}
+        disabled={props.disabled}
+        onClick={() => setArmed(true)}
+      >
+        {props.label}
+      </button>
+    )
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', gap: 4 }}>
+      <button
+        type="button"
+        style={{ ...button, borderColor: COLORS.danger, color: COLORS.danger }}
+        disabled={props.disabled}
+        onClick={() => {
+          setArmed(false)
+          props.onConfirm()
+        }}
+      >
+        {props.confirmLabel}
+      </button>
+      <button type="button" style={button} onClick={() => setArmed(false)}>
+        取消
+      </button>
+    </span>
+  )
+}
+
 /** The settings page. */
 export function KnowbaseSettingsPage(): React.ReactElement {
   const [bases, setBases] = React.useState<readonly KnowledgeBaseView[]>([])
@@ -125,10 +186,22 @@ export function KnowbaseSettingsPage(): React.ReactElement {
   const [newText, setNewText] = React.useState('')
   const [query, setQuery] = React.useState('')
 
+  // Base info editing.
+  const [editingInfo, setEditingInfo] = React.useState(false)
+  const [editName, setEditName] = React.useState('')
+  const [editDescription, setEditDescription] = React.useState('')
+
+  // The material detail view: chunks as indexed, plus the editor.
+  const [detailId, setDetailId] = React.useState('')
+  const [detailTitle, setDetailTitle] = React.useState('')
+  const [detailChunks, setDetailChunks] = React.useState<readonly PassageView[]>([])
+  const [detailText, setDetailText] = React.useState('')
+  const [detailLoading, setDetailLoading] = React.useState(false)
+
   /** Run one Host call with shared busy/error handling. */
   const run = React.useCallback(async (action: () => Promise<string>): Promise<void> => {
-    const api = knowbaseApi()
-    if (api === undefined) {
+    const current = knowbaseApi()
+    if (current === undefined) {
       setError('知识库通道尚未就绪，请稍候重试。')
       return
     }
@@ -144,14 +217,13 @@ export function KnowbaseSettingsPage(): React.ReactElement {
   }, [])
 
   const refreshBases = React.useCallback(async (): Promise<void> => {
-    const api = knowbaseApi()
-    if (api === undefined) return
-    const list = await api.listKnowledgeBases()
+    const current = knowbaseApi()
+    if (current === undefined) return
+    const list = await current.listKnowledgeBases()
     setBases(list)
-    setSelectedId(current => {
-      if (list.some(item => item.id === current)) return current
-      return list[0]?.id ?? ''
-    })
+    setSelectedId(existing =>
+      list.some(item => item.id === existing) ? existing : (list[0]?.id ?? ''),
+    )
   }, [])
 
   // The channel mounts asynchronously, so the first render has no API yet. The
@@ -160,14 +232,14 @@ export function KnowbaseSettingsPage(): React.ReactElement {
   React.useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
-      const api = knowbaseApi()
-      if (api === undefined) return
+      const current = knowbaseApi()
+      if (current === undefined) return
       try {
-        const list = await api.listKnowledgeBases()
+        const list = await current.listKnowledgeBases()
         if (cancelled) return
         setBases(list)
-        setSelectedId(current =>
-          list.some(item => item.id === current) ? current : (list[0]?.id ?? ''),
+        setSelectedId(existing =>
+          list.some(item => item.id === existing) ? existing : (list[0]?.id ?? ''),
         )
       } catch (failure) {
         if (!cancelled) setError(messageOf(failure))
@@ -194,12 +266,12 @@ export function KnowbaseSettingsPage(): React.ReactElement {
 
   React.useEffect(() => {
     let cancelled = false
-    const api = knowbaseApi()
-    if (api === undefined || selectedId === '') {
+    const current = knowbaseApi()
+    if (current === undefined || selectedId === '') {
       setMaterials([])
       return
     }
-    void api
+    void current
       .listMaterials(selectedId)
       .then(list => {
         if (!cancelled) setMaterials(list)
@@ -213,6 +285,40 @@ export function KnowbaseSettingsPage(): React.ReactElement {
   }, [selectedId, bases])
 
   const selected = bases.find(item => item.id === selectedId)
+
+  /** Open the material detail view and load what was actually indexed. */
+  const openDetail = React.useCallback(
+    async (material: MaterialView): Promise<void> => {
+      const current = knowbaseApi()
+      if (current === undefined) return
+      setDetailId(material.id)
+      setDetailTitle(material.title)
+      setDetailLoading(true)
+      try {
+        const [passages, text] = await Promise.all([
+          current.readMaterialChunks(material.id),
+          current.readMaterialText(material.id),
+        ])
+        setDetailChunks(passages)
+        setDetailText(text)
+      } catch (failure) {
+        setError(messageOf(failure))
+      } finally {
+        setDetailLoading(false)
+      }
+    },
+    [],
+  )
+
+  /** Switch the selected base and close any open material detail. */
+  const selectBase = (id: string): void => {
+    setSelectedId(id)
+    setDetailId('')
+    setDetailChunks([])
+    setDetailText('')
+    setReport(undefined)
+    setEditingInfo(false)
+  }
 
   return (
     <div style={{ padding: 16, fontSize: 14 }}>
@@ -256,7 +362,7 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setSelectedId(item.id)}
+                  onClick={() => selectBase(item.id)}
                   style={{
                     display: 'block',
                     width: '100%',
@@ -319,33 +425,98 @@ export function KnowbaseSettingsPage(): React.ReactElement {
             <>
               <div
                 style={{
+                  ...panel,
+                  padding: 10,
+                  marginBottom: 12,
                   display: 'flex',
-                  alignItems: 'center',
+                  alignItems: 'flex-start',
                   justifyContent: 'space-between',
-                  marginBottom: 10,
+                  gap: 8,
                 }}
               >
-                <div>
-                  <div style={{ fontWeight: 600 }}>{selected.name}</div>
-                  <div style={{ fontSize: 11, color: COLORS.muted }}>
-                    {selected.materialCount} 份资料 / {selected.chunkCount} 个片段
+                {editingInfo ? (
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <Field label="名称">
+                      <input
+                        style={input}
+                        value={editName}
+                        onChange={event => setEditName(event.target.value)}
+                      />
+                    </Field>
+                    <Field label="描述">
+                      <textarea
+                        style={{ ...input, minHeight: 50, fontFamily: 'inherit' }}
+                        value={editDescription}
+                        onChange={event => setEditDescription(event.target.value)}
+                      />
+                    </Field>
+                    <button
+                      type="button"
+                      style={button}
+                      disabled={busy || editName.trim() === ''}
+                      onClick={() =>
+                        void run(async () => {
+                          const current = knowbaseApi()!
+                          await current.renameKnowledgeBase(selected.id, editName.trim())
+                          await current.updateDescription(selected.id, editDescription)
+                          await refreshBases()
+                          setEditingInfo(false)
+                          return '已保存。'
+                        })
+                      }
+                    >
+                      保存
+                    </button>{' '}
+                    <button
+                      type="button"
+                      style={button}
+                      onClick={() => {
+                        setEditingInfo(false)
+                        setEditName('')
+                        setEditDescription('')
+                      }}
+                    >
+                      取消
+                    </button>
                   </div>
-                </div>
-                <button
-                  type="button"
-                  style={{ ...button, color: COLORS.danger }}
-                  disabled={busy}
-                  onClick={() =>
-                    void run(async () => {
-                      const name = selected.name
-                      await knowbaseApi()!.deleteKnowledgeBase(selected.id)
-                      await refreshBases()
-                      return `已删除「${name}」。`
-                    })
-                  }
-                >
-                  删除知识库
-                </button>
+                ) : (
+                  <>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600 }}>{selected.name}</div>
+                      <div style={{ fontSize: 11, color: COLORS.muted }}>
+                        {selected.materialCount} 份资料 / {selected.chunkCount} 个片段
+                        {selected.description !== '' && ` · ${selected.description}`}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        style={button}
+                        onClick={() => {
+                          setEditName(selected.name)
+                          setEditDescription(selected.description)
+                          setEditingInfo(true)
+                        }}
+                      >
+                        编辑信息
+                      </button>
+                      <ConfirmButton
+                        label="删除知识库"
+                        confirmLabel="确认删除"
+                        disabled={busy}
+                        onConfirm={() =>
+                          void run(async () => {
+                            const name = selected.name
+                            await knowbaseApi()!.deleteKnowledgeBase(selected.id)
+                            setDetailId('')
+                            await refreshBases()
+                            return `已删除「${name}」。`
+                          })
+                        }
+                      />
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* materials */}
@@ -355,37 +526,127 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                   <p style={{ color: COLORS.muted, fontSize: 12, margin: 0 }}>还没有资料。</p>
                 ) : (
                   materials.map(material => (
-                    <div
-                      key={material.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '4px 0',
-                        borderTop: `1px solid ${COLORS.border}`,
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: 13 }}>{material.title}</div>
-                        <div style={{ fontSize: 11, color: COLORS.muted }}>
-                          {material.chunkCount} 个片段 · 第 {material.revision} 版
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        style={{ ...button, color: COLORS.danger }}
-                        disabled={busy}
-                        onClick={() =>
-                          void run(async () => {
-                            await knowbaseApi()!.deleteMaterial(material.id)
-                            setMaterials(await knowbaseApi()!.listMaterials(selected.id))
-                            await refreshBases()
-                            return `已删除「${material.title}」。`
-                          })
-                        }
+                    <div key={material.id} style={{ borderTop: `1px solid ${COLORS.border}` }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '4px 0',
+                          gap: 8,
+                        }}
                       >
-                        删除
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void openDetail(detailId === material.id ? material : material)
+                          }
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            textAlign: 'left',
+                            border: 'none',
+                            background: 'transparent',
+                            padding: 0,
+                            cursor: 'pointer',
+                            color: detailId === material.id ? COLORS.accent : 'inherit',
+                          }}
+                        >
+                          <div style={{ fontSize: 13 }}>{material.title}</div>
+                          <div style={{ fontSize: 11, color: COLORS.muted }}>
+                            {material.chunkCount} 个片段 · 第 {material.revision} 版
+                          </div>
+                        </button>
+                        <ConfirmButton
+                          label="删除"
+                          confirmLabel="确认删除"
+                          disabled={busy}
+                          onConfirm={() =>
+                            void run(async () => {
+                              await knowbaseApi()!.deleteMaterial(material.id)
+                              if (detailId === material.id) setDetailId('')
+                              setMaterials(await knowbaseApi()!.listMaterials(selected.id))
+                              await refreshBases()
+                              return `已删除「${material.title}」。`
+                            })
+                          }
+                        />
+                      </div>
+
+                      {detailId === material.id && (
+                        <div style={{ padding: '8px 0 12px' }}>
+                          {detailLoading ? (
+                            <p style={{ color: COLORS.muted, fontSize: 12, margin: 0 }}>加载中…</p>
+                          ) : (
+                            <>
+                              <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 6 }}>
+                                索引内容（共 {detailChunks.length} 个片段）
+                              </div>
+                              {detailChunks.map(chunk => (
+                                <div
+                                  key={chunk.ordinal}
+                                  style={{
+                                    background: COLORS.subtle,
+                                    border: `1px solid ${COLORS.border}`,
+                                    borderRadius: 6,
+                                    padding: 8,
+                                    marginBottom: 6,
+                                  }}
+                                >
+                                  <div style={{ fontSize: 11, color: COLORS.accent, marginBottom: 4 }}>
+                                    片段 {chunk.ordinal + 1} · {chunk.headingPath || '（无标题）'} ·{' '}
+                                    {chunk.locator}
+                                  </div>
+                                  <div style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                                    {chunk.text}
+                                  </div>
+                                </div>
+                              ))}
+                              <div style={{ fontSize: 12, color: COLORS.muted, margin: '10px 0 6px' }}>
+                                编辑正文
+                              </div>
+                              <textarea
+                                style={{ ...input, minHeight: 120, fontFamily: 'inherit' }}
+                                value={detailText}
+                                onChange={event => setDetailText(event.target.value)}
+                              />
+                              <div style={{ marginTop: 8 }}>
+                                <button
+                                  type="button"
+                                  style={button}
+                                  disabled={busy || detailText.trim() === ''}
+                                  onClick={() =>
+                                    void run(async () => {
+                                      const material = await knowbaseApi()!.updateMaterialText(
+                                        detailId,
+                                        detailText,
+                                      )
+                                      setMaterials(await knowbaseApi()!.listMaterials(selected.id))
+                                      await refreshBases()
+                                      setDetailTitle(material.title)
+                                      return `已保存「${material.title}」（${material.chunkCount} 个片段，第 ${material.revision} 版）。`
+                                    })
+                                  }
+                                >
+                                  保存并重建索引
+                                </button>
+                                <button
+                                  type="button"
+                                  style={{ ...button, marginLeft: 6 }}
+                                  onClick={() => void openDetail({ ...material })}
+                                >
+                                  放弃修改
+                                </button>
+                              </div>
+                              {detailTitle !== '' && detailTitle !== material.title && (
+                                <p style={{ color: COLORS.muted, fontSize: 11, margin: '6px 0 0' }}>
+                                  已保存为「{detailTitle}」。
+                                </p>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))
                 )}

@@ -169,6 +169,21 @@ export class KnowbaseService {
     return updated
   }
 
+  /** Update a knowledge base's description. */
+  async updateDescription(id: string, rawDescription: string): Promise<KnowledgeBase> {
+    const current = this.#knowledgeBases.get(id)
+    if (current === undefined) throw new KnowbaseError('not-found', '知识库不存在。')
+
+    const updated: KnowledgeBase = {
+      ...current,
+      description: rawDescription.trim(),
+      updatedAt: this.#now(),
+    }
+    this.#knowledgeBases.set(id, updated)
+    await this.#store.saveKnowledgeBase(updated)
+    return updated
+  }
+
   /** Delete a knowledge base and every material inside it. */
   async deleteKnowledgeBase(id: string): Promise<boolean> {
     if (!this.#knowledgeBases.has(id)) return false
@@ -212,6 +227,7 @@ export class KnowbaseService {
       createdAt: timestamp,
       updatedAt: timestamp,
       revision: 1,
+      text,
       chunks,
     }
     this.#materials.set(material.id, material)
@@ -236,6 +252,7 @@ export class KnowbaseService {
 
     const updated: Material = {
       ...current,
+      text,
       chunks,
       revision: current.revision + 1,
       updatedAt: this.#now(),

@@ -147,6 +147,24 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
     parameters: [{ name: 'id', schema: string }],
     result: z.array(passageSchema),
   },
+  readMaterialText: {
+    parameters: [{ name: 'id', schema: string }],
+    result: string,
+  },
+  updateMaterialText: {
+    parameters: [
+      { name: 'id', schema: string },
+      { name: 'text', schema: string },
+    ],
+    result: materialSchema,
+  },
+  updateDescription: {
+    parameters: [
+      { name: 'id', schema: string },
+      { name: 'description', schema: string },
+    ],
+    result: boolean,
+  },
   testSearch: {
     parameters: [
       { name: 'query', schema: string },
@@ -209,11 +227,14 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     listKnowledgeBases: () => Promise<unknown>
     createKnowledgeBase: (name: string, description: string) => Promise<unknown>
     renameKnowledgeBase: (id: string, name: string) => Promise<unknown>
+    updateDescription: (id: string, description: string) => Promise<unknown>
     deleteKnowledgeBase: (id: string) => Promise<unknown>
     listMaterials: (kbId: string) => Promise<unknown>
     addTextMaterial: (kbId: string, title: string, text: string) => Promise<unknown>
+    updateMaterialText: (id: string, text: string) => Promise<unknown>
     deleteMaterial: (id: string) => Promise<unknown>
     readMaterialChunks: (id: string) => Promise<unknown>
+    readMaterialText: (id: string) => Promise<unknown>
     testSearch: (query: string, kbIds: readonly string[]) => Promise<unknown>
     getSessionScope: (agentId: string) => Promise<unknown>
     setSessionScope: (

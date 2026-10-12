@@ -35,6 +35,16 @@ export interface Material {
   readonly updatedAt: number
   /** Bumped on every edit; citations snapshot it so old answers stay explicable. */
   readonly revision: number
+  /**
+   * The text as the user supplied it, kept so the editor can round-trip it
+   * losslessly. The chunks are derived and their boundaries are an indexing
+   * decision; reassembling a document from them would quietly normalise blank
+   * lines and lose whatever fell between chunk edges.
+   *
+   * Optional because records written before this field existed do not carry it;
+   * the editor falls back to reassembling from the chunks for those.
+   */
+  readonly text?: string
   /** Extracted text, already split for retrieval. */
   readonly chunks: readonly ChunkRecord[]
 }

@@ -40,12 +40,15 @@ export interface KnowbaseApi {
   listKnowledgeBases(): Promise<readonly KnowledgeBaseView[]>
   createKnowledgeBase(name: string, description: string): Promise<KnowledgeBaseView>
   renameKnowledgeBase(id: string, name: string): Promise<boolean>
+  updateDescription(id: string, description: string): Promise<boolean>
   deleteKnowledgeBase(id: string): Promise<boolean>
 
   listMaterials(kbId: string): Promise<readonly MaterialView[]>
   addTextMaterial(kbId: string, title: string, text: string): Promise<MaterialView>
+  updateMaterialText(id: string, text: string): Promise<MaterialView>
   deleteMaterial(id: string): Promise<boolean>
   readMaterialChunks(id: string): Promise<readonly PassageView[]>
+  readMaterialText(id: string): Promise<string>
 
   testSearch(query: string, kbIds: readonly string[]): Promise<SearchReportView>
 
@@ -78,6 +81,7 @@ interface KnowbaseWire {
     description: string,
   ) => Promise<RemoteResult<KnowledgeBaseView>>
   renameKnowledgeBase: (id: string, name: string) => Promise<RemoteResult<boolean>>
+  updateDescription: (id: string, description: string) => Promise<RemoteResult<boolean>>
   deleteKnowledgeBase: (id: string) => Promise<RemoteResult<boolean>>
   listMaterials: (kbId: string) => Promise<RemoteResult<readonly MaterialView[]>>
   addTextMaterial: (
@@ -85,8 +89,10 @@ interface KnowbaseWire {
     title: string,
     text: string,
   ) => Promise<RemoteResult<MaterialView>>
+  updateMaterialText: (id: string, text: string) => Promise<RemoteResult<MaterialView>>
   deleteMaterial: (id: string) => Promise<RemoteResult<boolean>>
   readMaterialChunks: (id: string) => Promise<RemoteResult<readonly PassageView[]>>
+  readMaterialText: (id: string) => Promise<RemoteResult<string>>
   testSearch: (query: string, kbIds: readonly string[]) => Promise<RemoteResult<SearchReportView>>
   getSessionScope: (agentId: string) => Promise<RemoteResult<SessionScopeView>>
   setSessionScope: (
@@ -144,11 +150,14 @@ export function createKnowbaseApi(ctx: Context): KnowbaseApi {
     listKnowledgeBases: () => unwrap(wire.listKnowledgeBases()),
     createKnowledgeBase: (name, description) => unwrap(wire.createKnowledgeBase(name, description)),
     renameKnowledgeBase: (id, name) => unwrap(wire.renameKnowledgeBase(id, name)),
+    updateDescription: (id, description) => unwrap(wire.updateDescription(id, description)),
     deleteKnowledgeBase: id => unwrap(wire.deleteKnowledgeBase(id)),
     listMaterials: kbId => unwrap(wire.listMaterials(kbId)),
     addTextMaterial: (kbId, title, text) => unwrap(wire.addTextMaterial(kbId, title, text)),
+    updateMaterialText: (id, text) => unwrap(wire.updateMaterialText(id, text)),
     deleteMaterial: id => unwrap(wire.deleteMaterial(id)),
     readMaterialChunks: id => unwrap(wire.readMaterialChunks(id)),
+    readMaterialText: id => unwrap(wire.readMaterialText(id)),
     testSearch: (query, kbIds) => unwrap(wire.testSearch(query, kbIds)),
     getSessionScope: agentId => unwrap(wire.getSessionScope(agentId)),
     setSessionScope: (agentId, enabled, all, kbIds) =>

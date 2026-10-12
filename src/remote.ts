@@ -227,6 +227,42 @@ export class KnowbaseRemote extends TypertRemoteService {
   }
 
   /**
+   * The text as the user supplied it, for the editor.
+   *
+   * Records written before the editor existed have no stored text and are
+   * reassembled from their chunks, which normalises blank lines — good enough to
+   * edit, and the next save writes the field properly.
+   */
+  async readMaterialText(id: string): Promise<string> {
+    const material = deps().service.getMaterial(id)
+    if (material === undefined) return ''
+    return (
+      material.text ??
+      material.chunks.map(chunk => chunk.text).join('\n\n')
+    )
+  }
+
+  /** Replace a material's text and re-index it. */
+  async updateMaterialText(id: string, text: string): Promise<MaterialView> {
+    const material = await deps().service.updateMaterialText(id, text)
+    return {
+      id: material.id,
+      kbId: material.kbId,
+      title: material.title,
+      revision: material.revision,
+      chunkCount: material.chunks.length,
+      createdAt: material.createdAt,
+      updatedAt: material.updatedAt,
+    }
+  }
+
+  /** Update a knowledge base's description. */
+  async updateDescription(id: string, description: string): Promise<boolean> {
+    await deps().service.updateDescription(id, description)
+    return true
+  }
+
+  /**
    * Run retrieval without touching the model.
    *
    * The plan's retrieval-test panel: it answers "what would be sent?" without

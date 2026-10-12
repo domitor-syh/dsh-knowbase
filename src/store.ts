@@ -54,6 +54,9 @@ const materialSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   revision: z.number(),
+  // Absent in records written before the editor existed; those fall back to
+  // reassembling the text from their chunks.
+  text: z.string().optional(),
   chunks: z.array(chunkSchema),
 })
 
