@@ -15,7 +15,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import { createKnowbaseApi, setChannelError, setKnowbaseApi } from './api.ts'
+import {
+  createKnowbaseApi,
+  knowbaseApi,
+  knowbaseChannelError,
+  setChannelError,
+  setKnowbaseApi,
+} from './api.ts'
 import { TYPERT_REMOTE } from './contribution.ts'
 import { KnowbaseSettingsPage } from './settings-page.tsx'
 
@@ -45,9 +51,26 @@ export function apply(ctx: Context): void {
   void ctx.remote
     .$mount(TYPERT_REMOTE)
     .then(() => {
-      setKnowbaseApi(createKnowbaseApi(ctx))
-      setChannelError(undefined)
-      console.info('[knowbase] remote channel mounted')
+      // Reading `remote.knowbase` requires it in the inject list — cordis
+      // refuses `ctx.a.b` otherwise, with exactly that error. It cannot go in
+      // the static list above: the namespace is created by this very mount, so
+      // a static dependency would deadlock, the fiber waiting forever on a
+      // service only its own `apply` could produce. Acquiring it here, after
+      // the mount resolves, is the dynamic form of the same declaration.
+      ctx.inject(['remote.knowbase'], scope => {
+        setKnowbaseApi(createKnowbaseApi(scope))
+        setChannelError(undefined)
+        console.info('[knowbase] remote channel mounted')
+      })
+
+      // `ctx.inject` parks silently when the service never appears, which would
+      // put us straight back to a page whose buttons do nothing with no
+      // explanation. A bounded wait turns that into a visible failure.
+      globalThis.setTimeout(() => {
+        if (knowbaseApi() === undefined && knowbaseChannelError() === undefined) {
+          setChannelError('已挂载 Remote 贡献，但 remote.knowbase 服务未出现（等待 5 秒超时）。')
+        }
+      }, 5000)
     })
     .catch((error: unknown) => {
       // Without the channel the page can only render its empty state, so this
