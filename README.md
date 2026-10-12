@@ -7,7 +7,7 @@
 
 面向 **DeepSeek Harness（dsh）** 的原生、本地优先知识库插件。目标是在 dsh 内提供完整的「资料入库 → 自动检索 → 引用回答」闭环，不依赖外部知识库服务，也不修改 dsh 宿主核心。
 
-- 当前状态：**阶段 0 兼容性核查已基本完成**，插件骨架可在目标宿主内加载；业务实现尚未开始。
+- 当前状态：**阶段 0 三条主线已通过**（宿主加载、UI 接入、模型请求前证据注入），进入阶段 1。
 - 目标宿主：Windows 桌面版 **dsh 0.2.0-rc.2**（官方标签 `dsh-v0.2.0-rc.2`）。
 - 技术路线：dsh 原生 Host + Client 插件 + 本地检索引擎（TypeScript）。
 
@@ -37,8 +37,8 @@
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| 阶段 0 | 0.2.0-rc.2 桌面兼容性验证（先于业务开发） | 进行中：接口核查与骨架加载已完成，卸载清理与 pre-step 实测待补 |
-| 阶段 1 | 知识库管理与文本问答闭环 | 未开始 |
+| 阶段 0 | 0.2.0-rc.2 桌面兼容性验证（先于业务开发） | 三条主线通过；余项：停用清理、带工具调用的多 step 场景 |
+| 阶段 1 | 知识库管理与文本问答闭环 | 进行中 |
 | 阶段 2 | 完成 v0.1 MVP 全部范围（PDF、图片 OCR、检索测试、备份恢复等） | 未开始 |
 | 阶段 3 | 可靠性与发行 | 未开始 |
 | 阶段 4 | 按用户选择增强（向量、DOCX、自选多库等） | 未开始 |
@@ -49,7 +49,8 @@
 
 - 优先通过 dsh 官方 slots、Remote 与 Agent 接口接入，**不修改宿主核心、不通过 DOM 注入绕过接口**。
 - 目标版本**没有** `systemPrompt.refreshContext`，`PromptContext` 也**没有** `required` 字段；不得沿用 master 新版刷新设计。
-- 上下文注入走 `agent/pre-step` waterfall，把插件来源的证据消息追加到 `next()` 返回的决策里。装配顺序是 `systemPrompt.assemble()` → `agent/pre-step`，因此**不依赖 prompt 装配时机**。
+- 上下文注入走 `agent/pre-step` waterfall，**已在真实宿主上端到端验证**：订阅用 `ctx.on(name, listener)`，监听器签名 `(payload, next) => Promise<PreStepDecision>`，把插件来源的证据消息追加到 `next()` 返回的决策里。装配顺序是 `systemPrompt.assemble()` → `agent/pre-step`，因此**不依赖 prompt 装配时机**。
+- `next()` 必须永远 await 并尊重其结果：**`reject` 要原样透传**，覆盖别人的否决等于悄悄重启一个已被停掉的步骤。
 - **不能自建 Remote 命名空间**：宿主未提供 `dsh-typert-generator`。Client↔Host 的业务通道复用已装的 `commands` Remote。
 - **`inject` 里写不存在的服务名会让插件永久 pending 且无任何报错**。只列已在目标宿主上确认存在的服务。
 - **联网能力必须做可选依赖**（`ctx.inject(['web'], ...)`）：静态依赖会在无 provider 时 park 整个插件。
@@ -65,7 +66,9 @@
 ├── src/
 │   ├── client/        # Client 半边（浏览器）
 │   ├── index.ts       # Host 半边入口
+│   ├── pre-step.ts    # agent/pre-step 检索接缝
 │   └── source.ts      # 插件专属消息来源声明
+├── tests/             # 单元测试
 ├── cordis.patch.yml   # 作为 bundle 发布时的装配层
 ├── dev.patch.yml      # 本地 --patch 开发叠加层
 ├── tsdown.config.ts   # Host ESM + Client lazy-CJS 双产物
