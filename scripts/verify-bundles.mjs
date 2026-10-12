@@ -45,20 +45,32 @@ check('exports name', typeof host.name === 'string', `got ${typeof host.name}`)
 check('exports inject array', Array.isArray(host.inject), `got ${typeof host.inject}`)
 check('exports apply()', typeof host.apply === 'function', `got ${typeof host.apply}`)
 
-// `apply` must survive a context whose only surface is `effect`, because that is
-// all the skeleton uses. A throw here means the host would fail to mount us.
+// `apply` must survive a context whose only surface is the two methods the
+// skeleton uses: `effect` for lifetime and `on` for the pre-step waterfall.
+// A throw here means the host would fail to mount us.
 if (typeof host.apply === 'function') {
   const disposers = []
+  const listeners = new Map()
   const stubCtx = {
     effect: (factory) => {
       disposers.push(factory())
       return () => {}
+    },
+    on: (name, listener) => {
+      listeners.set(name, listener)
+      return () => true
     },
   }
   try {
     host.apply(stubCtx)
     check('apply() tolerates a minimal context', true)
     check('registers a disposer via ctx.effect', disposers.length === 1, `got ${disposers.length}`)
+    // The retrieval seam is the whole point of the host half; a build that
+    // stopped wiring it would otherwise still load and look healthy.
+    check(
+      'subscribes to the agent/pre-step waterfall',
+      typeof listeners.get('agent/pre-step') === 'function',
+    )
   } catch (error) {
     check('apply() tolerates a minimal context', false, String(error))
   }
