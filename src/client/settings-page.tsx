@@ -17,7 +17,7 @@
 
 import * as React from 'react'
 import type { KnowledgeBaseView, MaterialView, SearchReportView } from '../remote.ts'
-import { knowbaseApi } from './api.ts'
+import { knowbaseApi, knowbaseChannelError } from './api.ts'
 
 const COLORS = {
   border: '#dce3ed',
@@ -154,15 +154,15 @@ export function KnowbaseSettingsPage(): React.ReactElement {
     })
   }, [])
 
-  // The channel mounts asynchronously, so the first render has no API yet.
-  // Polling is avoided: `apply` sets it before the section can be opened in
-  // practice, and the retry below covers the race where it is not.
+  // The channel mounts asynchronously, so the first render has no API yet. The
+  // interval also surfaces a mounting failure: a page whose buttons do nothing
+  // should say why without the user opening developer tools.
   React.useEffect(() => {
     let cancelled = false
     const load = async (): Promise<void> => {
-      if (knowbaseApi() === undefined) return
+      const api = knowbaseApi()
+      if (api === undefined) return
       try {
-        const api = knowbaseApi()!
         const list = await api.listKnowledgeBases()
         if (cancelled) return
         setBases(list)
@@ -175,6 +175,12 @@ export function KnowbaseSettingsPage(): React.ReactElement {
     }
     void load()
     const timer = window.setInterval(() => {
+      const failure = knowbaseChannelError()
+      if (failure !== undefined) {
+        window.clearInterval(timer)
+        setError(`知识库通道挂载失败：${failure}`)
+        return
+      }
       if (knowbaseApi() !== undefined) {
         window.clearInterval(timer)
         void load()

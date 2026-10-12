@@ -117,6 +117,25 @@ export function knowbaseApi(): KnowbaseApi | undefined {
   return mounted
 }
 
+/**
+ * Why the channel is not ready, when that is a failure rather than a wait.
+ *
+ * Surfaced in the page rather than only the console: a settings page whose
+ * buttons silently do nothing is the hardest kind of bug to report, and the
+ * person looking at it should not have to open developer tools to find out why.
+ */
+let channelError: string | undefined
+
+/** Record why mounting failed. */
+export function setChannelError(message: string | undefined): void {
+  channelError = message
+}
+
+/** The mounting failure, or `undefined` when the channel is fine or pending. */
+export function knowbaseChannelError(): string | undefined {
+  return channelError
+}
+
 /** Build the typed API over a mounted client context. */
 export function createKnowbaseApi(ctx: Context): KnowbaseApi {
   const wire = (ctx.remote as unknown as { knowbase: KnowbaseWire }).knowbase

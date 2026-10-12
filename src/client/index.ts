@@ -15,7 +15,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import { createKnowbaseApi, setKnowbaseApi } from './api.ts'
+import { createKnowbaseApi, setChannelError, setKnowbaseApi } from './api.ts'
 import { TYPERT_REMOTE } from './contribution.ts'
 import { KnowbaseSettingsPage } from './settings-page.tsx'
 
@@ -34,15 +34,26 @@ export const inject = ['slots', 'locale', 'remote']
 export function apply(ctx: Context): void {
   console.info('[knowbase] client half loaded')
 
+  // Reported before the mount attempt so a missing or unexpected `remote`
+  // service is distinguishable from a `$mount` that ran and failed.
+  const remote = (ctx as unknown as { remote?: { $mount?: unknown } }).remote
+  console.info(
+    '[knowbase] remote service:',
+    remote === undefined ? 'absent' : `present, $mount=${typeof remote.$mount}`,
+  )
+
   void ctx.remote
     .$mount(TYPERT_REMOTE)
     .then(() => {
       setKnowbaseApi(createKnowbaseApi(ctx))
+      setChannelError(undefined)
       console.info('[knowbase] remote channel mounted')
     })
     .catch((error: unknown) => {
       // Without the channel the page can only render its empty state, so this
-      // failure has to be visible rather than silent.
+      // failure is both logged and shown in the page.
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      setChannelError(detail)
       console.error('[knowbase] remote channel failed to mount:', error)
     })
 
