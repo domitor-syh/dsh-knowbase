@@ -230,6 +230,14 @@ describe('KnowbaseService — retrieval', () => {
     expect(service.retrieve('13363537216', [people.id]).kind).toBe('hits')
   })
 
+  it('finds a stored number from a prefix of it', async () => {
+    // The second half of the same report: with the number kept whole as one
+    // term, a partial number found nothing.
+    const people = await service.createKnowledgeBase('联系方式')
+    await service.addText(people.id, '值班电话', '13363537216')
+    expect(service.retrieve('133', [people.id]).kind).toBe('hits')
+  })
+
   it('does not index the knowledge base name', () => {
     // The name labels a container; indexing it would make every chunk in a base
     // match a query for that base's name.

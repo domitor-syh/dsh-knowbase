@@ -137,6 +137,61 @@ describe('Bm25Index — incremental maintenance', () => {
   })
 })
 
+describe('Bm25Index — identifier prefix search', () => {
+  /** Two phone numbers, the shape that exposed the problem. */
+  function phoneIndex(): Bm25Index {
+    const index = new Bm25Index()
+    index.add('phone', '13363537216')
+    index.add('other', '13800138000')
+    return index
+  }
+
+  it('finds an identifier from its first few characters', () => {
+    // The reported failure: the tokenizer keeps a number whole on purpose, so
+    // `133` and `13363537216` were different terms and nothing matched.
+    expect(phoneIndex().search('133').map(hit => hit.id)).toEqual(['phone'])
+  })
+
+  it('still finds it from the complete number', () => {
+    expect(phoneIndex().search('13363537216').map(hit => hit.id)).toEqual(['phone'])
+  })
+
+  it('does not expand a two-character numeric query', () => {
+    // `13` would match most of a phone-number column; that is noise, not recall.
+    expect(phoneIndex().search('13')).toEqual([])
+  })
+
+  it('does not expand Latin words', () => {
+    // Prefix-matching words is stemming, which is a different decision.
+    const index = new Bm25Index()
+    index.add('a', 'ports')
+    expect(index.search('port')).toEqual([])
+  })
+
+  it('counts a prefix match as exactly one matched query term', () => {
+    // Coverage must not inflate: one query token is one term however many index
+    // terms it expanded to.
+    const [hit] = phoneIndex().search('133')
+    expect(hit!.coverage).toBe(1)
+    expect(hit!.matchedTerms).toEqual(['133'])
+  })
+
+  it('picks up a newly added identifier without a rebuild', () => {
+    const index = new Bm25Index()
+    index.add('a', '111222333')
+    expect(index.search('999')).toEqual([])
+    index.add('b', '999888777')
+    expect(index.search('999').map(hit => hit.id)).toEqual(['b'])
+  })
+
+  it('forgets a removed identifier', () => {
+    const index = new Bm25Index()
+    index.add('a', '13363537216')
+    expect(index.remove('a')).toBe(true)
+    expect(index.search('133')).toEqual([])
+  })
+})
+
 describe('Bm25Index — input handling', () => {
   it('returns nothing for an empty query or an empty index', () => {
     expect(deviceCorpus().search('')).toEqual([])
