@@ -1,0 +1,8 @@
+# Bundle layer contributed by @domitor-syh/dsh-knowbase.
+# Applied by `dsh plugin add` into any profile that lists this bundle.
+#
+# Native, local-first knowledge base: ingest local documents, retrieve with
+# Chinese n-gram / BM25, and let the conversation answer with citations.
+- insert:
+    - id: knowbase
+      name: '@domitor-syh/dsh-knowbase'

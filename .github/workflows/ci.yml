@@ -90,10 +90,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # dsh 0.2.0-rc.2 要求 Node ^22.19.0 || >=24.0.0，这里对齐最低主版本
+      # Aligned with the runtime the target host actually ships: the Windows
+      # desktop build of dsh 0.2.0-rc.2 reports node 24.21.0 in its
+      # runtime.json, so that is the version worth gating on.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: 启用 Corepack（按 packageManager 字段选择 pnpm 版本）
         run: corepack enable
@@ -119,6 +121,11 @@ jobs:
 
       - name: 构建
         run: pnpm run --if-present build
+
+      # tsc and tsdown prove the source is correct and bundles; only this proves
+      # the emitted files match the host runtime contract.
+      - name: 构建产物契约
+        run: pnpm run --if-present verify
 
   # 单一稳定检查名，便于后续在分支保护里只勾选这一项
   ci:

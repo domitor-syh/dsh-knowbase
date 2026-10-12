@@ -3,10 +3,20 @@ node_modules/
 dist/
 build/
 out/
+lib/
 *.tsbuildinfo
+*.tgz
+*.tgz.bak
+
+# pnpm 11 每次安装都会重写这个占位文件（内容只是「设为 true 或 false」的提示），
+# 它是噪声而非配置
+pnpm-workspace.yaml
 
 # 本地助手工作数据（记忆、会话状态），非项目源码
 .workbuddy-ai/
+
+# 隔离的 DSH 开发环境（DSH_HOME），用于不污染 ~/.dsh 的真机加载验证
+.dshdev/
 
 # 环境与凭据
 .env
