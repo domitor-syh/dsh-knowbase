@@ -129,6 +129,24 @@ check(
   !clientSource.includes('node_modules/@deepseek-ai/'),
 )
 
+// The browser half is loaded from the host's module table, which serves
+// platform seeds and registered package factories — not arbitrary npm packages.
+// A bare `require` of anything else fails at boot with "missed the module
+// table", which is not a broken feature but a plugin that does not load at all.
+// `dependencies` are externalized by default, so this is an easy mistake to make
+// and a cheap one to catch.
+const requires = [...clientSource.matchAll(/require\(\s*["']([^"']+)["']\s*\)/g)].map(
+  match => match[1],
+)
+const hostProvided = name =>
+  name === 'react' || name === 'react-dom' || name.startsWith('@deepseek-ai/')
+const unexpected = [...new Set(requires)].filter(name => !hostProvided(name))
+check(
+  'client bundle requires only host-provided modules',
+  unexpected.length === 0,
+  `unexpected: ${unexpected.join(', ')}`,
+)
+
 // -------------------------------------------------------------------- result
 
 console.log('')

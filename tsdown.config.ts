@@ -36,6 +36,16 @@ export default defineConfig([
     dts: false,
     sourcemap: false,
     deps: { neverBundle: [/^@deepseek-ai\//, 'react', 'react-dom'] },
+    // `zod` must be INLINED here, unlike in the host half. tsdown externalizes
+    // everything listed in `dependencies` by default, and the browser half is
+    // loaded from the host's module table, which serves platform seeds and
+    // registered package factories — not arbitrary npm packages. Leaving it
+    // external produced, at boot:
+    //   require("zod") missed the module table — not a platform seed word, not
+    //   a materialized module, and no registered package factory
+    // The host half keeps zod external, because Node resolves it from the
+    // profile's node_modules.
+    noExternal: ['zod'],
     outputOptions: {
       entryFileNames: '[name].js',
       banner:
