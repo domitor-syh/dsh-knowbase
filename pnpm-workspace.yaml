@@ -1,0 +1,18 @@
+# pnpm 11 keeps its settings here, not in package.json. The `allowBuilds` block
+# is REQUIRED and must hold explicit booleans: pnpm writes this file as a
+# placeholder stub ("set this to true or false") on the first install and fails
+# the install with ERR_PNPM_IGNORED_BUILDS until every entry is decided. Leaving
+# it gitignored therefore breaks CI on a fresh clone.
+#
+# Decisions below follow one rule: allow a build script only when this package
+# genuinely needs it to build, test or run; deny everything that arrives as a
+# transitive dependency of the host CLI.
+allowBuilds:
+  # Not used by this plugin. Arrives through the @deepseek-ai/dsh dev dependency.
+  '@deepseek-ai/dsh-subprocess-local': false
+  '@google/genai': false
+  koffi: false
+  node-pty: false
+  protobufjs: false
+  # Used by vitest through vite; its install step resolves the platform binary.
+  esbuild: true
