@@ -45,6 +45,19 @@ export function isHan(character: string): boolean {
 /** True for characters that join into a whole word term (letters, digits). */
 const WORD_CHARACTER = /^[\p{L}\p{N}]$/u
 
+/**
+ * Whether a character extends a Latin/digit word run.
+ *
+ * `\p{L}` also matches Han, so a plain `WORD_CHARACTER` test would swallow the
+ * Chinese that follows a Latin word: in `支持USB与以太网`, the run would become
+ * the single token `usb与以太网两种连接方式`, and every Chinese term inside it
+ * would vanish from the index. Mixed Chinese/Latin text is the normal case for
+ * the documents this plugin is for, so Han terminates a word run.
+ */
+function isWordCharacter(character: string): boolean {
+  return !isHan(character) && WORD_CHARACTER.test(character)
+}
+
 /** Emit overlapping n-grams for one contiguous Han run. */
 function emitNgrams(
   run: readonly string[],
@@ -95,9 +108,9 @@ export function tokenize(text: string, options: TokenizeOptions = {}): string[] 
       continue
     }
 
-    if (WORD_CHARACTER.test(character)) {
+    if (isWordCharacter(character)) {
       let end = index
-      while (end < characters.length && WORD_CHARACTER.test(characters[end]!)) end += 1
+      while (end < characters.length && isWordCharacter(characters[end]!)) end += 1
       tokens.push(characters.slice(index, end).join(''))
       index = end
       continue

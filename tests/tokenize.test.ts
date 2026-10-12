@@ -54,6 +54,22 @@ describe('tokenize — Latin and digits', () => {
     // Character n-grams on ASCII would multiply the index for no recall gain.
     expect(tokenize('abc')).toEqual(['abc'])
   })
+
+  it('does not let a Latin word swallow the Chinese that follows it', () => {
+    // `\p{L}` matches Han too, so a naive word-run test collapses
+    // `支持USB与以太网` into the single token `usb与以太网`, and every Chinese
+    // term inside it disappears from the index. Mixed text is the normal case.
+    const tokens = tokenize('支持USB与以太网')
+    expect(tokens).toContain('usb')
+    expect(tokens).toContain('以太')
+    expect(tokens).toContain('太网')
+    expect(tokens).not.toContain('usb与以太网')
+  })
+
+  it('splits a Latin word from Chinese on both sides', () => {
+    expect(tokenize('波特率115200bps')).toEqual(['波特', '特率', '波特率', '115200bps'])
+    expect(tokenize('USB接口')).toEqual(['usb', '接口'])
+  })
 })
 
 describe('tokenize — normalization', () => {

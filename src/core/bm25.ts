@@ -43,6 +43,15 @@ export interface SearchOptions {
   readonly minScore?: number
   /** Drop hits covering less than this fraction of the query. Default 0. */
   readonly minCoverage?: number
+  /**
+   * Reject a document before it is scored.
+   *
+   * Scope filtering has to happen here rather than on the result list: if the
+   * caller filters afterwards, hits from out-of-scope documents consume the
+   * `limit` and the answer silently comes back short. The plan states the same
+   * rule — filter during recall, then re-validate before returning.
+   */
+  readonly accept?: (id: string) => boolean
 }
 
 /** Tunables, exposed for calibration against a real question set. */
@@ -147,7 +156,7 @@ export class Bm25Index {
    * word is not a stronger request for that word.
    */
   search(query: string, options: SearchOptions = {}): SearchHit[] {
-    const { limit = 6, minScore = 0, minCoverage = 0 } = options
+    const { limit = 6, minScore = 0, minCoverage = 0, accept } = options
     if (limit <= 0 || this.#documents.size === 0) return []
 
     const queryTerms = [...new Set(tokenize(query, this.#tokenizeOptions))]
@@ -167,6 +176,7 @@ export class Bm25Index {
       const idf = Math.log(1 + (total - documentFrequency + 0.5) / (documentFrequency + 0.5))
 
       for (const [id, frequency] of posting) {
+        if (accept !== undefined && !accept(id)) continue
         const document = this.#documents.get(id)
         if (document === undefined) continue
 
