@@ -1,5 +1,6 @@
 /**
- * The per-answer knowledge-base source panel.
+ * The per-answer knowledge-base surface: a source panel when the answer had
+ * evidence, a status badge when it did not.
  *
  * The host's markdown pipeline is closed — no link hooks, no component map —
  * so the `[1] …` markers inside an answer's text cannot become clickable
@@ -9,10 +10,18 @@
  * overlay listing the passages in marker order — full text, source title,
  * locator.
  *
- * The structured passages arrive inside the evidence message's `source`
- * payload (see `../pre-step.ts` and `./citation-scan.ts`), so the panel needs
- * no round trip and no text parsing. Answers written before that field
- * existed simply show no button.
+ * ## Why the badge matters as much as the panel
+ *
+ * The plan's rule is that a miss must not be left to the model to remember to
+ * mention (「未命中提示不能只交给模型"记得说"」). An answer with no badge is
+ * indistinguishable from an answer the knowledge base never reached, so a turn
+ * that searched and found nothing says so, in a fixed string the plugin owns.
+ * The badge reports the outcome; it never claims the answer is wrong.
+ *
+ * The structured payload arrives inside the plugin message's `source` field
+ * (see `../pre-step.ts` and `./citation-scan.ts`), so both surfaces need no
+ * round trip and no text parsing. Answers written before either field existed
+ * show nothing at all.
  *
  * ## Why a portal
  *
@@ -25,7 +34,7 @@
 
 import * as React from 'react'
 import { createPortal } from 'react-dom'
-import { passagesForAnswer, type SourcePassage } from './citation-scan.ts'
+import { outcomeForAnswer, type AnswerOutcome, type SourcePassage } from './citation-scan.ts'
 
 const COLORS = {
   border: '#dce3ed',
@@ -34,7 +43,29 @@ const COLORS = {
   danger: '#b3261e',
   surface: '#fff',
   subtle: '#f6f8fb',
+  warn: '#8a6100',
 } as const
+
+/**
+ * Fixed text per outcome, owned by the plugin rather than the model.
+ *
+ * `hits` is absent on purpose: it is the one outcome with something to open,
+ * so it gets the button instead of a label.
+ */
+const STATUS_TEXT: Record<string, string> = {
+  no_match: '未检索到相关知识',
+  not_ready: '知识库还没有资料',
+  empty_scope: '所选知识库已失效',
+  error: '知识库检索暂不可用',
+}
+
+/** Longer explanation, shown on hover rather than in the strip. */
+const STATUS_HINT: Record<string, string> = {
+  no_match: '本次提问在所选知识库里没有命中片段。回答可能来自模型自身知识，不是库内资料。',
+  not_ready: '所选知识库里还没有已索引的资料，本次回答没有知识库依据。',
+  empty_scope: '本次选中的知识库不存在或已被删除，本次回答没有知识库依据。',
+  error: '知识库检索失败，本次回答没有知识库依据。',
+}
 
 /**
  * Props the seat composes.
@@ -165,7 +196,53 @@ function SourceOverlay(props: {
   )
 }
 
-/** The assistant action: the button when the turn carries evidence, else nothing. */
+/** The status badge: a fixed sentence the plugin owns, not the model. */
+function StatusBadge(props: { outcome: AnswerOutcome }): React.ReactElement | null {
+  const status = props.outcome.status
+  if (status === undefined) return null
+
+  const label = STATUS_TEXT[status.outcome]
+  // An outcome this build has never heard of still renders — as the raw token,
+  // which is ugly but honest. A client that hid it would turn a newer Host's
+  // new state into "no status at all", which is the one reading that lies.
+  if (label === undefined && status.outcome === 'hits') return null
+
+  const text = label ?? status.outcome
+  // The reason rides along even for a known outcome: the fixed sentence says
+  // what the user needs, the reason is what makes a broken retrieval fixable.
+  // This is a local app and the reader is the operator, so the raw text is
+  // diagnostic rather than a leak.
+  const base = STATUS_HINT[status.outcome] ?? text
+  const hint = status.reason === '' ? base : `${base}（${status.reason}）`
+
+  return (
+    <span
+      title={hint}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '2px 6px',
+        fontSize: 12,
+        color: COLORS.muted,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 3,
+          background: COLORS.warn,
+          flexShrink: 0,
+        }}
+      />
+      {text}
+    </span>
+  )
+}
+
+/** The assistant action: the source button when there is evidence, a badge otherwise. */
 export function KnowbaseSourceAction(props: Props): React.ReactElement | null {
   // Hook discipline on this seat is strict, and two earlier attempts proved it:
   // a conditional or factory-nested hook call changes the hook count across
@@ -199,11 +276,12 @@ export function KnowbaseSourceAction(props: Props): React.ReactElement | null {
       : undefined
   const chat = liveChat ?? (sessionSnapshot as { chat?: unknown } | undefined)?.chat
 
-  const passages =
-    typeof messageId === 'string' ? passagesForAnswer(chat, messageId) : []
+  const outcome = typeof messageId === 'string' ? outcomeForAnswer(chat, messageId) : undefined
+  const passages = outcome?.passages ?? []
 
   if (typeof messageId !== 'string') return null
-  if (passages.length === 0) return null
+  if (outcome === undefined) return null
+  if (passages.length === 0) return <StatusBadge outcome={outcome} />
 
   const actionButton = (
     <button

@@ -1,15 +1,16 @@
 /**
- * Scanning the chat snapshot for this plugin's evidence nodes.
+ * Scanning the chat snapshot for this plugin's message nodes.
  *
  * The `assistant-actions` seat hands the component a message id; locating the
- * turn's knowledge-base evidence means walking the chat snapshot's ordered
- * nodes. That walk is pure data in / data out, so it lives here where it can
- * be unit-tested, and the component only renders the result.
+ * turn's knowledge-base node means walking the chat snapshot's node store. That
+ * walk is pure data in / data out, so it lives here where it can be
+ * unit-tested, and the component only renders the result.
  *
  * The snapshot shape (`order` + `nodes` map, `location.turn`, `data.source`)
  * is read defensively — `unknown` everywhere with runtime narrowing — because
  * the chat package publishes these nodes as loose views and the plugin must
- * degrade to "no panel" rather than throw on any shape it did not expect.
+ * degrade to "nothing to show" rather than throw on any shape it did not
+ * expect.
  *
  * @module @domitor-syh/dsh-knowbase/client/citation-scan
  */
@@ -23,6 +24,25 @@ export type SourcePassage = Readonly<{
   locator: string
   text: string
 }>
+
+/** The retrieval status as it rides inside a knowbase message source. */
+export type SourceStatus = Readonly<{
+  outcome: string
+  passageCount: number
+  reason: string
+}>
+
+/**
+ * What one answer's knowledge-base node says.
+ *
+ * Both halves are optional because each was added at a different time: an
+ * answer from before the status existed still has passages, and one from
+ * before passages existed has neither.
+ */
+export interface AnswerOutcome {
+  readonly status?: SourceStatus
+  readonly passages: readonly SourcePassage[]
+}
 
 /** The turn number from a node's location (object form or bare number). */
 export function turnNoOf(location: unknown): number | undefined {
@@ -41,8 +61,8 @@ export function turnNoOf(location: unknown): number | undefined {
  * `nodes`, the full keyed store. Reading only `order` is why the panel never
  * appeared: the host hides plain injected-context rows from the transcript
  * (`buildViewNode`'s visibility rule keeps a `context` node only when it carries
- * tool-addition/tool-removal blocks), so this plugin's evidence node — a text
- * context message — is absent from `order` while still present in `nodes`.
+ * tool-addition/tool-removal blocks), so this plugin's node — a text context
+ * message — is absent from `order` while still present in `nodes`.
  *
  * `values()` is the published accessor (the empty snapshot declares it too);
  * the `order` + `get` route stays as a fallback for any snapshot that lacks it.
@@ -97,74 +117,105 @@ export function turnForMessageId(chat: unknown, messageId: string): number | und
   return undefined
 }
 
+/** Narrow one passage, rejecting anything that is not the declared shape. */
+function readPassage(passage: unknown): SourcePassage | undefined {
+  if (typeof passage !== 'object' || passage === null) return undefined
+  const kbName = (passage as { kbName?: unknown }).kbName
+  const materialTitle = (passage as { materialTitle?: unknown }).materialTitle
+  const locator = (passage as { locator?: unknown }).locator
+  const text = (passage as { text?: unknown }).text
+  if (
+    typeof kbName !== 'string' ||
+    typeof materialTitle !== 'string' ||
+    typeof locator !== 'string' ||
+    typeof text !== 'string'
+  ) {
+    return undefined
+  }
+  return { kbName, materialTitle, locator, text }
+}
+
+/** Narrow the status, rejecting anything that is not the declared shape. */
+function readStatus(status: unknown): SourceStatus | undefined {
+  if (typeof status !== 'object' || status === null) return undefined
+  const outcome = (status as { outcome?: unknown }).outcome
+  if (typeof outcome !== 'string' || outcome === '') return undefined
+  const passageCount = (status as { passageCount?: unknown }).passageCount
+  const reason = (status as { reason?: unknown }).reason
+  return {
+    outcome,
+    passageCount:
+      typeof passageCount === 'number' && Number.isSafeInteger(passageCount) ? passageCount : 0,
+    reason: typeof reason === 'string' ? reason : '',
+  }
+}
+
 /**
- * Whether a node is one of this plugin's evidence nodes carrying passages.
+ * What one node says, or `undefined` when it is not this plugin's node.
  *
- * The node's `source` is erased to `unknown` on the client, so every field is
- * narrowed at runtime; a node that merely resembles the shape is not accepted.
+ * `undefined` and "a node with nothing in it" are different answers, and the
+ * caller depends on the difference: the first means no badge at all, the second
+ * means a badge that reports an outcome. So the node's identity is established
+ * before its payload is read, never inferred from the payload being non-empty.
  */
-function passagesOfNode(node: unknown): readonly SourcePassage[] | undefined {
+function outcomeOfNode(node: unknown): AnswerOutcome | undefined {
   if ((node as { kind?: unknown } | undefined)?.kind !== 'context') return undefined
   const source = (node as { data?: { source?: unknown } }).data?.source
   if (typeof source !== 'object' || source === null) return undefined
   if ((source as { kind?: unknown }).kind !== 'knowbase') return undefined
-  const passages = (source as { passages?: unknown }).passages
-  if (!Array.isArray(passages)) return undefined
 
-  const cleaned: SourcePassage[] = []
-  for (const passage of passages) {
-    if (typeof passage !== 'object' || passage === null) continue
-    const kbName = (passage as { kbName?: unknown }).kbName
-    const materialTitle = (passage as { materialTitle?: unknown }).materialTitle
-    const locator = (passage as { locator?: unknown }).locator
-    const text = (passage as { text?: unknown }).text
-    if (
-      typeof kbName !== 'string' ||
-      typeof materialTitle !== 'string' ||
-      typeof locator !== 'string' ||
-      typeof text !== 'string'
-    ) {
-      continue
+  const passages: SourcePassage[] = []
+  const rawPassages = (source as { passages?: unknown }).passages
+  if (Array.isArray(rawPassages)) {
+    for (const passage of rawPassages) {
+      const cleaned = readPassage(passage)
+      if (cleaned !== undefined) passages.push(cleaned)
     }
-    cleaned.push({ kbName, materialTitle, locator, text })
   }
-  return cleaned
+
+  const status = readStatus((source as { status?: unknown }).status)
+  return { status, passages }
 }
 
 /**
- * Every knowledge-base passage attached to one turn's context nodes, in
- * transcript order so the numbering matches the answer's `[n]` markers.
+ * What one turn's knowledge-base node says, or `undefined` when the turn has
+ * none — including turns answered before the plugin carried any payload.
  *
- * Empty when the turn has none — including turns answered before the plugin
- * started carrying passages in the source payload.
+ * Nodes are walked in transcript order so passage numbering matches the
+ * answer's `[n]` markers. Several matching nodes are merged rather than the
+ * first being taken: a guard upstream keeps one node per input, but a turn that
+ * somehow carries two should show all of its sources rather than half of them.
  */
-export function passagesOfTurn(chat: unknown, turn: number): readonly SourcePassage[] {
+export function outcomeOfTurn(chat: unknown, turn: number): AnswerOutcome | undefined {
   const matched: unknown[] = []
   for (const node of allNodes(chat)) {
     if (turnNoOf((node as { location?: unknown }).location) !== turn) continue
-    if (passagesOfNode(node) === undefined) continue
+    if (outcomeOfNode(node) === undefined) continue
     matched.push(node)
   }
+  if (matched.length === 0) return undefined
   matched.sort((left, right) => seqOf(left) - seqOf(right))
 
-  const result: SourcePassage[] = []
+  const passages: SourcePassage[] = []
+  let status: SourceStatus | undefined
   for (const node of matched) {
-    const passages = passagesOfNode(node)
-    if (passages !== undefined) result.push(...passages)
+    const outcome = outcomeOfNode(node)
+    if (outcome === undefined) continue
+    passages.push(...outcome.passages)
+    if (outcome.status !== undefined) status = outcome.status
   }
-  return result
+  return { status, passages }
 }
 
 /**
- * The passages behind one answer, resolved from its closing message id.
+ * What the node behind one answer says, resolved from its closing message id.
  *
- * The single entry point the assistant-action component uses. Narrowed to the
- * view type the panel renders.
+ * The single entry point the assistant-action component uses.
  */
-export function passagesForAnswer(chat: unknown, messageId: string): readonly SourcePassage[] {
+export function outcomeForAnswer(chat: unknown, messageId: string): AnswerOutcome | undefined {
   const turn = turnForMessageId(chat, messageId)
-  if (turn === undefined) return []
-  return passagesOfTurn(chat, turn)
+  if (turn === undefined) return undefined
+  return outcomeOfTurn(chat, turn)
 }
 
 /** Re-export for the panel's prop typing; keeps one shape across the plugin. */

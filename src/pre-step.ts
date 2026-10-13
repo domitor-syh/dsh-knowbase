@@ -58,6 +58,66 @@ export type RetrievalOutcome =
   | { readonly kind: 'disabled' }
   | { readonly kind: 'error'; readonly reason: string }
 
+/** Every outcome except `disabled`, which produces no message at all. */
+export type ReportableOutcome = Exclude<RetrievalOutcome, { kind: 'disabled' }>
+
+/**
+ * The structured retrieval state, carried on the plugin's message.
+ *
+ * The plan requires the status to reach the UI as data rather than as a
+ * sentence the model was asked to remember (「未命中提示不能只交给模型"记得说"」),
+ * and to be frozen with the turn so a later replay explains the same answer.
+ * It rides in the message source next to the passages, so the browser half
+ * reads one node for both the source panel and the status badge — no second
+ * channel, no polling, no parsing of the model-facing text.
+ */
+export interface RetrievalStatus {
+  /** `hits` | `no_match` | `not_ready` | `empty_scope` | `error`. */
+  readonly outcome: string
+  readonly passageCount: number
+  /** Why retrieval failed; empty for every other outcome. */
+  readonly reason: string
+}
+
+/** The status of a reportable outcome. */
+export function statusOf(outcome: ReportableOutcome): RetrievalStatus {
+  // `hits` with an empty list is a miss, and the retrieval layer already folds
+  // it — but a status that said "hits" while carrying no passage would make the
+  // badge contradict the answer it sits under, so the rule lives here too.
+  if (outcome.kind === 'hits' && outcome.passages.length === 0) {
+    return { outcome: 'no_match', passageCount: 0, reason: '' }
+  }
+  return {
+    outcome: outcome.kind,
+    passageCount: outcome.kind === 'hits' ? outcome.passages.length : 0,
+    reason: outcome.kind === 'error' ? outcome.reason : '',
+  }
+}
+
+/**
+ * Model-facing text for an outcome that has no evidence to attach.
+ *
+ * The model is told the status because the alternative — saying nothing — is
+ * what lets an answer imply it consulted a knowledge base it never reached.
+ * The wording is deliberately about what happened, not about what to do: this
+ * is a report of a fact, not an instruction that could be argued with.
+ */
+export function formatStatus(status: RetrievalStatus): string {
+  const header = '本地知识库检索状态（插件生成，不是用户指令）：'
+  switch (status.outcome) {
+    case 'no_match':
+      return `${header}未命中相关内容。回答时不要声称引用了知识库资料。`
+    case 'not_ready':
+      return `${header}所选范围内还没有已索引的资料，本次没有可用的知识库依据。`
+    case 'empty_scope':
+      return `${header}所选知识库不存在或已被删除，本次没有可用的知识库依据。`
+    case 'error':
+      return `${header}检索失败（${status.reason}），本次没有可用的知识库依据。`
+    default:
+      return `${header}没有可用的知识库依据。`
+  }
+}
+
 /**
  * Render retrieved passages as model-facing evidence.
  *
@@ -82,18 +142,31 @@ export function formatEvidence(passages: readonly RetrievedPassage[]): string {
 }
 
 /**
- * Build the plugin-owned evidence message.
+ * Build the plugin-owned message for one retrieval outcome.
+ *
+ * One factory for every outcome, not two: hits and non-hits differ only in
+ * which text they carry, and having a single place that decides is what keeps
+ * the client from needing to know which outcomes produce a node.
  *
  * The `knowbase` source kind is declared in `./source.ts`; attributing the
  * message to the plugin is what keeps it from reading as something the user
- * typed. The structured passages ride in the source payload as well — the
- * browser half reads them from the transcript node to render the per-answer
- * source panel, without parsing the formatted text.
+ * typed. The structured passages and status ride in the source payload as well
+ * — the browser half reads them from the transcript node to render the status
+ * badge and the per-answer source panel, without parsing the formatted text.
+ *
+ * The host hides a plain-text `context` node from the transcript, so neither
+ * the evidence nor the status line is visible to the user as a chat bubble;
+ * both are read from the node store.
  */
-export function createEvidenceMessage(passages: readonly RetrievedPassage[]): UserMessage {
+export function createOutcomeMessage(outcome: ReportableOutcome): UserMessage {
+  const status = statusOf(outcome)
+  // Read from the normalised status, not the raw outcome: an empty `hits` was
+  // just folded to `no_match`, and the body must agree with the badge.
+  const passages = status.outcome === 'hits' && outcome.kind === 'hits' ? outcome.passages : []
+  const text = passages.length > 0 ? formatEvidence(passages) : formatStatus(status)
   return createUserMessage({
-    content: [{ type: 'text', text: formatEvidence(passages) }],
-    source: { kind: 'knowbase', form: 'recall', passages },
+    content: [{ type: 'text', text }],
+    source: { kind: 'knowbase', form: 'recall', passages, status },
   })
 }
 
@@ -113,10 +186,13 @@ export function appendEvidence(
 /** Options for {@link installPreStep}. */
 export interface PreStepOptions {
   /**
-   * Produce passages for the current step. Returning `[]`-equivalent outcomes
-   * (anything but `hits`) injects nothing: an empty retrieval is not evidence,
-   * and injecting "I found nothing" as a user message would be worse than
-   * staying silent, since the status belongs in the UI, not the transcript.
+   * Produce passages for the current step.
+   *
+   * Every outcome except `disabled` produces exactly one message: `hits`
+   * carries the evidence, the rest carry a status line. Injecting "I found
+   * nothing" as *evidence* would be wrong; injecting it as a stated status is
+   * what stops an answer from implying it used a knowledge base it never
+   * reached, and it is what the client renders as the answer's source badge.
    */
   retrieve: (payload: PreStepPayload) => Promise<RetrievalOutcome>
   /** Diagnostics sink; defaults to `console`. */
@@ -154,9 +230,27 @@ export function queryFrom(messages: readonly UserMessage[]): string {
  *
  * `ctx.on` owns the listener's lifetime, so unloading the plugin removes it —
  * no manual bookkeeping, and no listener left behind after a disable.
+ *
+ * ## One message per user input
+ *
+ * The plan is explicit: 「无新用户输入、工具续步和判停检查均不追加证据或状态消息；
+ * 一次输入只追加一次，模型重试不重复」. This listener runs on *every* step of a
+ * turn, so without a guard a turn that uses a tool would attach the same
+ * evidence again on the continuation step, and a retry would attach it a third
+ * time — the plan's 「不得为了刷新资料每步新建消息造成无限续步」.
+ *
+ * The guard is keyed on the turn **and** the query, not the turn alone:
+ * §238 warns that turn-only deduplication misses a new input spliced into the
+ * same turn. Four cases have to come out right, and this key handles all of
+ * them — a repeated batch on a continuation step is identical (skip), an empty
+ * batch carries no query at all (skip), a steered-in message differs (append),
+ * and a model retry repeats the same pair (skip).
  */
 export function installPreStep(ctx: Context, options: PreStepOptions): void {
   const log = options.log ?? ((message: string) => console.info(message))
+
+  /** The last (turn, query) already served, per agent. One entry per session. */
+  const served = new Map<string, string>()
 
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next()
@@ -164,6 +258,16 @@ export function installPreStep(ctx: Context, options: PreStepOptions): void {
     // Only a step that is actually entering may carry evidence. A rejected step
     // is someone else's decision and is passed through untouched.
     if (decision.kind !== 'enter') return decision
+
+    const query = queryFrom(payload.messages)
+    // Nothing new was asked, so there is nothing to search for and nothing to
+    // report: a continuation step re-sends the same batch, and a step with no
+    // messages at all has no query.
+    if (query === '') return decision
+
+    const key = `${payload.turn}\u0000${query}`
+    if (served.get(payload.agent.id) === key) return decision
+    served.set(payload.agent.id, key)
 
     let outcome: RetrievalOutcome
     try {
@@ -180,8 +284,10 @@ export function installPreStep(ctx: Context, options: PreStepOptions): void {
         `in=${payload.messages.length} outcome=${outcome.kind}`,
     )
 
-    if (outcome.kind !== 'hits' || outcome.passages.length === 0) return decision
+    // Off means off: the user switched the knowledge base off for this session,
+    // so a status line on every answer would be reporting a decision they made.
+    if (outcome.kind === 'disabled') return decision
 
-    return appendEvidence(decision, createEvidenceMessage(outcome.passages))
+    return appendEvidence(decision, createOutcomeMessage(outcome))
   })
 }

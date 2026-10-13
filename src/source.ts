@@ -6,11 +6,11 @@
  * user. `@deepseek-ai/dsh-time-context` is the shipped precedent for this
  * pattern.
  *
- * The optional `passages` payload rides along so the browser half can render a
- * per-answer source panel without parsing the evidence text: the same data the
- * model sees as `[1] …` markers, structured, frozen with the message and
- * persisted with the transcript. Absent on messages written before this field
- * existed — those answers simply offer no source panel.
+ * The structured payload rides along so the browser half can render a
+ * per-answer source panel and status badge without parsing the model-facing
+ * text: the same data the model sees, structured, frozen with the message and
+ * persisted with the transcript. `passages` is absent on messages written
+ * before it existed — those answers simply offer no source panel.
  *
  * This declaration is type-only and erased at build time; it is picked up
  * because `tsconfig.json` includes `src/**\/*.ts`.
@@ -19,7 +19,7 @@
  */
 
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
-import type { RetrievedPassage } from './pre-step.ts'
+import type { RetrievalStatus, RetrievedPassage } from './pre-step.ts'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -28,6 +28,15 @@ declare module '@deepseek-ai/dsh-llm' {
       kind: 'knowbase'
       /** The passages behind the `[1] …` markers, for the client's source panel. */
       readonly passages?: readonly RetrievedPassage[]
+      /**
+       * What the retrieval attempt produced, for the client's status badge.
+       *
+       * Separate from `passages` because the two answer different questions:
+       * an empty `passages` says nothing about *why*, and 「未命中」,
+       * 「还没有资料」 and 「检索暂不可用」 are three different things to tell a
+       * user. Absent on messages written before this field existed.
+       */
+      readonly status?: RetrievalStatus
     } & ContextFormed
   }
 }
