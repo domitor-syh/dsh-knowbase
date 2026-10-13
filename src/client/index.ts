@@ -31,6 +31,7 @@ import {
 import { KnowbaseSourceAction } from './citation-button.tsx'
 import { ComposerKnowbaseToggle } from './composer-toggle.tsx'
 import { TYPERT_REMOTE } from './contribution.ts'
+import { installReader } from './reader.ts'
 import { KnowbaseSettingsPage } from './settings-page.tsx'
 
 export const name = 'knowbase'
@@ -47,6 +48,10 @@ export const inject = ['slots', 'locale', 'remote']
 
 export function apply(ctx: Context): void {
   console.info('[knowbase] client half loaded')
+
+  // The material reader: a tab type in the host's right column, so a citation
+  // opens the source beside the answer instead of in a modal over it.
+  installReader(ctx)
 
   // Reported before the mount attempt so a missing or unexpected `remote`
   // service is distinguishable from a `$mount` that ran and failed.

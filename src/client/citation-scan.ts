@@ -23,6 +23,19 @@ export type SourcePassage = Readonly<{
   materialTitle: string
   locator: string
   text: string
+  /**
+   * Identity of the material, present only on answers produced after the
+   * reader existed.
+   *
+   * Optional rather than required on purpose: `readPassage` drops anything it
+   * cannot narrow, so making these required would silently empty the source
+   * panel of every older answer. Absent ids cost the reader action and nothing
+   * else.
+   */
+  kbId?: string
+  materialId?: string
+  /** Chunk position inside the material — where the reader lands. */
+  ordinal?: number
 }>
 
 /** The retrieval status as it rides inside a knowbase message source. */
@@ -132,7 +145,22 @@ function readPassage(passage: unknown): SourcePassage | undefined {
   ) {
     return undefined
   }
-  return { kbName, materialTitle, locator, text }
+  // Identity is optional and read leniently: a malformed id drops the reader
+  // action, never the passage.
+  const kbId = (passage as { kbId?: unknown }).kbId
+  const materialId = (passage as { materialId?: unknown }).materialId
+  const ordinal = (passage as { ordinal?: unknown }).ordinal
+  return {
+    kbName,
+    materialTitle,
+    locator,
+    text,
+    ...(typeof kbId === 'string' && kbId !== '' ? { kbId } : {}),
+    ...(typeof materialId === 'string' && materialId !== '' ? { materialId } : {}),
+    ...(typeof ordinal === 'number' && Number.isSafeInteger(ordinal) && ordinal >= 0
+      ? { ordinal }
+      : {}),
+  }
 }
 
 /** Narrow the status, rejecting anything that is not the declared shape. */

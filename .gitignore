@@ -31,6 +31,10 @@ tmp/
 temp/
 *.tmp
 
+# 真机验证用的临时抓取物（宿主页面、插槽清单、带 token 的 URL、cookie）。
+# 全部可由 HANDOFF §5/§14 的命令重新生成，且 .kb-url.txt / .kb-cookies.txt 含 token。
+.kb-*
+
 # 测试与覆盖率
 coverage/
 .nyc_output/

@@ -40,6 +40,25 @@ export interface RetrievedPassage {
   readonly locator: string
   /** The passage text itself. */
   readonly text: string
+  /**
+   * Identity of the knowledge base the passage came from.
+   *
+   * The display fields above are enough to *show* a source; opening one needs
+   * the ids. They ride in the same payload so the browser half can turn a
+   * citation into a `dsh-resource://knowbase/<kbId>/<materialId>` address
+   * without a second round trip and without matching on titles, which are not
+   * unique. Optional because messages written before the reader existed have
+   * no ids — those answers keep their source panel and simply offer no
+   * "open in the reader" action.
+   */
+  readonly kbId?: string
+  /** Identity of the material within that knowledge base. */
+  readonly materialId?: string
+  /**
+   * Ordinal of the chunk inside the material, which is what the reader scrolls
+   * to and highlights.
+   */
+  readonly ordinal?: number
 }
 
 /** What a retrieval attempt produced, including the honest failure modes. */

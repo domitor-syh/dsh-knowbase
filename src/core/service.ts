@@ -58,6 +58,8 @@ export class KnowbaseError extends Error {
 interface ChunkContext {
   readonly kbId: string
   readonly materialId: string
+  /** Position of the chunk inside its material; the reader scrolls to it. */
+  readonly ordinal: number
   readonly kbName: string
   readonly materialTitle: string
   readonly headingPath: string
@@ -567,6 +569,9 @@ export class KnowbaseService {
         materialTitle: context.materialTitle,
         locator: context.locator,
         text: context.text,
+        kbId: context.kbId,
+        materialId: context.materialId,
+        ordinal: context.ordinal,
       })
     }
 
@@ -727,6 +732,7 @@ export class KnowbaseService {
       this.#chunks.set(chunk.id, {
         kbId: material.kbId,
         materialId: material.id,
+        ordinal: chunk.ordinal,
         kbName,
         materialTitle: material.title,
         headingPath: chunk.headingPath,

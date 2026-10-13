@@ -35,6 +35,7 @@
 import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { outcomeForAnswer, type AnswerOutcome, type SourcePassage } from './citation-scan.ts'
+import { openMaterialInReader } from './reader.ts'
 
 const COLORS = {
   border: '#dce3ed',
@@ -86,11 +87,42 @@ function messageOf(error: unknown): string {
   return String(error)
 }
 
-/** One passage row: numbered like the answer's `[n]` markers. */
-function PassageRow(props: { passage: SourcePassage; index: number }): React.ReactElement {
-  const { passage, index } = props
+/**
+ * One passage row: numbered like the answer's `[n]` markers.
+ *
+ * A passage whose answer predates the reader carries no ids, so the row offers
+ * no action rather than a button that cannot work — the same degradation the
+ * status badge uses for messages written before it existed.
+ *
+ * @param props - the passage, its 1-based position, and the overlay's close.
+ */
+function PassageRow(props: {
+  passage: SourcePassage
+  index: number
+  onOpened: () => void
+}): React.ReactElement {
+  const { passage, index, onOpened } = props
+  const [failure, setFailure] = React.useState<string | undefined>(undefined)
+  const { kbId, materialId, ordinal } = passage
+  const openable = kbId !== undefined && materialId !== undefined
+
+  const onOpen = (): void => {
+    if (kbId === undefined || materialId === undefined) return
+    const problem = openMaterialInReader({
+      kbId,
+      materialId,
+      ...(ordinal === undefined ? {} : { chunk: ordinal }),
+      title: passage.materialTitle,
+    })
+    // On success the overlay closes so the column it just revealed is visible;
+    // on failure the row says why instead of leaving a dead click.
+    if (problem === undefined) onOpened()
+    else setFailure(problem)
+  }
+
   return (
     <div
+      data-kb-passage
       style={{
         border: `1px solid ${COLORS.border}`,
         borderRadius: 6,
@@ -99,12 +131,46 @@ function PassageRow(props: { passage: SourcePassage; index: number }): React.Rea
         marginBottom: 8,
       }}
     >
-      <div style={{ fontSize: 12, color: COLORS.accent, marginBottom: 4 }}>
-        [{index + 1}] {passage.kbName} / {passage.materialTitle} · {passage.locator}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 8,
+          marginBottom: 4,
+        }}
+      >
+        <div data-kb-passage-header style={{ fontSize: 12, color: COLORS.accent }}>
+          [{index + 1}] {passage.kbName} / {passage.materialTitle} · {passage.locator}
+        </div>
+        {openable ? (
+          <button
+            type="button"
+            data-kb-open-in-reader
+            title="在右侧栏打开这份资料并定位到该片段"
+            onClick={onOpen}
+            style={{
+              flexShrink: 0,
+              border: `1px solid ${COLORS.border}`,
+              background: COLORS.surface,
+              borderRadius: 4,
+              padding: '1px 6px',
+              fontSize: 11,
+              color: COLORS.accent,
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            在右栏打开
+          </button>
+        ) : null}
       </div>
-      <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', color: '#1c2733' }}>
+      <div data-kb-passage-text style={{ fontSize: 13, whiteSpace: 'pre-wrap', color: '#1c2733' }}>
         {passage.text}
       </div>
+      {failure === undefined ? null : (
+        <div style={{ fontSize: 11, color: COLORS.danger, marginTop: 6 }}>{failure}</div>
+      )}
     </div>
   )
 }
@@ -185,7 +251,7 @@ function SourceOverlay(props: {
         </div>
         <div style={{ padding: 16, overflowY: 'auto' }}>
           {passages.map((passage, index) => (
-            <PassageRow key={index} passage={passage} index={index} />
+            <PassageRow key={index} passage={passage} index={index} onOpened={onClose} />
           ))}
           <p style={{ color: COLORS.muted, fontSize: 11, margin: '4px 2px 0' }}>
             编号与回答中「[1]」等标记对应；片段为检索命中的原文。
