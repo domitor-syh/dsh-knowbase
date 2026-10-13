@@ -38,6 +38,7 @@
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:ci-locale": "vitest run --config scripts/vitest.ci-locale.config.mjs",
     "verify": "node scripts/verify-bundles.mjs"
   },
   "license": "MIT",

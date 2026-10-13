@@ -20,6 +20,7 @@ import { Bm25Index } from './bm25.ts'
 import { chunkText, type ChunkOptions } from './chunk.ts'
 import { contentFingerprint } from './fingerprint.ts'
 import { materialText, newId, normalizeName, type KnowledgeBase, type Material } from './model.ts'
+import { compareText } from './order.ts'
 
 /** Recorded in every backup so a file says which build wrote it. */
 const PACKAGE_NAME = '@domitor-syh/dsh-knowbase'
@@ -168,7 +169,7 @@ export class KnowbaseService {
   listKnowledgeBases(): readonly KnowledgeBase[] {
     return [...this.#knowledgeBases.values()]
       .filter(knowledgeBase => knowledgeBase.deletedAt === undefined)
-      .sort((left, right) => left.name.localeCompare(right.name))
+      .sort((left, right) => compareText(left.name, right.name))
   }
 
   /** Every soft-deleted knowledge base, most recently deleted first. */

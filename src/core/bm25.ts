@@ -21,6 +21,7 @@
  * @module @domitor-syh/dsh-knowbase/core/bm25
  */
 
+import { compareId } from './order.ts'
 import { termFrequencies, tokenize, type TokenizeOptions } from './tokenize.ts'
 
 /** One scored result. */
@@ -204,8 +205,11 @@ export class Bm25Index {
     }
 
     // Ties break on id so a result set is reproducible rather than dependent on
-    // Map insertion order, which would make tests and trace logs flaky.
-    hits.sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
+    // Map insertion order, which would make tests and trace logs flaky. The id
+    // order is by code point (`./order.ts`), not by collation: reproducibility
+    // is the whole point here, and a collator would put the result back at the
+    // mercy of the runtime's locale data.
+    hits.sort((left, right) => right.score - left.score || compareId(left.id, right.id))
     return hits.slice(0, limit)
   }
 

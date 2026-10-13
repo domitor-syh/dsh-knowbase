@@ -36,6 +36,7 @@
 import { z } from 'zod'
 import { normalizeForFingerprint } from './fingerprint.ts'
 import { normalizeName } from './model.ts'
+import { compareId, compareText } from './order.ts'
 
 /** Marker that identifies this plugin's backups. Checked before anything else. */
 export const BACKUP_FORMAT = 'dsh-knowbase-backup'
@@ -134,14 +135,19 @@ export interface BackupSource {
  * Bases and materials are sorted so that two backups of unchanged data are
  * byte-identical — which is what makes a backup diffable, and what makes
  * "did anything change?" answerable without opening the app.
+ *
+ * The orders come from `./order.ts` rather than a bare `localeCompare`: the
+ * promise above is only worth anything if it holds on the machine reading the
+ * file as well as the one that wrote it, and an ambient-locale comparison does
+ * not (CI caught exactly that).
  */
 export function buildBackupDocument(source: BackupSource): BackupDocument {
   const bases = [...source.bases]
-    .sort((left, right) => left.name.localeCompare(right.name))
+    .sort((left, right) => compareText(left.name, right.name))
     .map(base => ({
       ...base,
       materials: [...base.materials].sort(
-        (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+        (left, right) => left.createdAt - right.createdAt || compareId(left.id, right.id),
       ),
     }))
 
