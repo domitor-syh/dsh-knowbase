@@ -86,12 +86,14 @@ export function formatEvidence(passages: readonly RetrievedPassage[]): string {
  *
  * The `knowbase` source kind is declared in `./source.ts`; attributing the
  * message to the plugin is what keeps it from reading as something the user
- * typed.
+ * typed. The structured passages ride in the source payload as well — the
+ * browser half reads them from the transcript node to render the per-answer
+ * source panel, without parsing the formatted text.
  */
 export function createEvidenceMessage(passages: readonly RetrievedPassage[]): UserMessage {
   return createUserMessage({
     content: [{ type: 'text', text: formatEvidence(passages) }],
-    source: { kind: 'knowbase', form: 'recall' },
+    source: { kind: 'knowbase', form: 'recall', passages },
   })
 }
 

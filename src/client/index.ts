@@ -17,6 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 // an augmentation only applies when its module is loaded by the type-check
 // program. `verbatimModuleSyntax` erases every one of them at emit, so the
 // shipped bundle still imports nothing from the host beyond what `inject` names.
+import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -27,6 +28,7 @@ import {
   setChannelError,
   setKnowbaseApi,
 } from './api.ts'
+import { KnowbaseSourceAction } from './citation-button.tsx'
 import { ComposerKnowbaseToggle } from './composer-toggle.tsx'
 import { TYPERT_REMOTE } from './contribution.ts'
 import { KnowbaseSettingsPage } from './settings-page.tsx'
@@ -112,6 +114,18 @@ export function apply(ctx: Context): void {
         inject: (sessionId: string) => ({ sessionId }),
       },
       ComposerKnowbaseToggle,
+    ),
+  )
+
+  // The per-answer source panel trigger — the same action strip the feedback
+  // buttons use. The markdown pipeline cannot turn `[1]` markers into links,
+  // so the panel opens from here instead: the component scans the chat
+  // snapshot for this plugin's evidence node and renders a button only when
+  // the turn actually carried passages.
+  ctx.slots.inject('conversation.chat.assistant-actions', () =>
+    ctx.slots.register(
+      { name: 'conversation.chat.assistant-actions', id: 'knowbase-sources', order: 30 },
+      KnowbaseSourceAction,
     ),
   )
 }
