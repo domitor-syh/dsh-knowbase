@@ -35,7 +35,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import type { SessionSelectionRegistry } from './commands.ts'
+import type { SessionSelectionRegistry } from './core/session-scope.ts'
 import type { KnowbaseService } from './core/service.ts'
 import { installRemoteMarkers } from './remote-methods.ts'
 
@@ -307,7 +307,7 @@ export class KnowbaseRemote extends TypertRemoteService {
     all: boolean,
     kbIds: readonly string[],
   ): Promise<SessionScopeView> {
-    deps().selection.set(agentId, { enabled, scope: all ? 'all' : [...kbIds] })
+    await deps().selection.set(agentId, { enabled, scope: all ? 'all' : [...kbIds] })
     // Deliberately not `this.getSessionScope(...)`: `this` may be the wrapper a
     // Remote call arrives through, and nothing here should depend on it.
     return readScope(agentId)

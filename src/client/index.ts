@@ -13,6 +13,11 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+// Type-only pulls: these packages augment `SlotMap` by declaration merging, and
+// an augmentation only applies when its module is loaded by the type-check
+// program. `verbatimModuleSyntax` erases every one of them at emit, so the
+// shipped bundle still imports nothing from the host beyond what `inject` names.
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import {
@@ -22,6 +27,7 @@ import {
   setChannelError,
   setKnowbaseApi,
 } from './api.ts'
+import { ComposerKnowbaseToggle } from './composer-toggle.tsx'
 import { TYPERT_REMOTE } from './contribution.ts'
 import { KnowbaseSettingsPage } from './settings-page.tsx'
 
@@ -89,6 +95,23 @@ export function apply(ctx: Context): void {
         label: () => '知识库',
       },
       KnowbaseSettingsPage,
+    ),
+  )
+
+  // The composer control — the switch that makes the feature reachable without
+  // knowing `/kb` exists. `conversation.input.left` is a list slot, so this
+  // sits beside the host's own compact controls instead of shadowing any of
+  // them. The inject face hands the component the session id, which is the
+  // identifier the Host keys every selection by.
+  ctx.slots.inject('conversation.input.left', () =>
+    ctx.slots.register(
+      {
+        name: 'conversation.input.left',
+        id: 'knowbase',
+        order: 40,
+        inject: (sessionId: string) => ({ sessionId }),
+      },
+      ComposerKnowbaseToggle,
     ),
   )
 }

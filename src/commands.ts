@@ -27,36 +27,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
+import { resolveScope, type SessionSelectionRegistry } from './core/session-scope.ts'
 import { KnowbaseError, type KnowbaseService } from './core/service.ts'
-
-/** Per-session retrieval selection. */
-export interface SessionSelection {
-  readonly enabled: boolean
-  /** `'all'` or an explicit set of knowledge base ids. */
-  readonly scope: 'all' | readonly string[]
-}
-
-/**
- * In-memory session selections.
- *
- * Not persisted yet, so a host restart resets every session to the default
- * (off). The plan wants this persisted per session and defaulted off for new
- * sessions, which this already does; only the persistence is missing, and it
- * belongs with the settings UI rather than here.
- */
-export class SessionSelectionRegistry {
-  readonly #selections = new Map<string, SessionSelection>()
-
-  /** The selection for a session, defaulting to disabled. */
-  get(agentId: string): SessionSelection {
-    return this.#selections.get(agentId) ?? { enabled: false, scope: 'all' }
-  }
-
-  /** Replace a session's selection. */
-  set(agentId: string, selection: SessionSelection): void {
-    this.#selections.set(agentId, selection)
-  }
-}
 
 /** Dependencies the command surface needs. */
 export interface CommandDeps {
@@ -210,16 +182,16 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
           case 'use': {
             const wanted = argument.trim()
             if (wanted === '关闭' || wanted === 'off') {
-              selection.set(agentId, { enabled: false, scope: 'all' })
+              await selection.set(agentId, { enabled: false, scope: 'all' })
               return { kind: 'success', text: '本会话已关闭知识库。' }
             }
             if (wanted === '全部' || wanted === 'all') {
-              selection.set(agentId, { enabled: true, scope: 'all' })
+              await selection.set(agentId, { enabled: true, scope: 'all' })
               return { kind: 'success', text: '本会话使用全部知识库。' }
             }
             const target = service.findKnowledgeBaseByName(wanted)
             if (target === undefined) return { kind: 'error', text: `没有名为「${wanted}」的知识库。` }
-            selection.set(agentId, { enabled: true, scope: [target.id] })
+            await selection.set(agentId, { enabled: true, scope: [target.id] })
             return { kind: 'success', text: `本会话只使用「${target.name}」。` }
           }
 
@@ -243,21 +215,4 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
       }
     },
   })
-}
-
-/**
- * Resolve a session selection into the concrete ids to search.
- *
- * @returns the ids, or `null` when the session has the feature switched off —
- *   which is not the same as an empty scope and must not be treated as one.
- */
-export function resolveScope(
-  selection: SessionSelection,
-  service: KnowbaseService,
-): string[] | null {
-  if (!selection.enabled) return null
-  if (selection.scope === 'all') {
-    return service.listKnowledgeBases().map(knowledgeBase => knowledgeBase.id)
-  }
-  return [...selection.scope]
 }

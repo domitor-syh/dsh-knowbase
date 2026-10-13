@@ -24,11 +24,12 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { installCommands, resolveScope, SessionSelectionRegistry } from './commands.ts'
+import { installCommands } from './commands.ts'
+import { resolveScope, SessionSelectionRegistry } from './core/session-scope.ts'
 import { KnowbaseService } from './core/service.ts'
 import { installPreStep, queryFrom } from './pre-step.ts'
 import { KnowbaseRemote } from './remote.ts'
-import { openStorageDomainStore } from './store.ts'
+import { openSessionScopeStore, openStorageDomainStore, type OpenedSessionStore } from './store.ts'
 
 export const name = 'knowbase'
 
@@ -71,16 +72,30 @@ export function apply(ctx: Context): void {
     void (async () => {
       try {
         const opened = await openStorageDomainStore(storageScope.storageDomain)
-        if (disposed) {
-          // The plugin was disabled while storage was still opening; release it
-          // rather than leaking an open unit nobody will close.
+
+        // The session selections open separately so the knowledge domain keeps
+        // its version-1 schema (see `./store.ts`). If the second open fails,
+        // release the first rather than leaking an open unit nobody will close.
+        let openedScopes: OpenedSessionStore
+        try {
+          openedScopes = await openSessionScopeStore(storageScope.storageDomain)
+        } catch (error) {
           await opened.close()
+          throw error
+        }
+
+        if (disposed) {
+          // The plugin was disabled while storage was still opening; release
+          // both units rather than leaking what nobody will close.
+          await opened.close()
+          await openedScopes.close()
           return
         }
 
         const ready = new KnowbaseService(opened.store)
         await ready.initialize()
         service = ready
+        await selection.useStore(openedScopes.store)
 
         // Publishing the Remote service is what makes the settings page able to
         // reach the Host at all. It is created only once storage is open, so a
@@ -90,6 +105,7 @@ export function apply(ctx: Context): void {
 
         ctx.effect(() => () => {
           void opened.close()
+          void openedScopes.close()
         })
 
         const bases = ready.listKnowledgeBases()

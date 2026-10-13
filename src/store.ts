@@ -19,6 +19,7 @@
 import type { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
+import type { SessionScopeStore } from './core/session-scope.ts'
 import type { KnowbaseStore } from './core/service.ts'
 
 /**
@@ -76,6 +77,31 @@ export const KNOWBASE_DOMAIN = defineDomain({
   },
 })
 
+const sessionScopeSchema = z.object({
+  sessionId: z.string(),
+  enabled: z.boolean(),
+  all: z.boolean(),
+  kbIds: z.array(z.string()),
+  updatedAt: z.number(),
+})
+
+/**
+ * Session selections live in their own domain, not a third table above.
+ *
+ * `storageDomain` has no migration on a version change — opening a domain whose
+ * stored version differs is rejected outright — so widening the knowledge
+ * domain would strand every existing install's data behind a manual migration.
+ * A separate domain keeps the knowledge data at version 1 forever and gives the
+ * session state its own version axis to evolve on.
+ */
+export const SESSION_DOMAIN = defineDomain({
+  name: 'dsh_knowbase_sessions',
+  version: 1,
+  tables: {
+    session_scopes: domainTable(sessionScopeSchema),
+  },
+})
+
 /** An opened store plus the handle that releases it. */
 export interface OpenedStore {
   readonly store: KnowbaseStore
@@ -114,6 +140,38 @@ export async function openStorageDomainStore(facility: DomainFacility): Promise<
         chunks: material.chunks.map(chunk => ({ ...chunk })),
       }),
     deleteMaterial: id => materials.delete(id),
+  }
+
+  return { store, close: () => domain.close() }
+}
+
+/** An opened session-scope store plus its release handle. */
+export interface OpenedSessionStore {
+  readonly store: SessionScopeStore
+  /** Release the backend unit. Idempotent. */
+  close(): Promise<void>
+}
+
+/**
+ * Open the session-selection domain.
+ *
+ * Separate from {@link openStorageDomainStore} for the versioning reason on
+ * {@link SESSION_DOMAIN}; the caller owns the handle in the same way.
+ *
+ * @param facility - `ctx.storageDomain`.
+ * @returns the store and its release handle.
+ */
+export async function openSessionScopeStore(
+  facility: DomainFacility,
+): Promise<OpenedSessionStore> {
+  const domain = await facility.open(SESSION_DOMAIN)
+  const scopes = domain.table('session_scopes')
+
+  const store: SessionScopeStore = {
+    loadAll: () => [...scopes.entries()].map(([, record]) => record),
+    // Spread as the other writer does: the domain's records are the schema's
+    // mutable shape, and a readonly array would only type check by accident.
+    save: record => scopes.put(record.sessionId, { ...record, kbIds: [...record.kbIds] }),
   }
 
   return { store, close: () => domain.close() }
