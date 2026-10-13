@@ -42,3 +42,28 @@ export function missingBaseIds(
   if (scope === undefined || !scope.enabled || scope.all) return []
   return scope.kbIds.filter(id => bases.every(base => base.id !== id))
 }
+
+/**
+ * The selected ids after ticking or unticking one base.
+ *
+ * The stored shape has two ways to say the same set — `all: true` and an
+ * explicit list of every id — and they are not interchangeable: `all` also
+ * covers bases created later. So unticking one base while `all` is on has to
+ * materialise the list the user was looking at before dropping one, or the
+ * untick would silently do nothing.
+ *
+ * Existing ids keep their order and are appended to, so the list never
+ * reshuffles under the pointer; ids whose base was deleted stay in the list
+ * rather than being dropped, which is what keeps a stale selection visible as
+ * stale instead of quietly shrinking to "valid".
+ */
+export function toggleBaseSelection(
+  scope: SessionScopeView | undefined,
+  bases: readonly KnowledgeBaseView[],
+  id: string,
+): readonly string[] {
+  const current: readonly string[] =
+    scope === undefined ? [] : scope.all ? bases.map(base => base.id) : [...scope.kbIds]
+  if (current.includes(id)) return current.filter(candidate => candidate !== id)
+  return [...current, id]
+}

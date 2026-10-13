@@ -14,7 +14,7 @@
  * @module @domitor-syh/dsh-knowbase/core/service
  */
 
-import type { RetrievalOutcome, RetrievedPassage } from '../pre-step.ts'
+import type { RetrievedPassage, ServiceOutcome } from '../pre-step.ts'
 import { buildBackupDocument, planImport, type BackupDocument } from './backup.ts'
 import { Bm25Index } from './bm25.ts'
 import { chunkText, type ChunkOptions } from './chunk.ts'
@@ -536,8 +536,18 @@ export class KnowbaseService {
    * "nothing matched" apart from "nothing was searched" and "the index is not
    * ready" — the plan requires those to be distinguishable in the UI and to the
    * model, and collapsing them into an empty array loses that.
+   *
+   * `no_selection` is deliberately excluded from the return type: this method is
+   * handed ids and either finds bases behind them or does not. Whether anything
+   * was ticked is decided by `resolveScope` one layer up, before there is a call
+   * to make, so a caller cannot write a branch for a state the service can never
+   * be in.
    */
-  retrieve(query: string, kbIds: readonly string[], options: RetrieveOptions = {}): RetrievalOutcome {
+  retrieve(
+    query: string,
+    kbIds: readonly string[],
+    options: RetrieveOptions = {},
+  ): ServiceOutcome {
     const scope = kbIds.filter(id => this.#knowledgeBases.has(id))
     if (scope.length === 0) return { kind: 'empty_scope' }
     if (this.#index.size === 0) return { kind: 'not_ready' }

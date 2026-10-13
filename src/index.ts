@@ -51,13 +51,21 @@ export function apply(ctx: Context): void {
       const current = service
       if (current === undefined) return { kind: 'not_ready' }
 
+      // The scope decides three different sentences before a search is even
+      // attempted; see `ResolvedScope`. Only `bases` reaches `retrieve()`, so
+      // the "nothing is ticked" case can never be mistaken downstream for the
+      // "everything ticked was deleted" case that `empty_scope` names.
       const scope = resolveScope(selection.get(payload.agent.id), current)
-      if (scope === null) return { kind: 'disabled' }
+      if (scope.kind === 'disabled') return { kind: 'disabled' }
+      if (scope.kind === 'nothing-selected') return { kind: 'no_selection' }
+      // An install with no bases at all has nothing indexed, which is exactly
+      // what `not_ready` says; `empty_scope` would claim a deletion.
+      if (scope.kind === 'no-bases') return { kind: 'not_ready' }
 
       const query = queryFrom(payload.messages)
       if (query === '') return { kind: 'no_match' }
 
-      return current.retrieve(query, scope)
+      return current.retrieve(query, scope.ids)
     },
   })
 

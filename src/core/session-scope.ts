@@ -103,18 +103,52 @@ export class SessionSelectionRegistry {
 }
 
 /**
+ * What a session selection means once resolved against the bases that exist.
+ *
+ * A discriminated result rather than `string[] | null`, because "the user
+ * ticked nothing", "there are no bases to search" and "the bases they ticked
+ * are gone" all reduce to an empty id list but need three different sentences.
+ * Deciding that here — in the host-free module — is what keeps the pre-step
+ * seam and the `/kb search` command from answering the same question
+ * differently, and it is the reason the ids are not pre-filtered for existence:
+ * filtering would erase the third case before anyone could name it.
+ */
+export type ResolvedScope =
+  /** The session has the knowledge base switched off. */
+  | { readonly kind: 'disabled' }
+  /**
+   * Switched on, but no base is ticked.
+   *
+   * A decision the user made, not a failure: multi-select made "nothing" a
+   * reachable state, and reporting it as an invalid scope would blame a
+   * deletion that never happened.
+   */
+  | { readonly kind: 'nothing-selected' }
+  /** Scope is "all" and the install holds no bases at all. */
+  | { readonly kind: 'no-bases' }
+  /** The ids to search. The service drops any that no longer exist. */
+  | { readonly kind: 'bases'; readonly ids: readonly string[] }
+
+/**
  * Resolve a session selection into the concrete ids to search.
  *
- * @returns the ids, or `null` when the session has the feature switched off —
- *   which is not the same as an empty scope and must not be treated as one.
+ * @returns what the selection means — never a bare array, see
+ *   {@link ResolvedScope} for why the distinction has to survive.
  */
 export function resolveScope(
   selection: SessionSelection,
   service: KnowbaseService,
-): string[] | null {
-  if (!selection.enabled) return null
-  if (selection.scope === 'all') {
-    return service.listKnowledgeBases().map(knowledgeBase => knowledgeBase.id)
+): ResolvedScope {
+  if (!selection.enabled) return { kind: 'disabled' }
+
+  if (selection.scope !== 'all') {
+    if (selection.scope.length === 0) return { kind: 'nothing-selected' }
+    return { kind: 'bases', ids: [...selection.scope] }
   }
-  return [...selection.scope]
+
+  const ids = service.listKnowledgeBases().map(knowledgeBase => knowledgeBase.id)
+  // "All" over an install that holds nothing is not an invalid selection — the
+  // answer is "add some material", which is a different sentence.
+  if (ids.length === 0) return { kind: 'no-bases' }
+  return { kind: 'bases', ids }
 }

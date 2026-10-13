@@ -179,6 +179,17 @@ describe('formatStatus', () => {
     expect(ready).toContain('还没有已索引的资料')
   })
 
+  it('blames the checkbox, not a deletion, when nothing was ticked', () => {
+    // `no_selection` and `empty_scope` both mean "no ids were searched", and the
+    // wrong one sends the user looking for a deletion that never happened. The
+    // wording has to name what they did.
+    const nothing = formatStatus({ outcome: 'no_selection', passageCount: 0, reason: '' })
+    const stale = formatStatus({ outcome: 'empty_scope', passageCount: 0, reason: '' })
+    expect(nothing).not.toBe(stale)
+    expect(nothing).toContain('没有勾选任何知识库')
+    expect(nothing).not.toContain('已被删除')
+  })
+
   it('includes the failure reason', () => {
     expect(formatStatus({ outcome: 'error', passageCount: 0, reason: '索引损坏' })).toContain(
       '索引损坏',
@@ -285,6 +296,7 @@ describe('installPreStep', () => {
 
   it.each<RetrievalOutcome>([
     { kind: 'no_match' },
+    { kind: 'no_selection' },
     { kind: 'empty_scope' },
     { kind: 'not_ready' },
     { kind: 'error', reason: 'boom' },

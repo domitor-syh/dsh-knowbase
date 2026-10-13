@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { missingBaseIds, scopeLabel } from '../src/client/labels.ts'
+import { missingBaseIds, scopeLabel, toggleBaseSelection } from '../src/client/labels.ts'
 import type { KnowledgeBaseView } from '../src/remote.ts'
 
 const BASES: readonly KnowledgeBaseView[] = [
@@ -44,6 +44,12 @@ describe('scopeLabel', () => {
   it('reads 未选择 when enabled without a scope', () => {
     expect(scopeLabel({ enabled: true, all: false, kbIds: [] }, BASES)).toBe('知识库：未选择')
   })
+
+  it('names every ticked base, in selection order', () => {
+    expect(scopeLabel({ enabled: true, all: false, kbIds: ['kb_b', 'kb_a'] }, BASES)).toBe(
+      '知识库：技术资料、产品资料',
+    )
+  })
 })
 
 describe('missingBaseIds', () => {
@@ -62,6 +68,51 @@ describe('missingBaseIds', () => {
   it('reports only the ids that no longer exist', () => {
     expect(
       missingBaseIds({ enabled: true, all: false, kbIds: ['kb_a', 'kb_gone'] }, BASES),
+    ).toEqual(['kb_gone'])
+  })
+})
+
+describe('toggleBaseSelection', () => {
+  it('starts a list from nothing', () => {
+    expect(toggleBaseSelection(undefined, BASES, 'kb_a')).toEqual(['kb_a'])
+  })
+
+  it('appends a second base rather than replacing the first', () => {
+    // The whole point of the change: ticking a base must not clear the others.
+    expect(toggleBaseSelection({ enabled: true, all: false, kbIds: ['kb_a'] }, BASES, 'kb_b'))
+      .toEqual(['kb_a', 'kb_b'])
+  })
+
+  it('keeps selection order so the list never reshuffles under the pointer', () => {
+    expect(toggleBaseSelection({ enabled: true, all: false, kbIds: ['kb_b'] }, BASES, 'kb_a'))
+      .toEqual(['kb_b', 'kb_a'])
+  })
+
+  it('removes an unticked base', () => {
+    expect(
+      toggleBaseSelection({ enabled: true, all: false, kbIds: ['kb_a', 'kb_b'] }, BASES, 'kb_a'),
+    ).toEqual(['kb_b'])
+  })
+
+  it('can reach the empty selection the plugin now reports as 未选择', () => {
+    expect(toggleBaseSelection({ enabled: true, all: false, kbIds: ['kb_a'] }, BASES, 'kb_a'))
+      .toEqual([])
+  })
+
+  it('materialises the dynamic all-scope before dropping one base', () => {
+    // `all: true` stores no ids, so unticking one has to be turned into the
+    // explicit list the user was looking at — otherwise the untick would appear
+    // to do nothing.
+    expect(toggleBaseSelection({ enabled: true, all: true, kbIds: [] }, BASES, 'kb_a')).toEqual([
+      'kb_b',
+    ])
+  })
+
+  it('keeps a deleted base in the list instead of silently shrinking to valid', () => {
+    // Dropping it would turn a stale selection into a valid one with no
+    // explanation; the panel's warning is what makes it visible.
+    expect(
+      toggleBaseSelection({ enabled: true, all: false, kbIds: ['kb_a', 'kb_gone'] }, BASES, 'kb_a'),
     ).toEqual(['kb_gone'])
   })
 })

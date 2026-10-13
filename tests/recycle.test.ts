@@ -136,8 +136,8 @@ describe('soft-deleted knowledge bases', () => {
     const created = await service.createKnowledgeBase('技术资料')
     await service.deleteKnowledgeBase(created.id)
     expect(service.findKnowledgeBaseByName('技术资料')).toBeUndefined()
-    // `resolveScope('all')` walks listKnowledgeBases(), so the binned base is
-    // out of every live scope without extra code.
+    // `resolveScope` with an `all` selection walks listKnowledgeBases(), so the
+    // binned base is out of every live scope without extra code.
     expect(service.listKnowledgeBases().map(base => base.name)).toEqual(['产品资料'])
   })
 

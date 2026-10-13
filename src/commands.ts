@@ -18,7 +18,7 @@
  * /kb delete <名称>
  * /kb add <库名> :: <标题> :: <正文>
  * /kb rm <标题>
- * /kb use <库名|全部|关闭>
+ * /kb use <库名[,库名]|全部|关闭>
  * /kb search <问题>
  * ```
  *
@@ -80,7 +80,7 @@ const HELP = [
   '  /kb delete <名称>                      删除知识库及其资料',
   '  /kb add <库名> :: <标题> :: <正文>      添加文本资料',
   '  /kb rm <标题>                          删除资料',
-  '  /kb use <库名|全部|关闭>               设置本会话的检索范围',
+  '  /kb use <库名[,库名]|全部|关闭>        设置本会话的检索范围',
   '  /kb search <问题>                      检索测试（不调用模型）',
 ].join('\n')
 
@@ -91,7 +91,7 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
   ctx.commands.register({
     name: 'kb',
     description: '知识库：管理库与资料、设置本会话检索范围 / Knowledge base',
-    input: { hint: 'list | create <名称> | add <库名> :: <标题> :: <正文> | use <库名|全部|关闭>' },
+    input: { hint: 'list | create <名称> | add <库名> :: <标题> :: <正文> | use <库名[,库名]|全部|关闭>' },
     async handler(invocation): Promise<CommandResult> {
       const agentId = invocation.agent.id
       const raw = invocation.rawInput.trim()
@@ -189,19 +189,51 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
               await selection.set(agentId, { enabled: true, scope: 'all' })
               return { kind: 'success', text: '本会话使用全部知识库。' }
             }
-            const target = service.findKnowledgeBaseByName(wanted)
-            if (target === undefined) return { kind: 'error', text: `没有名为「${wanted}」的知识库。` }
-            await selection.set(agentId, { enabled: true, scope: [target.id] })
-            return { kind: 'success', text: `本会话只使用「${target.name}」。` }
+            // A list, so the command can express everything the picker can:
+            // half-width and full-width commas both, because a Chinese keyboard
+            // produces the latter without the user noticing which they typed.
+            const names = wanted
+              .split(/[,，]/)
+              .map(name => name.trim())
+              .filter(name => name !== '')
+            const targets: { id: string; name: string }[] = []
+            for (const name of names) {
+              const target = service.findKnowledgeBaseByName(name)
+              if (target === undefined) return { kind: 'error', text: `没有名为「${name}」的知识库。` }
+              targets.push({ id: target.id, name: target.name })
+            }
+            if (targets.length === 0) {
+              return { kind: 'error', text: '用法：/kb use <库名>[,<库名>…] | 全部 | 关闭' }
+            }
+            await selection.set(agentId, { enabled: true, scope: targets.map(t => t.id) })
+            return {
+              kind: 'success',
+              text: `本会话只使用：${targets.map(t => t.name).join('、')}。`,
+            }
           }
 
           case 'search': {
             if (argument === '') return { kind: 'error', text: '用法：/kb search <问题>' }
+            // Resolved before the call so the three ways a selection can come up
+            // empty each get their own sentence. `service.retrieve` only ever
+            // sees a non-empty id list.
             const scope = resolveScope(selection.get(agentId), service)
-            if (scope === null) {
-              return { kind: 'error', text: '本会话尚未开启知识库。先用 /kb use <库名|全部>。' }
+            switch (scope.kind) {
+              case 'disabled':
+                return { kind: 'error', text: '本会话尚未开启知识库。先用 /kb use <库名|全部>。' }
+              case 'nothing-selected':
+                return {
+                  kind: 'error',
+                  text: '本会话已开启知识库，但一个库都没有勾选。请在输入区的面板里勾选，或用 /kb use <库名|全部>。',
+                }
+              case 'no-bases':
+                return { kind: 'success', text: '还没有知识库。用 /kb create <名称> 新建一个。' }
+              case 'bases':
+                return {
+                  kind: 'success',
+                  text: describeOutcome(service.retrieve(argument, scope.ids)),
+                }
             }
-            return { kind: 'success', text: describeOutcome(service.retrieve(argument, scope)) }
           }
 
           default:

@@ -131,21 +131,66 @@ describe('SessionSelectionRegistry', () => {
 })
 
 describe('resolveScope', () => {
-  it('answers null when the session is switched off', async () => {
+  it('reports the session as switched off', async () => {
     const service = await freshService()
-    expect(resolveScope({ enabled: false, scope: 'all' }, service)).toBeNull()
+    expect(resolveScope({ enabled: false, scope: 'all' }, service)).toEqual({ kind: 'disabled' })
   })
 
   it('expands all to every knowledge base id', async () => {
     const service = await freshService()
     const first = await service.createKnowledgeBase('甲')
     const second = await service.createKnowledgeBase('乙')
-    const ids = resolveScope({ enabled: true, scope: 'all' }, service)
-    expect(ids?.slice().sort()).toEqual([first.id, second.id].sort())
+    const scope = resolveScope({ enabled: true, scope: 'all' }, service)
+    expect(scope.kind).toBe('bases')
+    expect(scope.kind === 'bases' ? scope.ids.slice().sort() : []).toEqual(
+      [first.id, second.id].sort(),
+    )
   })
 
   it('passes an explicit selection through unchanged', async () => {
     const service = await freshService()
-    expect(resolveScope({ enabled: true, scope: ['kb_x'] }, service)).toEqual(['kb_x'])
+    expect(resolveScope({ enabled: true, scope: ['kb_x'] }, service)).toEqual({
+      kind: 'bases',
+      ids: ['kb_x'],
+    })
+  })
+
+  it('keeps an explicit multi-base selection whole', async () => {
+    const service = await freshService()
+    expect(resolveScope({ enabled: true, scope: ['kb_x', 'kb_y'] }, service)).toEqual({
+      kind: 'bases',
+      ids: ['kb_x', 'kb_y'],
+    })
+  })
+
+  // The three empty answers below are the reason this returns a discriminated
+  // result instead of `string[] | null`: they all have no ids and each needs a
+  // different sentence, so collapsing any two of them would make the plugin
+  // explain a deletion that never happened.
+  it('separates "nothing ticked" from "nothing exists"', async () => {
+    const populated = await freshService()
+    await populated.createKnowledgeBase('甲')
+    expect(resolveScope({ enabled: true, scope: [] }, populated)).toEqual({
+      kind: 'nothing-selected',
+    })
+
+    const empty = await freshService()
+    expect(resolveScope({ enabled: true, scope: 'all' }, empty)).toEqual({ kind: 'no-bases' })
+    expect(resolveScope({ enabled: true, scope: [] }, empty)).toEqual({
+      kind: 'nothing-selected',
+    })
+  })
+
+  it('does not pre-filter ids whose base was deleted', async () => {
+    const service = await freshService()
+    const base = await service.createKnowledgeBase('甲')
+    await service.deleteKnowledgeBase(base.id)
+    // The id survives resolution so that `retrieve()` is the one place that
+    // reports `empty_scope` — a selection going stale is a different sentence
+    // from a selection never being made.
+    expect(resolveScope({ enabled: true, scope: [base.id] }, service)).toEqual({
+      kind: 'bases',
+      ids: [base.id],
+    })
   })
 })

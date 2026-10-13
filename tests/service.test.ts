@@ -168,6 +168,9 @@ describe('KnowbaseService — retrieval', () => {
 
   it('reports empty_scope when no selected base exists', () => {
     expect(service.retrieve('波特率', ['kb_missing']).kind).toBe('empty_scope')
+    // An empty id list reaching the service means every id handed over is gone.
+    // "Nothing was ticked" never gets this far — `resolveScope` answers it
+    // before the call, so the two do not have to share a sentence here.
     expect(service.retrieve('波特率', []).kind).toBe('empty_scope')
   })
 

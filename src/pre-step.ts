@@ -66,6 +66,15 @@ export type RetrievalOutcome =
   | { readonly kind: 'hits'; readonly passages: readonly RetrievedPassage[] }
   | { readonly kind: 'no_match' }
   | { readonly kind: 'empty_scope' }
+  /**
+   * The session has the knowledge base on, but no base is ticked.
+   *
+   * Multi-select made this reachable, and it is not `empty_scope`: nothing was
+   * deleted and nothing failed. Folding the two together would tell a user
+   * their selection had gone stale when they had simply unticked everything,
+   * which sends them looking for a deletion instead of a checkbox.
+   */
+  | { readonly kind: 'no_selection' }
   | { readonly kind: 'not_ready' }
   /**
    * The session has the knowledge base switched off.
@@ -81,6 +90,19 @@ export type RetrievalOutcome =
 export type ReportableOutcome = Exclude<RetrievalOutcome, { kind: 'disabled' }>
 
 /**
+ * The outcomes a retrieval call can come back with.
+ *
+ * Narrower than {@link RetrievalOutcome} by exactly one member. `no_selection`
+ * is a property of the *selection*, not of the search: it is decided by
+ * `resolveScope` before there is anything to search, so a method that takes ids
+ * can never return it. Keeping it out of this union is what stops the command
+ * surface from growing a branch for a state the service cannot be in — and
+ * stops that branch from quietly becoming the place a real empty result is
+ * explained.
+ */
+export type ServiceOutcome = Exclude<RetrievalOutcome, { kind: 'no_selection' }>
+
+/**
  * The structured retrieval state, carried on the plugin's message.
  *
  * The plan requires the status to reach the UI as data rather than as a
@@ -91,7 +113,11 @@ export type ReportableOutcome = Exclude<RetrievalOutcome, { kind: 'disabled' }>
  * channel, no polling, no parsing of the model-facing text.
  */
 export interface RetrievalStatus {
-  /** `hits` | `no_match` | `not_ready` | `empty_scope` | `error`. */
+  /**
+   * `hits` | `no_match` | `not_ready` | `no_selection` | `empty_scope` |
+   * `error`. A plain string rather than a union because it is read back from a
+   * persisted message payload, where the type has already been erased.
+   */
   readonly outcome: string
   readonly passageCount: number
   /** Why retrieval failed; empty for every other outcome. */
@@ -128,6 +154,11 @@ export function formatStatus(status: RetrievalStatus): string {
       return `${header}未命中相关内容。回答时不要声称引用了知识库资料。`
     case 'not_ready':
       return `${header}所选范围内还没有已索引的资料，本次没有可用的知识库依据。`
+    case 'no_selection':
+      // Says what the user did, not what went wrong. This outcome exists so the
+      // answer can point at a checkbox instead of sending them hunting for a
+      // deletion that never happened.
+      return `${header}本会话已开启知识库，但没有勾选任何知识库，本次没有可用的知识库依据。`
     case 'empty_scope':
       return `${header}所选知识库不存在或已被删除，本次没有可用的知识库依据。`
     case 'error':

@@ -56,6 +56,7 @@ const COLORS = {
 const STATUS_TEXT: Record<string, string> = {
   no_match: '未检索到相关知识',
   not_ready: '知识库还没有资料',
+  no_selection: '未勾选知识库',
   empty_scope: '所选知识库已失效',
   error: '知识库检索暂不可用',
 }
@@ -64,6 +65,7 @@ const STATUS_TEXT: Record<string, string> = {
 const STATUS_HINT: Record<string, string> = {
   no_match: '本次提问在所选知识库里没有命中片段。回答可能来自模型自身知识，不是库内资料。',
   not_ready: '所选知识库里还没有已索引的资料，本次回答没有知识库依据。',
+  no_selection: '本会话已开启知识库，但一个库都没有勾选，本次没有检索任何知识库。',
   empty_scope: '本次选中的知识库不存在或已被删除，本次回答没有知识库依据。',
   error: '知识库检索失败，本次回答没有知识库依据。',
 }

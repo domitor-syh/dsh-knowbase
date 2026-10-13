@@ -9,11 +9,16 @@
  *
  * ## Deliberate boundaries
  *
- * The scope model is the Host's: off, one base, or every base. Multi-select is
- * the plan's post-MVP enhancement and the Host methods already carry the
- * general shape when it lands. A deleted base keeps its selection and is
- * reported as invalid rather than silently switching the session to "all" —
- * the plan is explicit that the two must not be conflated.
+ * The scope model is the Host's: off, or a set of bases. The panel is a
+ * checkbox list, so several bases can be searched at once; 「全部知识库」 is an
+ * action that stores the *dynamic* all rather than ticking every row, because
+ * the two differ for a base created afterwards and only the dynamic one is what
+ * a user asking for "all" means.
+ *
+ * "Nothing ticked" is a state the user can reach and it is reported as exactly
+ * that — see `RetrievalOutcome.no_selection`. A deleted base keeps its selection
+ * and is reported as invalid rather than silently switching the session to
+ * "all" — the plan is explicit that the two must not be conflated.
  *
  * ## Why a portal
  *
@@ -29,12 +34,13 @@ import * as React from 'react'
 import { createPortal } from 'react-dom'
 import type { KnowledgeBaseView, SessionScopeView } from '../remote.ts'
 import { knowbaseApi } from './api.ts'
-import { missingBaseIds, scopeLabel } from './labels.ts'
+import { missingBaseIds, scopeLabel, toggleBaseSelection } from './labels.ts'
 
 const COLORS = {
   border: '#dce3ed',
   muted: '#526176',
   accent: '#185fa5',
+  warn: '#8a5a00',
   danger: '#b3261e',
   surface: '#fff',
 } as const
@@ -50,7 +56,7 @@ function messageOf(error: unknown): string {
   return String(error)
 }
 
-/** One scope choice: a radio-style row. */
+/** One scope choice: a checkbox row. */
 function ScopeRow(props: {
   checked: boolean
   disabled: boolean
@@ -61,7 +67,7 @@ function ScopeRow(props: {
   return (
     <button
       type="button"
-      role="radio"
+      role="checkbox"
       aria-checked={props.checked}
       disabled={props.disabled}
       onClick={props.onSelect}
@@ -83,19 +89,21 @@ function ScopeRow(props: {
         aria-hidden="true"
         style={{
           marginTop: 2,
-          width: 13,
-          height: 13,
-          borderRadius: 7,
+          width: 14,
+          height: 14,
+          borderRadius: 3,
           border: `1.5px solid ${props.checked ? COLORS.accent : '#b6bfcc'}`,
+          background: props.checked ? COLORS.accent : 'transparent',
           flexShrink: 0,
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
+          color: '#fff',
+          fontSize: 10,
+          lineHeight: 1,
         }}
       >
-        {props.checked && (
-          <span style={{ width: 7, height: 7, borderRadius: 4, background: COLORS.accent }} />
-        )}
+        {props.checked ? '✓' : ''}
       </span>
       <span style={{ minWidth: 0 }}>
         <span style={{ display: 'block', fontSize: 13 }}>{props.title}</span>
@@ -323,17 +331,41 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
 
             <div style={{ borderTop: `1px solid ${COLORS.border}`, margin: '8px 0 4px' }} />
 
-            <div role="radiogroup" aria-label="检索范围" style={{ opacity: busy ? 0.6 : 1 }}>
-              <ScopeRow
-                checked={scope?.all === true}
-                disabled={busy || scope === undefined}
-                title={`全部知识库（${bases.length}）`}
-                onSelect={() => void apply(true, true, [])}
-              />
+            <div role="group" aria-label="检索范围" style={{ opacity: busy ? 0.6 : 1 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '0 2px 2px',
+                }}
+              >
+                <span style={{ fontSize: 11, color: COLORS.muted }}>检索范围</span>
+                <button
+                  type="button"
+                  data-kb-select-all
+                  disabled={busy || scope === undefined || bases.length === 0}
+                  onClick={() => void apply(true, true, [])}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: COLORS.accent,
+                    fontSize: 11,
+                    font: 'inherit',
+                    padding: 0,
+                    cursor: bases.length === 0 ? 'default' : 'pointer',
+                    opacity: bases.length === 0 ? 0.5 : 1,
+                  }}
+                >
+                  全部知识库（{bases.length}）
+                </button>
+              </div>
               {bases.map(base => (
                 <ScopeRow
                   key={base.id}
-                  checked={scope !== undefined && !scope.all && scope.kbIds.includes(base.id)}
+                  checked={
+                    scope !== undefined && (scope.all || scope.kbIds.includes(base.id))
+                  }
                   disabled={busy || scope === undefined}
                   title={base.name}
                   subtitle={
@@ -341,7 +373,9 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
                       ? '暂无资料'
                       : `${base.materialCount} 份资料 / ${base.chunkCount} 个片段`
                   }
-                  onSelect={() => void apply(true, false, [base.id])}
+                  onSelect={() =>
+                    void apply(true, false, toggleBaseSelection(scope, bases, base.id))
+                  }
                 />
               ))}
             </div>
@@ -349,6 +383,11 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
             {bases.length === 0 && (
               <p style={{ color: COLORS.muted, fontSize: 11, margin: '6px 2px 0' }}>
                 还没有知识库。先在「设置 → 知识库」里新建一个。
+              </p>
+            )}
+            {scope !== undefined && scope.enabled && !scope.all && scope.kbIds.length === 0 && (
+              <p style={{ color: COLORS.warn, fontSize: 11, margin: '6px 2px 0' }}>
+                一个库都没有勾选，提问时不会检索任何知识库。
               </p>
             )}
             {missing.length > 0 && (
@@ -361,7 +400,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
             )}
 
             <p style={{ color: COLORS.muted, fontSize: 11, margin: '8px 2px 0' }}>
-              提问时自动检索所选库，回答会标注来源。
+              提问时自动检索勾选的库，可以同时勾选多个；回答会标注来源。
             </p>
           </div>,
           document.body,
