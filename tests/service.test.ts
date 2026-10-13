@@ -207,6 +207,17 @@ describe('KnowbaseService — retrieval', () => {
     for (const passage of outcome.passages) expect(passage.kbName).toBe('网络资料')
   })
 
+  it('carries the ranking signal the retrieval-test panel shows', () => {
+    // The panel exists to calibrate ranking against real questions; it cannot do
+    // that if the numbers ranking used never leave the service.
+    const outcome = service.retrieve('连接方式', [networkId])
+    if (outcome.kind !== 'hits') throw new Error('unreachable')
+    const first = outcome.passages[0]!
+    expect(first.score).toBeGreaterThan(0)
+    expect(first.coverage).toBeGreaterThan(0)
+    expect(first.coverage).toBeLessThanOrEqual(1)
+  })
+
   it('does not let an out-of-scope hit consume the result limit', () => {
     // The network base matches "连接" far better; if scope filtering happened
     // after the cutoff, the manual's weaker hits would be cut away entirely.

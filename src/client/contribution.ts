@@ -64,6 +64,8 @@ const searchHitSchema = z.object({
   materialTitle: z.string(),
   locator: z.string(),
   text: z.string(),
+  score: z.number(),
+  coverage: z.number(),
 })
 
 const searchReportSchema = z.object({

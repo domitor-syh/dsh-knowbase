@@ -57,6 +57,14 @@ const button: React.CSSProperties = {
   cursor: 'pointer',
 }
 
+/** The chosen option in a two-way picker, e.g. the retrieval-test scope. */
+const activeButton: React.CSSProperties = {
+  ...button,
+  borderColor: COLORS.accent,
+  color: COLORS.accent,
+  fontWeight: 600,
+}
+
 const input: React.CSSProperties = {
   border: `1px solid ${COLORS.border}`,
   borderRadius: 6,
@@ -115,9 +123,22 @@ function Field(props: {
   )
 }
 
-/** Render a retrieval report. */
-function Report(props: { report: SearchReportView }): React.ReactElement {
-  const { report } = props
+/**
+ * Render a retrieval report.
+ *
+ * The scope note is passed in rather than derived from the report: the Host
+ * reports what it found, not what it was asked to search, and a miss has to say
+ * *where* it looked — "nothing matched in this one base" and "nothing matched in
+ * all seven" are different answers.
+ */
+function Report(props: { report: SearchReportView; scopeNote: string }): React.ReactElement {
+  const { report, scopeNote } = props
+  const note = (
+    <p style={{ color: COLORS.muted, fontSize: 12, margin: '0 0 8px' }}>
+      检索范围：{scopeNote}
+    </p>
+  )
+
   if (report.outcome !== 'hits') {
     const text: Record<string, string> = {
       no_match: '未命中：所选知识库中没有相关片段。换个说法或换关键词可能命中。',
@@ -126,14 +147,18 @@ function Report(props: { report: SearchReportView }): React.ReactElement {
       error: `检索失败：${report.reason}`,
     }
     return (
-      <p style={{ color: COLORS.muted, fontSize: 13 }}>
-        {text[report.outcome] ?? report.outcome}（{report.elapsedMs} ms）
-      </p>
+      <div data-kb-test-report>
+        {note}
+        <p style={{ color: COLORS.muted, fontSize: 13, margin: 0 }}>
+          {text[report.outcome] ?? report.outcome}（{report.elapsedMs} ms）
+        </p>
+      </div>
     )
   }
 
   return (
-    <div>
+    <div data-kb-test-report>
+      {note}
       <p style={{ color: COLORS.muted, fontSize: 12, margin: '0 0 8px' }}>
         命中 {report.passages.length} 个片段，用时 {report.elapsedMs} ms
       </p>
@@ -142,12 +167,28 @@ function Report(props: { report: SearchReportView }): React.ReactElement {
           key={`${passage.materialTitle}-${passage.locator}-${index}`}
           style={{ ...panel, padding: 10, marginBottom: 8, background: COLORS.subtle }}
         >
-          <div style={{ fontSize: 12, color: COLORS.accent, marginBottom: 4 }}>
-            [{index + 1}] {passage.kbName} / {passage.materialTitle} · {passage.locator}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'baseline',
+              justifyContent: 'space-between',
+              gap: 8,
+              marginBottom: 4,
+            }}
+          >
+            <div style={{ fontSize: 12, color: COLORS.accent }}>
+              [{index + 1}] {passage.kbName} / {passage.materialTitle} · {passage.locator}
+            </div>
+            <div style={{ fontSize: 11, color: COLORS.muted, whiteSpace: 'nowrap' }}>
+              score {passage.score.toFixed(2)} · 覆盖 {Math.round(passage.coverage * 100)}%
+            </div>
           </div>
           <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{passage.text}</div>
         </div>
       ))}
+      <p style={{ color: COLORS.muted, fontSize: 11, margin: '0 2px' }}>
+        score 只在同一次提问内可比；覆盖偏低说明命中的查询词少，片段可能只是碰巧重叠。
+      </p>
     </div>
   )
 }
@@ -220,6 +261,10 @@ export function KnowbaseSettingsPage(): React.ReactElement {
   const [newTitle, setNewTitle] = React.useState('')
   const [newText, setNewText] = React.useState('')
   const [query, setQuery] = React.useState('')
+  // Retrieval test scope. The chat seam searches a set of bases, so a panel
+  // fixed to one base cannot answer "what would be sent?" for a multi-base
+  // session — the question the panel exists to answer.
+  const [testAll, setTestAll] = React.useState(false)
 
   // Base info editing.
   const [editingInfo, setEditingInfo] = React.useState(false)
@@ -439,6 +484,25 @@ export function KnowbaseSettingsPage(): React.ReactElement {
   }, [selectedId, bases])
 
   const selected = bases.find(item => item.id === selectedId)
+
+  /** Which bases the retrieval test searches, and what to call that set. */
+  const testBases = testAll
+    ? bases.map(item => item.id)
+    : selected === undefined
+      ? []
+      : [selected.id]
+  const testScopeNote = testAll
+    ? `全部 ${bases.length} 个知识库，共 ${bases.reduce((sum, item) => sum + item.chunkCount, 0)} 个片段`
+    : `「${selected?.name ?? ''}」，共 ${selected?.chunkCount ?? 0} 个片段`
+
+  /** Run the retrieval test over the chosen scope, without calling the model. */
+  const submitTest = (): void => {
+    if (busy || query.trim() === '' || testBases.length === 0) return
+    void run(async () => {
+      setReport(await knowbaseApi()!.testSearch(query, testBases))
+      return ''
+    })
+  }
 
   /** Open the material detail view and load what was actually indexed. */
   const openDetail = React.useCallback(
@@ -878,9 +942,36 @@ export function KnowbaseSettingsPage(): React.ReactElement {
               </div>
 
               {/* retrieval test */}
-              <div style={{ ...panel, padding: 10 }}>
+              <div data-kb-retrieval-test style={{ ...panel, padding: 10 }}>
                 <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 6 }}>
-                  检索测试（不调用模型）· 本库共 {selected.chunkCount} 个片段
+                  检索测试（不调用模型）
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: COLORS.muted }}>范围</span>
+                  <button
+                    type="button"
+                    data-kb-test-scope="base"
+                    style={testAll ? button : activeButton}
+                    disabled={busy}
+                    onClick={() => {
+                      setTestAll(false)
+                      setReport(undefined)
+                    }}
+                  >
+                    当前库
+                  </button>
+                  <button
+                    type="button"
+                    data-kb-test-scope="all"
+                    style={testAll ? activeButton : button}
+                    disabled={busy || bases.length === 0}
+                    onClick={() => {
+                      setTestAll(true)
+                      setReport(undefined)
+                    }}
+                  >
+                    全部知识库（{bases.length}）
+                  </button>
                 </div>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                   <input
@@ -889,28 +980,19 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                     value={query}
                     onChange={event => setQuery(event.target.value)}
                     onKeyDown={event => {
-                      if (event.key !== 'Enter' || query.trim() === '') return
-                      void run(async () => {
-                        setReport(await knowbaseApi()!.testSearch(query, [selected.id]))
-                        return ''
-                      })
+                      if (event.key === 'Enter') submitTest()
                     }}
                   />
                   <button
                     type="button"
                     style={button}
                     disabled={busy || query.trim() === ''}
-                    onClick={() =>
-                      void run(async () => {
-                        setReport(await knowbaseApi()!.testSearch(query, [selected.id]))
-                        return ''
-                      })
-                    }
+                    onClick={submitTest}
                   >
                     检索
                   </button>
                 </div>
-                {report !== undefined && <Report report={report} />}
+                {report !== undefined && <Report report={report} scopeNote={testScopeNote} />}
               </div>
 
               {/* data backup */}

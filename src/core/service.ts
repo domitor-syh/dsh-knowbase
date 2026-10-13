@@ -583,6 +583,8 @@ export class KnowbaseService {
         kbId: context.kbId,
         materialId: context.materialId,
         ordinal: context.ordinal,
+        score: hit.score,
+        coverage: hit.coverage,
       })
     }
 

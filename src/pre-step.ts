@@ -59,6 +59,18 @@ export interface RetrievedPassage {
    * to and highlights.
    */
   readonly ordinal?: number
+  /**
+   * Ranking signal, carried for the retrieval-test panel only.
+   *
+   * `bm25.ts` records that a caller needs coverage alongside the score to tell a
+   * real hit from a passage that merely overlaps the question, and the plan's
+   * retrieval test exists to calibrate ranking against real questions — that
+   * calibration is impossible if the panel cannot show what ranking used.
+   * Diagnostics, not citation data: nothing about an answer's sources depends on
+   * them, and messages recorded before they existed simply lack the fields.
+   */
+  readonly score?: number
+  readonly coverage?: number
 }
 
 /** What a retrieval attempt produced, including the honest failure modes. */

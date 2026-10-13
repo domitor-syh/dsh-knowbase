@@ -73,12 +73,16 @@ export interface PassageView {
   readonly text: string
 }
 
-/** One retrieval-test hit, carrying its source. */
+/** One retrieval-test hit, carrying its source and its ranking signal. */
 export interface SearchHitView {
   readonly kbName: string
   readonly materialTitle: string
   readonly locator: string
   readonly text: string
+  /** BM25 score, comparable only within one query. */
+  readonly score: number
+  /** Fraction of query terms this passage matched, 0–1. */
+  readonly coverage: number
 }
 
 /** Outcome of a retrieval test. */
@@ -357,6 +361,11 @@ export class KnowbaseRemote extends TypertRemoteService {
           materialTitle: passage.materialTitle,
           locator: passage.locator,
           text: passage.text,
+          // Absent on passages recorded before the panel showed them; the test
+          // endpoint always searches live, so here they are always present. A
+          // zero is honest for a ranking signal the index did not report.
+          score: passage.score ?? 0,
+          coverage: passage.coverage ?? 0,
         })),
         reason: '',
         elapsedMs,
