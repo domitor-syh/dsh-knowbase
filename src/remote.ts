@@ -98,6 +98,12 @@ export interface SessionScopeView {
   readonly kbIds: readonly string[]
 }
 
+/** The recycle bin: soft-deleted bases and materials, as one view. */
+export interface RecycleBinView {
+  readonly bases: readonly KnowledgeBaseView[]
+  readonly materials: readonly MaterialView[]
+}
+
 /** What the service methods need from the plugin. */
 interface Dependencies {
   readonly service: KnowbaseService
@@ -311,6 +317,59 @@ export class KnowbaseRemote extends TypertRemoteService {
     // Deliberately not `this.getSessionScope(...)`: `this` may be the wrapper a
     // Remote call arrives through, and nothing here should depend on it.
     return readScope(agentId)
+  }
+
+  // --------------------------------------------------------------- recycle bin
+
+  /** Everything currently in the recycle bin. */
+  async listRecycleBin(): Promise<RecycleBinView> {
+    const { service } = deps()
+    // Every material that belongs to the base, whatever its own state: a base
+    // in the bin is restored (or purged) together with all of them.
+    const everyMaterial = [...service.listMaterials(), ...service.listDeletedMaterials()]
+
+    const bases = service.listDeletedKnowledgeBases().map(base => {
+      const inside = everyMaterial.filter(material => material.kbId === base.id)
+      return {
+        id: base.id,
+        name: base.name,
+        description: base.description,
+        materialCount: inside.length,
+        chunkCount: inside.reduce((sum, material) => sum + material.chunks.length, 0),
+        updatedAt: base.deletedAt ?? base.updatedAt,
+      }
+    })
+
+    const materials = service.listDeletedMaterials().map(material => ({
+      id: material.id,
+      kbId: material.kbId,
+      title: material.title,
+      revision: material.revision,
+      chunkCount: material.chunks.length,
+      createdAt: material.createdAt,
+      updatedAt: material.deletedAt ?? material.updatedAt,
+    }))
+    return { bases, materials }
+  }
+
+  /** Take a soft-deleted knowledge base out of the bin. */
+  async restoreKnowledgeBase(id: string): Promise<boolean> {
+    return deps().service.restoreKnowledgeBase(id)
+  }
+
+  /** Take a soft-deleted material out of the bin. */
+  async restoreMaterial(id: string): Promise<boolean> {
+    return deps().service.restoreMaterial(id)
+  }
+
+  /** Destroy a soft-deleted knowledge base and its materials for good. */
+  async purgeKnowledgeBase(id: string): Promise<boolean> {
+    return deps().service.purgeKnowledgeBase(id)
+  }
+
+  /** Destroy a soft-deleted material for good. */
+  async purgeMaterial(id: string): Promise<boolean> {
+    return deps().service.purgeMaterial(id)
   }
 }
 

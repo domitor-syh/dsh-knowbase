@@ -18,6 +18,7 @@ import type {
   KnowledgeBaseView,
   MaterialView,
   PassageView,
+  RecycleBinView,
   SearchReportView,
   SessionScopeView,
 } from '../remote.ts'
@@ -59,6 +60,12 @@ export interface KnowbaseApi {
     all: boolean,
     kbIds: readonly string[],
   ): Promise<SessionScopeView>
+
+  listRecycleBin(): Promise<RecycleBinView>
+  restoreKnowledgeBase(id: string): Promise<boolean>
+  restoreMaterial(id: string): Promise<boolean>
+  purgeKnowledgeBase(id: string): Promise<boolean>
+  purgeMaterial(id: string): Promise<boolean>
 }
 
 /** Unwrap a Remote result, turning a Host-side failure into a rejection. */
@@ -101,6 +108,11 @@ interface KnowbaseWire {
     all: boolean,
     kbIds: readonly string[],
   ) => Promise<RemoteResult<SessionScopeView>>
+  listRecycleBin: () => Promise<RemoteResult<RecycleBinView>>
+  restoreKnowledgeBase: (id: string) => Promise<RemoteResult<boolean>>
+  restoreMaterial: (id: string) => Promise<RemoteResult<boolean>>
+  purgeKnowledgeBase: (id: string) => Promise<RemoteResult<boolean>>
+  purgeMaterial: (id: string) => Promise<RemoteResult<boolean>>
 }
 
 /**
@@ -162,5 +174,10 @@ export function createKnowbaseApi(ctx: Context): KnowbaseApi {
     getSessionScope: agentId => unwrap(wire.getSessionScope(agentId)),
     setSessionScope: (agentId, enabled, all, kbIds) =>
       unwrap(wire.setSessionScope(agentId, enabled, all, kbIds)),
+    listRecycleBin: () => unwrap(wire.listRecycleBin()),
+    restoreKnowledgeBase: id => unwrap(wire.restoreKnowledgeBase(id)),
+    restoreMaterial: id => unwrap(wire.restoreMaterial(id)),
+    purgeKnowledgeBase: id => unwrap(wire.purgeKnowledgeBase(id)),
+    purgeMaterial: id => unwrap(wire.purgeMaterial(id)),
   }
 }

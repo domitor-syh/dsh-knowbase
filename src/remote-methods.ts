@@ -56,6 +56,11 @@ export const REMOTE_METHODS = [
   'testSearch',
   'getSessionScope',
   'setSessionScope',
+  'listRecycleBin',
+  'restoreKnowledgeBase',
+  'restoreMaterial',
+  'purgeKnowledgeBase',
+  'purgeMaterial',
 ] as const
 
 /** One Remote method name. */

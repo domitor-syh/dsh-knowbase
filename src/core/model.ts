@@ -22,6 +22,12 @@ export interface KnowledgeBase {
    * record it so a stale answer can be explained after the fact.
    */
   readonly indexRevision: number
+  /**
+   * Soft-delete marker: set when the base moved to the recycle bin, absent
+   * while it is live. Optional (not `number | undefined`) so records written
+   * before soft delete existed load unchanged — absence is the live state.
+   */
+  readonly deletedAt?: number
 }
 
 /** One material inside a knowledge base. */
@@ -45,6 +51,8 @@ export interface Material {
    * the editor falls back to reassembling from the chunks for those.
    */
   readonly text?: string
+  /** Soft-delete marker; absence is the live state. See {@link KnowledgeBase.deletedAt}. */
+  readonly deletedAt?: number
   /** Extracted text, already split for retrieval. */
   readonly chunks: readonly ChunkRecord[]
 }

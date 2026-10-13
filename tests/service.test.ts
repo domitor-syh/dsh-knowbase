@@ -74,14 +74,20 @@ describe('KnowbaseService — knowledge bases', () => {
     })
   })
 
-  it('deletes a base together with its materials', async () => {
+  it('soft-deletes a base: hidden, unretrievable, restorable', async () => {
     const created = await service.createKnowledgeBase('产品资料')
     await service.addText(created.id, '手册', MANUAL)
-
     expect(await service.deleteKnowledgeBase(created.id)).toBe(true)
     expect(service.listKnowledgeBases()).toHaveLength(0)
-    expect(service.listMaterials()).toHaveLength(0)
-    expect(service.retrieve('波特率', [created.id]).kind).toBe('empty_scope')
+    expect(service.listDeletedKnowledgeBases()).toHaveLength(1)
+    // The materials follow their base into the bin, so nothing lists them
+    // separately — restoring the base brings them all back.
+    expect(service.listDeletedMaterials()).toHaveLength(0)
+    expect(service.retrieve('波特率', [created.id]).kind).toBe('not_ready')
+
+    expect(await service.restoreKnowledgeBase(created.id)).toBe(true)
+    expect(service.listKnowledgeBases()).toHaveLength(1)
+    expect(service.retrieve('波特率', [created.id]).kind).toBe('hits')
   })
 })
 

@@ -45,6 +45,10 @@ const knowledgeBaseSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   indexRevision: z.number(),
+  // Soft-delete marker. Optional keeps version 1 loadable by both directions:
+  // old records (absent) parse fine, and a record carrying the marker is
+  // stripped harmlessly by an older build. No version bump, no migration.
+  deletedAt: z.number().optional(),
 })
 
 const materialSchema = z.object({
@@ -58,6 +62,8 @@ const materialSchema = z.object({
   // Absent in records written before the editor existed; those fall back to
   // reassembling the text from their chunks.
   text: z.string().optional(),
+  // Soft-delete marker; absence is the live state. See knowledgeBaseSchema.
+  deletedAt: z.number().optional(),
   chunks: z.array(chunkSchema),
 })
 

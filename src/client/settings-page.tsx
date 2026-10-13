@@ -23,7 +23,13 @@
  */
 
 import * as React from 'react'
-import type { KnowledgeBaseView, MaterialView, PassageView, SearchReportView } from '../remote.ts'
+import type {
+  KnowledgeBaseView,
+  MaterialView,
+  PassageView,
+  RecycleBinView,
+  SearchReportView,
+} from '../remote.ts'
 import { knowbaseApi, knowbaseChannelError } from './api.ts'
 
 const COLORS = {
@@ -198,6 +204,10 @@ export function KnowbaseSettingsPage(): React.ReactElement {
   const [detailText, setDetailText] = React.useState('')
   const [detailLoading, setDetailLoading] = React.useState(false)
 
+  // The recycle bin: soft-deleted bases and materials.
+  const [recycle, setRecycle] = React.useState<RecycleBinView | undefined>(undefined)
+  const [recycleOpen, setRecycleOpen] = React.useState(false)
+
   /** Run one Host call with shared busy/error handling. */
   const run = React.useCallback(async (action: () => Promise<string>): Promise<void> => {
     const current = knowbaseApi()
@@ -226,6 +236,16 @@ export function KnowbaseSettingsPage(): React.ReactElement {
     )
   }, [])
 
+  const refreshRecycle = React.useCallback(async (): Promise<void> => {
+    const current = knowbaseApi()
+    if (current === undefined) return
+    try {
+      setRecycle(await current.listRecycleBin())
+    } catch (failure) {
+      setError(messageOf(failure))
+    }
+  }, [])
+
   // The channel mounts asynchronously, so the first render has no API yet. The
   // interval also surfaces a mounting failure: a page whose buttons do nothing
   // should say why without the user opening developer tools.
@@ -235,9 +255,13 @@ export function KnowbaseSettingsPage(): React.ReactElement {
       const current = knowbaseApi()
       if (current === undefined) return
       try {
-        const list = await current.listKnowledgeBases()
+        const [list, bin] = await Promise.all([
+          current.listKnowledgeBases(),
+          current.listRecycleBin(),
+        ])
         if (cancelled) return
         setBases(list)
+        setRecycle(bin)
         setSelectedId(existing =>
           list.some(item => item.id === existing) ? existing : (list[0]?.id ?? ''),
         )
@@ -502,7 +526,7 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                       </button>
                       <ConfirmButton
                         label="删除知识库"
-                        confirmLabel="确认删除"
+                        confirmLabel="移入回收站"
                         disabled={busy}
                         onConfirm={() =>
                           void run(async () => {
@@ -510,7 +534,8 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                             await knowbaseApi()!.deleteKnowledgeBase(selected.id)
                             setDetailId('')
                             await refreshBases()
-                            return `已删除「${name}」。`
+                            await refreshRecycle()
+                            return `已把「${name}」移入回收站，可在页面底部恢复。`
                           })
                         }
                       />
@@ -559,7 +584,7 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                         </button>
                         <ConfirmButton
                           label="删除"
-                          confirmLabel="确认删除"
+                          confirmLabel="移入回收站"
                           disabled={busy}
                           onConfirm={() =>
                             void run(async () => {
@@ -567,7 +592,8 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                               if (detailId === material.id) setDetailId('')
                               setMaterials(await knowbaseApi()!.listMaterials(selected.id))
                               await refreshBases()
-                              return `已删除「${material.title}」。`
+                              await refreshRecycle()
+                              return `已把「${material.title}」移入回收站。`
                             })
                           }
                         />
@@ -736,6 +762,197 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                   </button>
                 </div>
                 {report !== undefined && <Report report={report} />}
+              </div>
+
+              {/* recycle bin */}
+              <div style={{ ...panel, padding: 10, marginTop: 12 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setRecycleOpen(open => !open)}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      padding: 0,
+                      cursor: 'pointer',
+                      font: 'inherit',
+                      color: 'inherit',
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ fontSize: 12, color: COLORS.muted }}>
+                      {recycleOpen ? '▾' : '▸'} 回收站
+                    </span>
+                    <span style={{ fontSize: 11, color: COLORS.muted }}>
+                      {recycle === undefined
+                        ? ''
+                        : `（${recycle.bases.length} 个知识库 / ${recycle.materials.length} 份资料）`}
+                    </span>
+                  </button>
+                  {recycleOpen && (
+                    <button
+                      type="button"
+                      style={button}
+                      disabled={busy}
+                      onClick={() => void refreshRecycle()}
+                    >
+                      刷新
+                    </button>
+                  )}
+                </div>
+
+                {recycleOpen && (
+                  <div style={{ marginTop: 8 }}>
+                    {recycle === undefined ? (
+                      <p style={{ color: COLORS.muted, fontSize: 12, margin: 0 }}>加载中…</p>
+                    ) : (
+                      recycle.bases.length === 0 &&
+                      recycle.materials.length === 0 && (
+                        <p style={{ color: COLORS.muted, fontSize: 12, margin: 0 }}>
+                          回收站是空的。
+                        </p>
+                      )
+                    )}
+
+                    {recycle !== undefined && recycle.bases.length > 0 && (
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>
+                          已删除的知识库（恢复会带回应有资料）
+                        </div>
+                        {recycle.bases.map(base => (
+                          <div
+                            key={base.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 8,
+                              padding: '4px 0',
+                              borderTop: `1px solid ${COLORS.border}`,
+                            }}
+                          >
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 13 }}>{base.name}</div>
+                              <div style={{ fontSize: 11, color: COLORS.muted }}>
+                                {base.materialCount} 份资料 / {base.chunkCount} 个片段
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                              <button
+                                type="button"
+                                style={button}
+                                disabled={busy}
+                                onClick={() =>
+                                  void run(async () => {
+                                    await knowbaseApi()!.restoreKnowledgeBase(base.id)
+                                    await refreshBases()
+                                    await refreshRecycle()
+                                    return `已恢复「${base.name}」。`
+                                  })
+                                }
+                              >
+                                恢复
+                              </button>
+                              <ConfirmButton
+                                label="永久删除"
+                                confirmLabel={`永久删除（含 ${base.materialCount} 份资料）`}
+                                disabled={busy}
+                                onConfirm={() =>
+                                  void run(async () => {
+                                    await knowbaseApi()!.purgeKnowledgeBase(base.id)
+                                    await refreshRecycle()
+                                    return `已永久删除「${base.name}」，不可恢复。`
+                                  })
+                                }
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {recycle !== undefined && recycle.materials.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>
+                          已删除的资料
+                        </div>
+                        {recycle.materials.map(material => {
+                          const baseName =
+                            bases.find(base => base.id === material.kbId)?.name ??
+                            recycle.bases.find(base => base.id === material.kbId)?.name
+                          return (
+                            <div
+                              key={material.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 8,
+                                padding: '4px 0',
+                                borderTop: `1px solid ${COLORS.border}`,
+                              }}
+                            >
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 13 }}>{material.title}</div>
+                                <div style={{ fontSize: 11, color: COLORS.muted }}>
+                                  {material.chunkCount} 个片段
+                                  {baseName !== undefined && ` · 原属「${baseName}」`}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                <button
+                                  type="button"
+                                  style={button}
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void run(async () => {
+                                      await knowbaseApi()!.restoreMaterial(material.id)
+                                      await refreshBases()
+                                      await refreshRecycle()
+                                      if (selectedId === material.kbId) {
+                                        setMaterials(
+                                          await knowbaseApi()!.listMaterials(selectedId),
+                                        )
+                                      }
+                                      return `已恢复「${material.title}」。`
+                                    })
+                                  }
+                                >
+                                  恢复
+                                </button>
+                                <ConfirmButton
+                                  label="永久删除"
+                                  confirmLabel="确认永久删除"
+                                  disabled={busy}
+                                  onConfirm={() =>
+                                    void run(async () => {
+                                      await knowbaseApi()!.purgeMaterial(material.id)
+                                      await refreshRecycle()
+                                      return `已永久删除「${material.title}」，不可恢复。`
+                                    })
+                                  }
+                                />
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    <p style={{ color: COLORS.muted, fontSize: 11, margin: '8px 2px 0' }}>
+                      删除的知识库和资料保存在回收站，可随时恢复；「永久删除」不可恢复。
+                    </p>
+                  </div>
+                )}
               </div>
             </>
           )}

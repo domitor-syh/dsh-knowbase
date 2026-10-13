@@ -100,17 +100,30 @@ export class KnowbaseService {
     }
     for (const material of this.#store.loadMaterials()) {
       this.#materials.set(material.id, material)
+      // The index holds only what is currently retrievable: a soft-deleted
+      // material, and any material inside a soft-deleted base, is invisible
+      // until restored. Everything else about the record is kept as-is.
+      if (material.deletedAt !== undefined) continue
+      const base = this.#knowledgeBases.get(material.kbId)
+      if (base === undefined || base.deletedAt !== undefined) continue
       this.#indexMaterial(material)
     }
   }
 
   // ------------------------------------------------------------- knowledge bases
 
-  /** Every knowledge base, ordered by name. */
+  /** Every live knowledge base, ordered by name. Soft-deleted ones are hidden. */
   listKnowledgeBases(): readonly KnowledgeBase[] {
-    return [...this.#knowledgeBases.values()].sort((left, right) =>
-      left.name.localeCompare(right.name),
-    )
+    return [...this.#knowledgeBases.values()]
+      .filter(knowledgeBase => knowledgeBase.deletedAt === undefined)
+      .sort((left, right) => left.name.localeCompare(right.name))
+  }
+
+  /** Every soft-deleted knowledge base, most recently deleted first. */
+  listDeletedKnowledgeBases(): readonly KnowledgeBase[] {
+    return [...this.#knowledgeBases.values()]
+      .filter(knowledgeBase => knowledgeBase.deletedAt !== undefined)
+      .sort((left, right) => (right.deletedAt ?? 0) - (left.deletedAt ?? 0))
   }
 
   /** Look one up by id. */
@@ -148,8 +161,7 @@ export class KnowbaseService {
 
   /** Rename. Never touches the index — names are not searchable content. */
   async renameKnowledgeBase(id: string, rawName: string): Promise<KnowledgeBase> {
-    const current = this.#knowledgeBases.get(id)
-    if (current === undefined) throw new KnowbaseError('not-found', '知识库不存在。')
+    const current = this.#requireLiveKnowledgeBase(id)
 
     const name = normalizeName(rawName)
     if (name.length === 0) throw new KnowbaseError('invalid-name', '知识库名称不能为空。')
@@ -171,8 +183,7 @@ export class KnowbaseService {
 
   /** Update a knowledge base's description. */
   async updateDescription(id: string, rawDescription: string): Promise<KnowledgeBase> {
-    const current = this.#knowledgeBases.get(id)
-    if (current === undefined) throw new KnowbaseError('not-found', '知识库不存在。')
+    const current = this.#requireLiveKnowledgeBase(id)
 
     const updated: KnowledgeBase = {
       ...current,
@@ -184,12 +195,63 @@ export class KnowbaseService {
     return updated
   }
 
-  /** Delete a knowledge base and every material inside it. */
+  /**
+   * Move a knowledge base to the recycle bin.
+   *
+   * Soft delete: the record and every material inside it are kept, the base
+   * disappears from lists and from the `all` scope, and its materials leave
+   * the index so nothing inside it is retrievable. `restoreKnowledgeBase`
+   * undoes all of it; only {@link purgeKnowledgeBase} destroys data.
+   */
   async deleteKnowledgeBase(id: string): Promise<boolean> {
-    if (!this.#knowledgeBases.has(id)) return false
+    const current = this.#knowledgeBases.get(id)
+    if (current === undefined || current.deletedAt !== undefined) return false
 
-    for (const material of this.listMaterials(id)) {
-      await this.deleteMaterial(material.id)
+    this.#unindexKnowledgeBase(id)
+    const updated: KnowledgeBase = { ...current, deletedAt: this.#now() }
+    this.#knowledgeBases.set(id, updated)
+    await this.#store.saveKnowledgeBase(updated)
+    return true
+  }
+
+  /**
+   * Take a soft-deleted knowledge base back out of the recycle bin.
+   *
+   * The base's materials were left untouched by the delete, so re-indexing the
+   * live ones restores exactly what was searchable before. `@returns false`
+   * when the id is unknown or the base is not in the bin.
+   */
+  async restoreKnowledgeBase(id: string): Promise<boolean> {
+    const current = this.#knowledgeBases.get(id)
+    if (current === undefined || current.deletedAt === undefined) return false
+
+    const updated: KnowledgeBase = { ...current, deletedAt: undefined }
+    this.#knowledgeBases.set(id, updated)
+    for (const material of this.#materials.values()) {
+      if (material.kbId === id && material.deletedAt === undefined) {
+        this.#indexMaterial(material)
+      }
+    }
+    await this.#store.saveKnowledgeBase(updated)
+    await this.#bumpRevision(updated)
+    return true
+  }
+
+  /**
+   * Destroy a soft-deleted knowledge base and every material inside it —
+   * including materials a user had separately recycled. Refuses a live base:
+   * the recycle bin is the only door to permanent deletion, so a purge can
+   * never overtake an accidental click on the ordinary delete button.
+   */
+  async purgeKnowledgeBase(id: string): Promise<boolean> {
+    const current = this.#knowledgeBases.get(id)
+    if (current === undefined || current.deletedAt === undefined) return false
+
+    for (const material of [...this.#materials.values()]) {
+      if (material.kbId !== id) continue
+      this.#unindexMaterial(material)
+      this.#materials.delete(material.id)
+      await this.#store.deleteMaterial(material.id)
     }
     this.#knowledgeBases.delete(id)
     await this.#store.deleteKnowledgeBase(id)
@@ -198,11 +260,27 @@ export class KnowbaseService {
 
   // ----------------------------------------------------------------- materials
 
-  /** Materials, optionally limited to one knowledge base. */
+  /**
+   * Live materials, optionally limited to one knowledge base.
+   *
+   * Soft-deleted materials are hidden here — they surface through
+   * {@link listDeletedMaterials} instead — and so are the materials of a
+   * soft-deleted base, which follow their base in the recycle bin rather than
+   * being listed separately.
+   */
   listMaterials(kbId?: string): readonly Material[] {
-    const all = [...this.#materials.values()]
+    const all = [...this.#materials.values()].filter(
+      material => material.deletedAt === undefined,
+    )
     const scoped = kbId === undefined ? all : all.filter(material => material.kbId === kbId)
     return scoped.sort((left, right) => right.updatedAt - left.updatedAt)
+  }
+
+  /** Soft-deleted materials, most recently deleted first. */
+  listDeletedMaterials(): readonly Material[] {
+    return [...this.#materials.values()]
+      .filter(material => material.deletedAt !== undefined)
+      .sort((left, right) => (right.deletedAt ?? 0) - (left.deletedAt ?? 0))
   }
 
   /** Look one up by id. */
@@ -212,8 +290,7 @@ export class KnowbaseService {
 
   /** Add typed or pasted text as a new material. */
   async addText(kbId: string, title: string, text: string): Promise<Material> {
-    const knowledgeBase = this.#knowledgeBases.get(kbId)
-    if (knowledgeBase === undefined) throw new KnowbaseError('not-found', '知识库不存在。')
+    const knowledgeBase = this.#requireLiveKnowledgeBase(kbId)
 
     const chunks = chunkText(text, this.#chunkOptions)
     if (chunks.length === 0) throw new KnowbaseError('invalid-name', '内容为空，没有可入库的文字。')
@@ -241,6 +318,12 @@ export class KnowbaseService {
   async updateMaterialText(id: string, text: string): Promise<Material> {
     const current = this.#materials.get(id)
     if (current === undefined) throw new KnowbaseError('not-found', '资料不存在。')
+    // A recycled material must be restored before it can be edited: the editor
+    // is a live-content surface, and editing inside the bin would silently
+    // change what a later restore brings back.
+    if (current.deletedAt !== undefined) {
+      throw new KnowbaseError('not-found', '资料在回收站中，恢复后才能编辑。')
+    }
 
     const chunks = chunkText(text, this.#chunkOptions)
     if (chunks.length === 0) throw new KnowbaseError('invalid-name', '内容为空，没有可入库的文字。')
@@ -266,10 +349,62 @@ export class KnowbaseService {
     return updated
   }
 
-  /** Remove a material and everything it contributed to the index. */
+  /**
+   * Move a material to the recycle bin.
+   *
+   * Soft delete: the record is kept with a marker, the material leaves the
+   * index and every list, and {@link restoreMaterial} brings it back exactly
+   * as it was. Nothing is destroyed here — that is {@link purgeMaterial}'s
+   * job, and it only accepts what is already in the bin.
+   */
   async deleteMaterial(id: string): Promise<boolean> {
     const material = this.#materials.get(id)
-    if (material === undefined) return false
+    if (material === undefined || material.deletedAt !== undefined) return false
+
+    this.#unindexMaterial(material)
+    const updated: Material = { ...material, deletedAt: this.#now() }
+    this.#materials.set(id, updated)
+    await this.#store.saveMaterial(updated)
+
+    const knowledgeBase = this.#knowledgeBases.get(updated.kbId)
+    if (knowledgeBase !== undefined) await this.#bumpRevision(knowledgeBase)
+    return true
+  }
+
+  /**
+   * Take a soft-deleted material out of the recycle bin.
+   *
+   * A material whose base is also in the bin brings the base back with it —
+   * otherwise the restored material would exist but be visible nowhere, which
+   * reads as a lost restore.
+   */
+  async restoreMaterial(id: string): Promise<boolean> {
+    const material = this.#materials.get(id)
+    if (material === undefined || material.deletedAt === undefined) return false
+
+    const base = this.#knowledgeBases.get(material.kbId)
+    if (base !== undefined && base.deletedAt !== undefined) {
+      await this.restoreKnowledgeBase(base.id)
+    }
+
+    const updated: Material = { ...material, deletedAt: undefined }
+    this.#materials.set(id, updated)
+    this.#indexMaterial(updated)
+    await this.#store.saveMaterial(updated)
+
+    const liveBase = this.#knowledgeBases.get(updated.kbId)
+    if (liveBase !== undefined) await this.#bumpRevision(liveBase)
+    return true
+  }
+
+  /**
+   * Destroy a soft-deleted material for good. Refuses a live material: the
+   * recycle bin is the only door to permanent deletion, so a purge can never
+   * overtake an accidental click on the ordinary delete button.
+   */
+  async purgeMaterial(id: string): Promise<boolean> {
+    const material = this.#materials.get(id)
+    if (material === undefined || material.deletedAt === undefined) return false
 
     this.#unindexMaterial(material)
     this.#materials.delete(id)
@@ -331,12 +466,35 @@ export class KnowbaseService {
 
   // ------------------------------------------------------------------ internals
 
+  /**
+   * The knowledge base an operation acts on, requiring the LIVE record.
+   *
+   * A soft-deleted base is hidden from every list and from name lookup, but
+   * its id still resolves here — which is exactly why write paths go through
+   * this guard: without it, a stale client could add or rename inside a base
+   * the user believes is deleted.
+   */
+  #requireLiveKnowledgeBase(id: string): KnowledgeBase {
+    const current = this.#knowledgeBases.get(id)
+    if (current === undefined || current.deletedAt !== undefined) {
+      throw new KnowbaseError('not-found', '知识库不存在。')
+    }
+    return current
+  }
+
   /** Whether any indexed chunk belongs to one of the allowed knowledge bases. */
   #hasIndexedChunks(allowed: ReadonlySet<string>): boolean {
     for (const context of this.#chunks.values()) {
       if (allowed.has(context.kbId)) return true
     }
     return false
+  }
+
+  /** Remove every material of one knowledge base from the index. */
+  #unindexKnowledgeBase(id: string): void {
+    for (const material of this.#materials.values()) {
+      if (material.kbId === id) this.#unindexMaterial(material)
+    }
   }
 
   #indexMaterial(material: Material): void {

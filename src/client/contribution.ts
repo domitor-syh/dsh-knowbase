@@ -82,6 +82,11 @@ const sessionScopeSchema = z.object({
   kbIds: z.array(z.string()),
 })
 
+const recycleBinSchema = z.object({
+  bases: z.array(knowledgeBaseSchema),
+  materials: z.array(materialSchema),
+})
+
 const string = z.string()
 const strings = z.array(z.string())
 const boolean = z.boolean()
@@ -185,6 +190,11 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
     ],
     result: sessionScopeSchema,
   },
+  listRecycleBin: { parameters: [], result: recycleBinSchema },
+  restoreKnowledgeBase: { parameters: [{ name: 'id', schema: string }], result: boolean },
+  restoreMaterial: { parameters: [{ name: 'id', schema: string }], result: boolean },
+  purgeKnowledgeBase: { parameters: [{ name: 'id', schema: string }], result: boolean },
+  purgeMaterial: { parameters: [{ name: 'id', schema: string }], result: boolean },
 }
 
 /** Build a unary (non-stream) invocation descriptor. */
@@ -243,6 +253,11 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       all: boolean,
       kbIds: readonly string[],
     ) => Promise<unknown>
+    listRecycleBin: () => Promise<unknown>
+    restoreKnowledgeBase: (id: string) => Promise<unknown>
+    restoreMaterial: (id: string) => Promise<unknown>
+    purgeKnowledgeBase: (id: string) => Promise<unknown>
+    purgeMaterial: (id: string) => Promise<unknown>
   }
 
   interface TypertRemoteNamespaceMap {

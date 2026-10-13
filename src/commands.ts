@@ -152,7 +152,7 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
             await service.deleteKnowledgeBase(target.id)
             return {
               kind: 'success',
-              text: `已删除知识库「${target.name}」及其 ${materials} 份资料。`,
+              text: `已把「${target.name}」（${materials} 份资料）移入回收站，可在设置页恢复。`,
             }
           }
 
@@ -176,7 +176,7 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
             const matches = materials.filter(material => material.title === argument.trim())
             if (matches.length === 0) return { kind: 'error', text: `没有标题为「${argument}」的资料。` }
             for (const material of matches) await service.deleteMaterial(material.id)
-            return { kind: 'success', text: `已删除 ${matches.length} 份资料。` }
+            return { kind: 'success', text: `已把 ${matches.length} 份资料移入回收站。` }
           }
 
           case 'use': {
