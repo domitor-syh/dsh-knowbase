@@ -64,6 +64,10 @@ const materialSchema = z.object({
   text: z.string().optional(),
   // Soft-delete marker; absence is the live state. See knowledgeBaseSchema.
   deletedAt: z.number().optional(),
+  // Fingerprint for same-base duplicate detection. Optional so version 1 stays
+  // loadable in both directions: records written before it existed parse fine
+  // and are hashed on demand. No version bump — see the note above.
+  contentHash: z.string().optional(),
   chunks: z.array(chunkSchema),
 })
 

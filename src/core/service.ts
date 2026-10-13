@@ -15,9 +15,14 @@
  */
 
 import type { RetrievalOutcome, RetrievedPassage } from '../pre-step.ts'
+import { buildBackupDocument, planImport, type BackupDocument } from './backup.ts'
 import { Bm25Index } from './bm25.ts'
 import { chunkText, type ChunkOptions } from './chunk.ts'
-import { newId, normalizeName, type KnowledgeBase, type Material } from './model.ts'
+import { contentFingerprint } from './fingerprint.ts'
+import { materialText, newId, normalizeName, type KnowledgeBase, type Material } from './model.ts'
+
+/** Recorded in every backup so a file says which build wrote it. */
+const PACKAGE_NAME = '@domitor-syh/dsh-knowbase'
 
 /** Persistence port. */
 export interface KnowbaseStore {
@@ -32,7 +37,11 @@ export interface KnowbaseStore {
 }
 
 /** Failure codes a caller can act on, rather than parsing messages. */
-export type KnowbaseErrorCode = 'duplicate-name' | 'invalid-name' | 'not-found'
+export type KnowbaseErrorCode =
+  | 'duplicate-name'
+  | 'duplicate-material'
+  | 'invalid-name'
+  | 'not-found'
 
 /** A domain failure with a machine-readable code. */
 export class KnowbaseError extends Error {
@@ -62,6 +71,47 @@ export interface RetrieveOptions {
   readonly limit?: number
   /** Minimum query-term coverage. Default 0 — see the calibration note in `bm25.ts`. */
   readonly minCoverage?: number
+}
+
+/**
+ * Identity a restore carries over from a backup.
+ *
+ * Only a restore sets these. A normal create allocates a fresh id and stamps
+ * the clock, which is what makes "restore onto a clean profile" reproduce the
+ * original exactly — including the session selections that reference base ids —
+ * without giving every other caller a way to invent an id.
+ */
+export interface RestoreFields {
+  /** Keep this id when it is free. */
+  readonly id?: string
+  readonly createdAt?: number
+  readonly updatedAt?: number
+  /** Keep this revision, so citations recorded against it still resolve. */
+  readonly revision?: number
+}
+
+/** Options for {@link KnowbaseService.addText}. */
+export interface AddTextOptions {
+  /**
+   * Accept content that already exists in this base. Default `false`: the plan
+   * asks for 同库重复检测, and a silent duplicate doubles the chunks, the bytes
+   * and every retrieval result.
+   */
+  readonly allowDuplicate?: boolean
+  /** Preserved identity, used by restore. */
+  readonly restore?: RestoreFields
+}
+
+/** What {@link KnowbaseService.importBackup} did. */
+export interface ImportSummary {
+  readonly bases: number
+  readonly materials: number
+  /** Materials in the file that carried no indexable text and were dropped. */
+  readonly skippedMaterials: number
+  /** Bases that could not keep their original id because something already used it. */
+  readonly reallocatedBases: number
+  /** Names actually created, after any 「（导入 n）」 disambiguation. */
+  readonly baseNames: readonly string[]
 }
 
 /** Construction options. */
@@ -137,21 +187,36 @@ export class KnowbaseService {
     return this.listKnowledgeBases().find(knowledgeBase => knowledgeBase.name === normalized)
   }
 
-  /** Create a knowledge base. Names are display-only and must be unique. */
-  async createKnowledgeBase(rawName: string, description = ''): Promise<KnowledgeBase> {
+  /**
+   * Create a knowledge base. Names are display-only and must be unique.
+   *
+   * `restore` is set only by {@link importBackup}; see {@link RestoreFields} for
+   * why a restore keeps the original identity and nothing else does.
+   */
+  async createKnowledgeBase(
+    rawName: string,
+    description = '',
+    restore: RestoreFields = {},
+  ): Promise<KnowledgeBase> {
     const name = normalizeName(rawName)
     if (name.length === 0) throw new KnowbaseError('invalid-name', '知识库名称不能为空。')
     if (this.findKnowledgeBaseByName(name) !== undefined) {
       throw new KnowbaseError('duplicate-name', `已存在名为「${name}」的知识库。`)
     }
+    // A restore may ask to keep an id, but only if it is genuinely free: an id
+    // that is already in use would replace an existing base rather than add one,
+    // which is the one thing a restore must never do.
+    const id = restore.id !== undefined && restore.id !== '' && !this.#knowledgeBases.has(restore.id)
+      ? restore.id
+      : newId('kb')
 
     const timestamp = this.#now()
     const knowledgeBase: KnowledgeBase = {
-      id: newId('kb'),
+      id,
       name,
       description: description.trim(),
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      createdAt: restore.createdAt ?? timestamp,
+      updatedAt: restore.updatedAt ?? timestamp,
       indexRevision: 0,
     }
     this.#knowledgeBases.set(knowledgeBase.id, knowledgeBase)
@@ -288,23 +353,50 @@ export class KnowbaseService {
     return this.#materials.get(id)
   }
 
-  /** Add typed or pasted text as a new material. */
-  async addText(kbId: string, title: string, text: string): Promise<Material> {
+  /**
+   * Add typed or pasted text as a new material.
+   *
+   * Refuses content that already exists in the same base unless
+   * `allowDuplicate` is set. The check is per base, not global: the same
+   * paragraph legitimately belongs in two different bases, and blocking that
+   * would make the plugin wrong about the user's own filing.
+   */
+  async addText(
+    kbId: string,
+    title: string,
+    text: string,
+    options: AddTextOptions = {},
+  ): Promise<Material> {
     const knowledgeBase = this.#requireLiveKnowledgeBase(kbId)
 
     const chunks = chunkText(text, this.#chunkOptions)
     if (chunks.length === 0) throw new KnowbaseError('invalid-name', '内容为空，没有可入库的文字。')
 
+    const contentHash = contentFingerprint(text)
+    if (options.allowDuplicate !== true) {
+      const existing = this.#findDuplicateByHash(kbId, contentHash)
+      if (existing !== undefined) {
+        throw new KnowbaseError(
+          'duplicate-material',
+          `该知识库中已有内容相同的资料「${existing.title}」。如果确实要再存一份，请选择「仍然添加」。`,
+        )
+      }
+    }
+
     const timestamp = this.#now()
+    const restore = options.restore ?? {}
     const material: Material = {
-      id: newId('mat'),
+      id: restore.id !== undefined && restore.id !== '' && !this.#materials.has(restore.id)
+        ? restore.id
+        : newId('mat'),
       kbId,
       title: normalizeName(title) || '未命名资料',
       source: 'text',
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      revision: 1,
+      createdAt: restore.createdAt ?? timestamp,
+      updatedAt: restore.updatedAt ?? timestamp,
+      revision: restore.revision ?? 1,
       text,
+      contentHash,
       chunks,
     }
     this.#materials.set(material.id, material)
@@ -312,6 +404,17 @@ export class KnowbaseService {
     await this.#store.saveMaterial(material)
     await this.#bumpRevision(knowledgeBase)
     return material
+  }
+
+  /**
+   * The live material in `kbId` whose content matches `text`, if any.
+   *
+   * The UI calls this before adding so it can show the warning inline and offer
+   * 「仍然添加」, instead of making the user read an error message and guess at
+   * the remedy.
+   */
+  findDuplicateMaterial(kbId: string, text: string): Material | undefined {
+    return this.#findDuplicateByHash(kbId, contentFingerprint(text))
   }
 
   /** Replace a material's text and re-index it. */
@@ -336,6 +439,12 @@ export class KnowbaseService {
     const updated: Material = {
       ...current,
       text,
+      // Re-hashed on every save: an edit that happens to reproduce another
+      // material's text leaves the fingerprint correct for the next add.
+      // Duplicates created *by* an edit are not blocked — refusing a save would
+      // discard the user's work, and the plan's rule is to prevent duplicate
+      // ingest, not to police editing.
+      contentHash: contentFingerprint(text),
       chunks,
       revision: current.revision + 1,
       updatedAt: this.#now(),
@@ -464,7 +573,112 @@ export class KnowbaseService {
     return passages.length === 0 ? { kind: 'no_match' } : { kind: 'hits', passages }
   }
 
+  // -------------------------------------------------------------------- backup
+
+  /**
+   * Everything the user currently has, as a portable document.
+   *
+   * Live records only — see `backup.ts` for why the recycle bin stays out — and
+   * source text rather than chunks, so the file does not bake in a chunking
+   * decision that a later version would make differently.
+   */
+  exportBackup(exportedAt: number): BackupDocument {
+    return buildBackupDocument({
+      exportedAt,
+      generator: PACKAGE_NAME,
+      bases: this.listKnowledgeBases().map(base => ({
+        id: base.id,
+        name: base.name,
+        description: base.description,
+        createdAt: base.createdAt,
+        updatedAt: base.updatedAt,
+        materials: this.listMaterials(base.id).map(material => ({
+          id: material.id,
+          title: material.title,
+          text: materialText(material),
+          createdAt: material.createdAt,
+          updatedAt: material.updatedAt,
+          revision: material.revision,
+        })),
+      })),
+    })
+  }
+
+  /**
+   * Write a parsed backup into this profile, without destroying anything.
+   *
+   * Each base goes through the ordinary create path and each material through
+   * the ordinary add path, so a restored library is indexed, validated and
+   * persisted exactly like one the user typed — no second code path to keep in
+   * sync. `allowDuplicate` is set because the file is the source of truth about
+   * its own contents: a backup that legitimately held two identical materials
+   * must restore as two, not as one plus a silent drop.
+   */
+  async importBackup(document: BackupDocument): Promise<ImportSummary> {
+    const plan = planImport(
+      document,
+      {
+        baseIds: [...this.#knowledgeBases.keys()],
+        // Recycled bases count as occupying their name: restoring one would
+        // otherwise collide with the import.
+        baseNames: [...this.#knowledgeBases.values()].map(base => base.name),
+      },
+      newId,
+    )
+
+    const baseNames: string[] = []
+    let materials = 0
+
+    for (const planned of plan.bases) {
+      const base = await this.createKnowledgeBase(planned.name, planned.description, {
+        id: planned.id,
+        createdAt: planned.createdAt,
+        updatedAt: planned.updatedAt,
+      })
+      baseNames.push(base.name)
+
+      for (const material of planned.materials) {
+        await this.addText(base.id, material.title, material.text, {
+          allowDuplicate: true,
+          restore: {
+            id: material.id,
+            createdAt: material.createdAt,
+            updatedAt: material.updatedAt,
+            revision: material.revision,
+          },
+        })
+        materials += 1
+      }
+    }
+
+    return {
+      bases: plan.bases.length,
+      materials,
+      skippedMaterials: plan.skippedMaterials,
+      reallocatedBases: plan.reallocatedBases,
+      baseNames,
+    }
+  }
+
   // ------------------------------------------------------------------ internals
+
+  /**
+   * The live material in `kbId` carrying this fingerprint.
+   *
+   * Records written before fingerprints existed have none stored, so theirs is
+   * computed on demand rather than the record being treated as absent from the
+   * check — otherwise every material predating this feature would be silently
+   * exempt from duplicate detection.
+   */
+  #findDuplicateByHash(kbId: string, contentHash: string): Material | undefined {
+    for (const material of this.#materials.values()) {
+      if (material.kbId !== kbId) continue
+      if (material.deletedAt !== undefined) continue
+      const candidate = material.contentHash ?? contentFingerprint(materialText(material))
+      if (candidate === contentHash) return material
+    }
+    return undefined
+  }
 
   /**
    * The knowledge base an operation acts on, requiring the LIVE record.

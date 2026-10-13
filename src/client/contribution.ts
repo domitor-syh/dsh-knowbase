@@ -87,6 +87,39 @@ const recycleBinSchema = z.object({
   materials: z.array(materialSchema),
 })
 
+const duplicateSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  updatedAt: z.number(),
+  chunkCount: z.number(),
+})
+
+const backupPayloadSchema = z.object({
+  fileName: z.string(),
+  // The file's bytes travel as one string: the Host does not choose where a
+  // backup lands, the page does, so there is nothing to gain from describing
+  // the document twice.
+  json: z.string(),
+  bases: z.number(),
+  materials: z.number(),
+  bytes: z.number(),
+})
+
+const importResultSchema = z.discriminatedUnion('outcome', [
+  z.object({
+    outcome: z.literal('imported'),
+    bases: z.number(),
+    materials: z.number(),
+    skippedMaterials: z.number(),
+    reallocatedBases: z.number(),
+    baseNames: z.array(z.string()),
+  }),
+  z.object({
+    outcome: z.literal('rejected'),
+    reason: z.string(),
+  }),
+])
+
 const string = z.string()
 const strings = z.array(z.string())
 const boolean = z.boolean()
@@ -144,8 +177,16 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
       { name: 'kbId', schema: string },
       { name: 'title', schema: string },
       { name: 'text', schema: string },
+      { name: 'allowDuplicate', schema: boolean },
     ],
     result: materialSchema,
+  },
+  findDuplicateMaterial: {
+    parameters: [
+      { name: 'kbId', schema: string },
+      { name: 'text', schema: string },
+    ],
+    result: duplicateSchema.nullable(),
   },
   deleteMaterial: { parameters: [{ name: 'id', schema: string }], result: boolean },
   readMaterialChunks: {
@@ -176,6 +217,15 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
       { name: 'kbIds', schema: strings },
     ],
     result: searchReportSchema,
+  },
+  exportBackup: {
+    // `''` means every live base; anything else exports that one.
+    parameters: [{ name: 'kbId', schema: string }],
+    result: backupPayloadSchema,
+  },
+  importBackup: {
+    parameters: [{ name: 'json', schema: string }],
+    result: importResultSchema,
   },
   getSessionScope: {
     parameters: [{ name: 'agentId', schema: string }],
@@ -240,12 +290,20 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     updateDescription: (id: string, description: string) => Promise<unknown>
     deleteKnowledgeBase: (id: string) => Promise<unknown>
     listMaterials: (kbId: string) => Promise<unknown>
-    addTextMaterial: (kbId: string, title: string, text: string) => Promise<unknown>
+    addTextMaterial: (
+      kbId: string,
+      title: string,
+      text: string,
+      allowDuplicate: boolean,
+    ) => Promise<unknown>
     updateMaterialText: (id: string, text: string) => Promise<unknown>
+    findDuplicateMaterial: (kbId: string, text: string) => Promise<unknown>
     deleteMaterial: (id: string) => Promise<unknown>
     readMaterialChunks: (id: string) => Promise<unknown>
     readMaterialText: (id: string) => Promise<unknown>
     testSearch: (query: string, kbIds: readonly string[]) => Promise<unknown>
+    exportBackup: (kbId: string) => Promise<unknown>
+    importBackup: (json: string) => Promise<unknown>
     getSessionScope: (agentId: string) => Promise<unknown>
     setSessionScope: (
       agentId: string,

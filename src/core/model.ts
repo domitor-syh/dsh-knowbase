@@ -53,6 +53,13 @@ export interface Material {
   readonly text?: string
   /** Soft-delete marker; absence is the live state. See {@link KnowledgeBase.deletedAt}. */
   readonly deletedAt?: number
+  /**
+   * Fingerprint of {@link text}, used to refuse the same material twice inside
+   * one base. Optional for the same reason as `text`: records written before
+   * duplicate detection existed do not carry it, and absence is handled by
+   * hashing on demand rather than by rejecting the record.
+   */
+  readonly contentHash?: string
   /** Extracted text, already split for retrieval. */
   readonly chunks: readonly ChunkRecord[]
 }
@@ -69,6 +76,18 @@ export interface ChunkRecord {
 /** Generate an identity for a new entity. */
 export function newId(prefix: string): string {
   return `${prefix}_${randomUUID()}`
+}
+
+/**
+ * A material's text as the user supplied it.
+ *
+ * Records written before the editor existed carry no `text`, and for those the
+ * chunks are the only surviving copy — reassembling them normalises blank lines,
+ * which is lossy but better than showing nothing. Both the editor and the
+ * backup export read text through here so the fallback exists exactly once.
+ */
+export function materialText(material: Material): string {
+  return material.text ?? material.chunks.map(chunk => chunk.text).join('\n\n')
 }
 
 /** Trim and collapse a user-supplied name, then bound it to the documented length. */

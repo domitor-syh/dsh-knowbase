@@ -287,3 +287,194 @@ describe('KnowbaseService — persistence round trip', () => {
     expect(second.retrieve('波特率', [kbId]).kind).toBe('hits')
   })
 })
+
+describe('KnowbaseService — same-base duplicate detection', () => {
+  let service: KnowbaseService
+  let kbId: string
+
+  beforeEach(async () => {
+    service = await freshService()
+    kbId = (await service.createKnowledgeBase('产品资料')).id
+  })
+
+  it('refuses the same content twice in one base', async () => {
+    await service.addText(kbId, '端口说明', MANUAL)
+    await expect(service.addText(kbId, '端口说明（副本）', MANUAL)).rejects.toMatchObject({
+      code: 'duplicate-material',
+    })
+  })
+
+  it('names the material it collided with, so the warning can be specific', async () => {
+    await service.addText(kbId, '端口说明', MANUAL)
+    await expect(service.addText(kbId, '另一个标题', MANUAL)).rejects.toThrow(/端口说明/)
+  })
+
+  it('ignores whitespace-only differences, which are the same document', async () => {
+    await service.addText(kbId, '端口说明', MANUAL)
+    await expect(
+      service.addText(kbId, '端口说明', MANUAL.replace(/\n/g, '\n\n')),
+    ).rejects.toMatchObject({ code: 'duplicate-material' })
+  })
+
+  it('allows the same content in a different base — the same paragraph can belong twice', async () => {
+    const other = await service.createKnowledgeBase('另一个库')
+    await service.addText(kbId, '端口说明', MANUAL)
+    await expect(service.addText(other.id, '端口说明', MANUAL)).resolves.toBeDefined()
+  })
+
+  it('adds the copy when the caller insists', async () => {
+    await service.addText(kbId, '端口说明', MANUAL)
+    const second = await service.addText(kbId, '端口说明', MANUAL, { allowDuplicate: true })
+    expect(second.id).toBeDefined()
+    expect(service.listMaterials(kbId)).toHaveLength(2)
+  })
+
+  it('reports the duplicate without throwing, for the pre-submit check', async () => {
+    const first = await service.addText(kbId, '端口说明', MANUAL)
+    expect(service.findDuplicateMaterial(kbId, MANUAL)?.id).toBe(first.id)
+    expect(service.findDuplicateMaterial(kbId, '完全不同的内容')).toBeUndefined()
+  })
+
+  it('stops seeing a duplicate once it is deleted', async () => {
+    const first = await service.addText(kbId, '端口说明', MANUAL)
+    await service.deleteMaterial(first.id)
+    // A recycled material is not in the way: the user removed it on purpose.
+    expect(service.findDuplicateMaterial(kbId, MANUAL)).toBeUndefined()
+    await expect(service.addText(kbId, '端口说明', MANUAL)).resolves.toBeDefined()
+  })
+
+  it('hashes a record that predates fingerprints, rather than exempting it', async () => {
+    // Simulates a material stored before duplicate detection existed: no
+    // `contentHash`. Absence must not read as "nothing to compare against".
+    const store = new MemoryStore()
+    await store.saveKnowledgeBase({
+      id: 'kb_legacy',
+      name: '旧库',
+      description: '',
+      createdAt: 1,
+      updatedAt: 1,
+      indexRevision: 1,
+    })
+    await store.saveMaterial({
+      id: 'mat_legacy',
+      kbId: 'kb_legacy',
+      title: '旧资料',
+      source: 'text',
+      createdAt: 1,
+      updatedAt: 1,
+      revision: 1,
+      text: MANUAL,
+      chunks: [
+        { id: 'chunk_legacy', ordinal: 0, text: MANUAL, headingPath: '', locator: '第 1 行' },
+      ],
+    })
+
+    const loaded = new KnowbaseService(store, { now: () => 5 })
+    await loaded.initialize()
+
+    expect(loaded.findDuplicateMaterial('kb_legacy', MANUAL)?.id).toBe('mat_legacy')
+    await expect(loaded.addText('kb_legacy', '再来一份', MANUAL)).rejects.toMatchObject({
+      code: 'duplicate-material',
+    })
+  })
+})
+
+describe('KnowbaseService — backup export and restore', () => {
+  it('restores a library onto a fresh profile exactly', async () => {
+    const source = await freshService()
+    const kbId = (await source.createKnowledgeBase('产品资料', '出厂资料')).id
+    await source.addText(kbId, '设备手册', MANUAL)
+    await source.addText(kbId, '网络配置', NETWORK)
+
+    const document = source.exportBackup(9_000)
+
+    const target = await freshService()
+    const summary = await target.importBackup(document)
+
+    expect(summary).toMatchObject({ bases: 1, materials: 2, skippedMaterials: 0 })
+    const restored = target.listKnowledgeBases()
+    expect(restored.map(kb => kb.name)).toEqual(['产品资料'])
+    // The id is kept, so a session selection that pointed at the original base
+    // still points at something after a restore.
+    expect(restored[0]!.id).toBe(kbId)
+    expect(restored[0]!.description).toBe('出厂资料')
+    expect(target.retrieve('波特率', [restored[0]!.id]).kind).toBe('hits')
+  })
+
+  it('does not overwrite an existing base when the id is taken', async () => {
+    const source = await freshService()
+    const kbId = (await source.createKnowledgeBase('产品资料')).id
+    await source.addText(kbId, '设备手册', MANUAL)
+    const document = source.exportBackup(9_000)
+
+    // The target already holds a base under the very id the file carries — the
+    // collision a restore onto a populated profile hits. Forcing the id through
+    // `restore` is the only way to construct it, since a normal create invents
+    // one.
+    const target = await freshService()
+    await target.createKnowledgeBase('产品资料', '', { id: kbId })
+    await target.addText(kbId, '原有资料', '这是原有的内容，不该被覆盖。')
+
+    const summary = await target.importBackup(document)
+
+    expect(summary.reallocatedBases).toBe(1)
+    expect(summary.baseNames).toEqual(['产品资料（导入 2）'])
+    expect(target.listKnowledgeBases().map(kb => kb.name)).toEqual([
+      '产品资料',
+      '产品资料（导入 2）',
+    ])
+    // The base that was already there is untouched, id and content both.
+    expect(target.retrieve('原有的内容', [kbId]).kind).toBe('hits')
+    expect(target.retrieve('波特率', [kbId]).kind).toBe('no_match')
+  })
+
+  it('imports the same file twice as two separate libraries', async () => {
+    const source = await freshService()
+    const kbId = (await source.createKnowledgeBase('产品资料')).id
+    await source.addText(kbId, '设备手册', MANUAL)
+    const document = source.exportBackup(9_000)
+
+    const target = await freshService()
+    await target.importBackup(document)
+    const second = await target.importBackup(document)
+
+    expect(second.baseNames).toEqual(['产品资料（导入 2）'])
+    expect(second.reallocatedBases).toBe(1)
+    expect(target.listKnowledgeBases()).toHaveLength(2)
+    expect(target.listMaterials()).toHaveLength(2)
+  })
+
+  it('keeps two identical materials from a file instead of collapsing them', async () => {
+    const source = await freshService()
+    const kbId = (await source.createKnowledgeBase('产品资料')).id
+    await source.addText(kbId, '设备手册', MANUAL, { allowDuplicate: true })
+    await source.addText(kbId, '设备手册', MANUAL, { allowDuplicate: true })
+
+    const target = await freshService()
+    const summary = await target.importBackup(source.exportBackup(9_000))
+
+    // The file is the source of truth about its own contents: duplicate
+    // detection guards ingestion, it does not get to rewrite a backup.
+    expect(summary.materials).toBe(2)
+    expect(target.listMaterials()).toHaveLength(2)
+  })
+
+  it('exports only live records — the recycle bin is not a snapshot', async () => {
+    const service = await freshService()
+    const kbId = (await service.createKnowledgeBase('产品资料')).id
+    const material = await service.addText(kbId, '设备手册', MANUAL)
+    await service.deleteMaterial(material.id)
+
+    const document = service.exportBackup(9_000)
+    expect(document.bases[0]!.materials).toHaveLength(0)
+  })
+
+  it('carries the source text, not the chunks it was split into', async () => {
+    const service = await freshService()
+    const kbId = (await service.createKnowledgeBase('产品资料')).id
+    await service.addText(kbId, '设备手册', MANUAL)
+
+    const document = service.exportBackup(9_000)
+    expect(document.bases[0]!.materials[0]!.text).toBe(MANUAL)
+  })
+})

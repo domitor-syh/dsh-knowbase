@@ -144,7 +144,9 @@ describe('soft-deleted knowledge bases', () => {
   it('purges a binned base together with all its materials', async () => {
     const created = await service.createKnowledgeBase('产品资料')
     const live = (await service.addText(created.id, '活资料', MANUAL)).id
-    const binned = (await service.addText(created.id, '已删资料', MANUAL)).id
+    // Different text from `live` on purpose: two identical materials in one base
+    // are refused now, and this test is about purge cascading, not duplicates.
+    const binned = (await service.addText(created.id, '已删资料', '另一份内容不同的资料。')).id
     await service.deleteMaterial(binned)
     await service.deleteKnowledgeBase(created.id)
 

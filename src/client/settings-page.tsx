@@ -24,6 +24,7 @@
 
 import * as React from 'react'
 import type {
+  DuplicateView,
   KnowledgeBaseView,
   MaterialView,
   PassageView,
@@ -69,6 +70,34 @@ const input: React.CSSProperties = {
 function messageOf(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
+}
+
+/** Human-readable byte size, for the export summary. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/**
+ * Save a string as a file, through a blob URL.
+ *
+ * The browser owns the destination, which is the point: the Host never decides
+ * where a user's backup lands, so there is no path for it to get wrong and
+ * nothing to configure. The URL is released on a timer rather than immediately
+ * because revoking it synchronously can cancel the download in some engines
+ * before the blob has been read.
+ */
+function downloadText(fileName: string, text: string): void {
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
 /** One labelled form row. */
@@ -208,6 +237,12 @@ export function KnowbaseSettingsPage(): React.ReactElement {
   const [recycle, setRecycle] = React.useState<RecycleBinView | undefined>(undefined)
   const [recycleOpen, setRecycleOpen] = React.useState(false)
 
+  // Same-base duplicate warning for the add form. Held as the found material so
+  // the warning can name it, rather than as a boolean the page would then have
+  // to explain without knowing what it collided with.
+  const [duplicate, setDuplicate] = React.useState<DuplicateView | null>(null)
+  const backupFile = React.useRef<HTMLInputElement | null>(null)
+
   /** Run one Host call with shared busy/error handling. */
   const run = React.useCallback(async (action: () => Promise<string>): Promise<void> => {
     const current = knowbaseApi()
@@ -245,6 +280,101 @@ export function KnowbaseSettingsPage(): React.ReactElement {
       setError(messageOf(failure))
     }
   }, [])
+
+  /** Export the library — or one base — and hand the file to the browser. */
+  const exportBackup = React.useCallback(
+    (kbId: string, label: string): void => {
+      void run(async () => {
+        const payload = await knowbaseApi()!.exportBackup(kbId)
+        if (payload.bases === 0) {
+          return kbId === '' ? '还没有可导出的知识库。' : '该知识库中没有可导出的资料。'
+        }
+        downloadText(payload.fileName, payload.json)
+        return (
+          `已导出${label}：${payload.bases} 个知识库 / ${payload.materials} 份资料，` +
+          `${formatBytes(payload.bytes)}。文件名 ${payload.fileName}`
+        )
+      })
+    },
+    [run],
+  )
+
+  /**
+   * Restore a backup the user picked.
+   *
+   * Handled outside `run` because a rejected file belongs in the error strip
+   * with the reason the format check produced — it is an answer, not a notice.
+   */
+  const importBackup = React.useCallback(
+    async (file: File): Promise<void> => {
+      const current = knowbaseApi()
+      if (current === undefined) {
+        setError('知识库通道尚未就绪，请稍候重试。')
+        return
+      }
+      setBusy(true)
+      setError('')
+      setNotice('')
+      try {
+        const result = await current.importBackup(await file.text())
+        if (result.outcome === 'rejected') {
+          setError(`导入失败：${result.reason}`)
+          return
+        }
+        await refreshBases()
+        await refreshRecycle()
+        const notes: string[] = []
+        if (result.skippedMaterials > 0) notes.push(`跳过 ${result.skippedMaterials} 份无正文资料`)
+        if (result.reallocatedBases > 0) {
+          notes.push(`${result.reallocatedBases} 个知识库因 ID 已被占用而重新编号`)
+        }
+        setNotice(
+          `已导入 ${result.bases} 个知识库、${result.materials} 份资料` +
+            (notes.length === 0 ? '。' : `（${notes.join('，')}）。`),
+        )
+      } catch (failure) {
+        setError(messageOf(failure))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [refreshBases, refreshRecycle],
+  )
+
+  /**
+   * Add the composed material, checking for a same-base duplicate first.
+   *
+   * The Host is asked rather than the error string being matched: that is what
+   * lets the page offer 「仍然添加」 as a button instead of making the user read a
+   * message and guess at the remedy. The Host still refuses the add itself, so a
+   * client that skipped this check would get an error, not a silent duplicate.
+   */
+  const submitMaterial = (allowDuplicate: boolean): void => {
+    const kbId = selectedId
+    if (kbId === '') return
+    void run(async () => {
+      const current = knowbaseApi()!
+      if (!allowDuplicate) {
+        const found = await current.findDuplicateMaterial(kbId, newText)
+        if (found !== null) {
+          setDuplicate(found)
+          return ''
+        }
+      }
+      const material = await current.addTextMaterial(
+        kbId,
+        newTitle.trim(),
+        newText,
+        allowDuplicate,
+      )
+      setNewTitle('')
+      setNewText('')
+      setDuplicate(null)
+      setMaterials(await current.listMaterials(kbId))
+      await refreshBases()
+      return `已加入「${material.title}」（${material.chunkCount} 个片段）。`
+    })
+  }
 
   // The channel mounts asynchronously, so the first render has no API yet. The
   // interval also surfaces a mounting failure: a page whose buttons do nothing
@@ -342,6 +472,9 @@ export function KnowbaseSettingsPage(): React.ReactElement {
     setDetailText('')
     setReport(undefined)
     setEditingInfo(false)
+    // A duplicate warning names a material in the base it was found in, so it
+    // cannot survive a change of base.
+    setDuplicate(null)
   }
 
   return (
@@ -702,30 +835,46 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                   <textarea
                     style={{ ...input, minHeight: 90, fontFamily: 'inherit' }}
                     value={newText}
-                    onChange={event => setNewText(event.target.value)}
+                    onChange={event => {
+                      setNewText(event.target.value)
+                      // The warning described the previous text; keeping it
+                      // would warn about content that is no longer in the box.
+                      setDuplicate(null)
+                    }}
                   />
                 </Field>
+                {duplicate !== null && (
+                  <div
+                    style={{
+                      ...panel,
+                      borderColor: '#d9a300',
+                      background: '#fff9e6',
+                      padding: '8px 10px',
+                      marginBottom: 8,
+                      fontSize: 12,
+                    }}
+                  >
+                    该知识库中已有内容相同的资料「{duplicate.title}」（{duplicate.chunkCount}{' '}
+                    个片段）。再存一份会让同一个答案在检索里出现两次。
+                  </div>
+                )}
                 <button
                   type="button"
                   style={button}
                   disabled={busy || newTitle.trim() === '' || newText.trim() === ''}
-                  onClick={() =>
-                    void run(async () => {
-                      const material = await knowbaseApi()!.addTextMaterial(
-                        selected.id,
-                        newTitle.trim(),
-                        newText,
-                      )
-                      setNewTitle('')
-                      setNewText('')
-                      setMaterials(await knowbaseApi()!.listMaterials(selected.id))
-                      await refreshBases()
-                      return `已加入「${material.title}」（${material.chunkCount} 个片段）。`
-                    })
-                  }
+                  onClick={() => submitMaterial(duplicate !== null)}
                 >
-                  加入知识库
+                  {duplicate !== null ? '仍然添加' : '加入知识库'}
                 </button>
+                {duplicate !== null && (
+                  <button
+                    type="button"
+                    style={{ ...button, marginLeft: 6 }}
+                    onClick={() => setDuplicate(null)}
+                  >
+                    取消
+                  </button>
+                )}
               </div>
 
               {/* retrieval test */}
@@ -762,6 +911,55 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                   </button>
                 </div>
                 {report !== undefined && <Report report={report} />}
+              </div>
+
+              {/* data backup */}
+              <div style={{ ...panel, padding: 10, marginTop: 12 }}>
+                <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 6 }}>数据备份</div>
+                <p style={{ fontSize: 11, color: COLORS.muted, margin: '0 0 8px' }}>
+                  备份是 JSON 文件，含资料正文；片段由正文重建，不写入文件。导入只会新增，
+                  不会覆盖或删除已有知识库。
+                </p>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    style={button}
+                    disabled={busy || bases.length === 0}
+                    onClick={() => exportBackup('', '全部知识库')}
+                  >
+                    导出全部知识库
+                  </button>
+                  <button
+                    type="button"
+                    style={button}
+                    disabled={busy || selected === undefined}
+                    onClick={() => exportBackup(selected?.id ?? '', `「${selected?.name ?? ''}」`)}
+                  >
+                    导出当前知识库
+                  </button>
+                  <button
+                    type="button"
+                    style={button}
+                    disabled={busy}
+                    onClick={() => backupFile.current?.click()}
+                  >
+                    导入备份…
+                  </button>
+                </div>
+                <input
+                  ref={backupFile}
+                  type="file"
+                  accept=".json,application/json"
+                  style={{ display: 'none' }}
+                  onChange={event => {
+                    const file = event.target.files?.[0]
+                    // Clear the input so picking the same file twice still
+                    // fires a change event — otherwise a retry after a rejected
+                    // import would do nothing at all.
+                    event.target.value = ''
+                    if (file !== undefined) void importBackup(file)
+                  }}
+                />
               </div>
 
               {/* recycle bin */}

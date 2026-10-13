@@ -15,6 +15,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
+  BackupPayloadView,
+  DuplicateView,
+  ImportResultView,
   KnowledgeBaseView,
   MaterialView,
   PassageView,
@@ -45,13 +48,23 @@ export interface KnowbaseApi {
   deleteKnowledgeBase(id: string): Promise<boolean>
 
   listMaterials(kbId: string): Promise<readonly MaterialView[]>
-  addTextMaterial(kbId: string, title: string, text: string): Promise<MaterialView>
+  addTextMaterial(
+    kbId: string,
+    title: string,
+    text: string,
+    allowDuplicate?: boolean,
+  ): Promise<MaterialView>
   updateMaterialText(id: string, text: string): Promise<MaterialView>
+  findDuplicateMaterial(kbId: string, text: string): Promise<DuplicateView | null>
   deleteMaterial(id: string): Promise<boolean>
   readMaterialChunks(id: string): Promise<readonly PassageView[]>
   readMaterialText(id: string): Promise<string>
 
   testSearch(query: string, kbIds: readonly string[]): Promise<SearchReportView>
+
+  /** `kbId` of `''` exports every live knowledge base. */
+  exportBackup(kbId: string): Promise<BackupPayloadView>
+  importBackup(json: string): Promise<ImportResultView>
 
   getSessionScope(agentId: string): Promise<SessionScopeView>
   setSessionScope(
@@ -95,12 +108,16 @@ interface KnowbaseWire {
     kbId: string,
     title: string,
     text: string,
+    allowDuplicate: boolean,
   ) => Promise<RemoteResult<MaterialView>>
   updateMaterialText: (id: string, text: string) => Promise<RemoteResult<MaterialView>>
+  findDuplicateMaterial: (kbId: string, text: string) => Promise<RemoteResult<DuplicateView | null>>
   deleteMaterial: (id: string) => Promise<RemoteResult<boolean>>
   readMaterialChunks: (id: string) => Promise<RemoteResult<readonly PassageView[]>>
   readMaterialText: (id: string) => Promise<RemoteResult<string>>
   testSearch: (query: string, kbIds: readonly string[]) => Promise<RemoteResult<SearchReportView>>
+  exportBackup: (kbId: string) => Promise<RemoteResult<BackupPayloadView>>
+  importBackup: (json: string) => Promise<RemoteResult<ImportResultView>>
   getSessionScope: (agentId: string) => Promise<RemoteResult<SessionScopeView>>
   setSessionScope: (
     agentId: string,
@@ -165,12 +182,16 @@ export function createKnowbaseApi(ctx: Context): KnowbaseApi {
     updateDescription: (id, description) => unwrap(wire.updateDescription(id, description)),
     deleteKnowledgeBase: id => unwrap(wire.deleteKnowledgeBase(id)),
     listMaterials: kbId => unwrap(wire.listMaterials(kbId)),
-    addTextMaterial: (kbId, title, text) => unwrap(wire.addTextMaterial(kbId, title, text)),
+    addTextMaterial: (kbId, title, text, allowDuplicate = false) =>
+      unwrap(wire.addTextMaterial(kbId, title, text, allowDuplicate)),
     updateMaterialText: (id, text) => unwrap(wire.updateMaterialText(id, text)),
+    findDuplicateMaterial: (kbId, text) => unwrap(wire.findDuplicateMaterial(kbId, text)),
     deleteMaterial: id => unwrap(wire.deleteMaterial(id)),
     readMaterialChunks: id => unwrap(wire.readMaterialChunks(id)),
     readMaterialText: id => unwrap(wire.readMaterialText(id)),
     testSearch: (query, kbIds) => unwrap(wire.testSearch(query, kbIds)),
+    exportBackup: kbId => unwrap(wire.exportBackup(kbId)),
+    importBackup: json => unwrap(wire.importBackup(json)),
     getSessionScope: agentId => unwrap(wire.getSessionScope(agentId)),
     setSessionScope: (agentId, enabled, all, kbIds) =>
       unwrap(wire.setSessionScope(agentId, enabled, all, kbIds)),

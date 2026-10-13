@@ -35,6 +35,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { backupFileName, BackupError, parseBackupDocument, serializeBackup, type BackupDocument } from './core/backup.ts'
+import { materialText } from './core/model.ts'
 import type { SessionSelectionRegistry } from './core/session-scope.ts'
 import type { KnowbaseService } from './core/service.ts'
 import { installRemoteMarkers } from './remote-methods.ts'
@@ -103,6 +105,59 @@ export interface RecycleBinView {
   readonly bases: readonly KnowledgeBaseView[]
   readonly materials: readonly MaterialView[]
 }
+
+/**
+ * A material already holding the text the user is about to add.
+ *
+ * Returned instead of thrown so the page can warn inline and offer 「仍然添加」;
+ * the Host still refuses the add itself, so a client that skips the check gets
+ * an error rather than a silent duplicate.
+ */
+export interface DuplicateView {
+  readonly id: string
+  readonly title: string
+  readonly updatedAt: number
+  readonly chunkCount: number
+}
+
+/**
+ * A backup, ready to be written to a file by the browser.
+ *
+ * The bytes travel as a string because the Host is not the one choosing where
+ * the file lands: the page turns this into a download, so the user picks the
+ * destination with the file dialog they already know.
+ */
+export interface BackupPayloadView {
+  readonly fileName: string
+  readonly json: string
+  readonly bases: number
+  readonly materials: number
+  readonly bytes: number
+}
+
+/**
+ * What a restore did.
+ *
+ * A discriminated result rather than a throw for the "wrong file" case: picking
+ * the wrong file is an ordinary thing to do, and it has to arrive in the page as
+ * a sentence the user can read. Whether a thrown error keeps its message across
+ * the Remote boundary is the gateway's business, and this is not the place to
+ * depend on it. Genuine faults — a store that fails to write — still throw.
+ */
+export type ImportResultView =
+  | {
+      readonly outcome: 'imported'
+      readonly bases: number
+      readonly materials: number
+      readonly skippedMaterials: number
+      readonly reallocatedBases: number
+      readonly baseNames: readonly string[]
+    }
+  | {
+      readonly outcome: 'rejected'
+      /** Why the file was refused, in words the user can act on. */
+      readonly reason: string
+    }
 
 /** What the service methods need from the plugin. */
 interface Dependencies {
@@ -202,8 +257,13 @@ export class KnowbaseRemote extends TypertRemoteService {
   }
 
   /** Add typed or pasted text as a new material. */
-  async addTextMaterial(kbId: string, title: string, text: string): Promise<MaterialView> {
-    const material = await deps().service.addText(kbId, title, text)
+  async addTextMaterial(
+    kbId: string,
+    title: string,
+    text: string,
+    allowDuplicate: boolean,
+  ): Promise<MaterialView> {
+    const material = await deps().service.addText(kbId, title, text, { allowDuplicate })
     return {
       id: material.id,
       kbId: material.kbId,
@@ -212,6 +272,18 @@ export class KnowbaseRemote extends TypertRemoteService {
       chunkCount: material.chunks.length,
       createdAt: material.createdAt,
       updatedAt: material.updatedAt,
+    }
+  }
+
+  /** The material already holding this text in this base, if any. */
+  async findDuplicateMaterial(kbId: string, text: string): Promise<DuplicateView | null> {
+    const found = deps().service.findDuplicateMaterial(kbId, text)
+    if (found === undefined) return null
+    return {
+      id: found.id,
+      title: found.title,
+      updatedAt: found.updatedAt,
+      chunkCount: found.chunks.length,
     }
   }
 
@@ -242,10 +314,7 @@ export class KnowbaseRemote extends TypertRemoteService {
   async readMaterialText(id: string): Promise<string> {
     const material = deps().service.getMaterial(id)
     if (material === undefined) return ''
-    return (
-      material.text ??
-      material.chunks.map(chunk => chunk.text).join('\n\n')
-    )
+    return materialText(material)
   }
 
   /** Replace a material's text and re-index it. */
@@ -317,6 +386,51 @@ export class KnowbaseRemote extends TypertRemoteService {
     // Deliberately not `this.getSessionScope(...)`: `this` may be the wrapper a
     // Remote call arrives through, and nothing here should depend on it.
     return readScope(agentId)
+  }
+
+  // ------------------------------------------------------------------- backup
+
+  /**
+   * Serialize the library into a downloadable backup.
+   *
+   * `kbId` of `''` means every live knowledge base; anything else exports that
+   * one. The filename is generated on the Host rather than the client so it is
+   * the same name however the file is produced — including from a script that
+   * never renders the page.
+   */
+  async exportBackup(kbId: string): Promise<BackupPayloadView> {
+    const { service } = deps()
+    const document = service.exportBackup(Date.now())
+    const scoped =
+      kbId === '' ? document : { ...document, bases: document.bases.filter(base => base.id === kbId) }
+
+    const json = serializeBackup(scoped)
+    return {
+      fileName: backupFileName(scoped.exportedAt),
+      json,
+      bases: scoped.bases.length,
+      materials: scoped.bases.reduce((sum, base) => sum + base.materials.length, 0),
+      bytes: new TextEncoder().encode(json).length,
+    }
+  }
+
+  /**
+   * Restore a backup file.
+   *
+   * Parsing happens here rather than in the page so the file is validated
+   * against the format on the side that owns the format, and a malformed file is
+   * refused as a whole instead of half-importing.
+   */
+  async importBackup(json: string): Promise<ImportResultView> {
+    let document: BackupDocument
+    try {
+      document = parseBackupDocument(json)
+    } catch (error) {
+      if (error instanceof BackupError) return { outcome: 'rejected', reason: error.message }
+      throw error
+    }
+    const summary = await deps().service.importBackup(document)
+    return { outcome: 'imported', ...summary }
   }
 
   // --------------------------------------------------------------- recycle bin
