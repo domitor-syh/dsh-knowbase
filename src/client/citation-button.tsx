@@ -168,29 +168,36 @@ function SourceOverlay(props: {
 /** The assistant action: the button when the turn carries evidence, else nothing. */
 export function KnowbaseSourceAction(props: Props): React.ReactElement | null {
   // Hook discipline on this seat is strict, and two earlier attempts proved it:
-  // the seat renders before the turn settles (messageId undefined) and again
-  // after (real id), and the chat source's hook appears only once that source
-  // resolves. Both make ANY conditional or factory-nested hook call change the
-  // hook count across renders — React #300. So: useSession (the runtime's own
-  // contribution, present for the whole session) is the only host hook called,
-  // it is called unconditionally at the top level, and the chat slice is read
-  // from the session snapshot like the reference plugin's fallback route.
-  const { messageId, useSession } = props
+  // a conditional or factory-nested hook call changes the hook count across
+  // renders and React aborts the whole entry with #300. So every hook is called
+  // unconditionally at the top level, and the guard on `messageId` sits after
+  // them.
+  //
+  // The two kit hooks are safe to branch on `typeof`: both are standard sources
+  // the host materializes for every session-scoped entry (`materializeStandardBinding`
+  // turns `binding.hooks` into `use<Name>` props), and both are registered
+  // unconditionally by their owners — the runtime's `session` source and
+  // ui-chat's `chat` source — so the branch never flips within one composition.
+  const { messageId, useSession, useChat } = props
 
   const [open, setOpen] = React.useState(false)
 
-  // Hook calls live at the component top level — NEVER inside a useMemo
-  // factory. A factory that runs only when its deps change would drop the
-  // nested hook from the hook list on cached renders, changing the hook count
-  // across renders (React #300). The session snapshot is cheap to re-read, so
-  // no memoization is needed at all.
   const sessionSnapshot =
     typeof useSession === 'function'
       ? (useSession as (selector: (state: unknown) => unknown) => unknown)(
           (state: unknown) => state,
         )
       : undefined
-  const chat = (sessionSnapshot as { chat?: unknown } | undefined)?.chat
+
+  // `useChat` is the route this host publishes the chat slice on. The snapshot
+  // fallback covers the older shape that carried `chat` on the session
+  // snapshot — reading only that one is exactly why the button never appeared:
+  // the seat was fine, the data was simply on the other route.
+  const liveChat =
+    typeof useChat === 'function'
+      ? (useChat as (selector: (state: unknown) => unknown) => unknown)((state: unknown) => state)
+      : undefined
+  const chat = liveChat ?? (sessionSnapshot as { chat?: unknown } | undefined)?.chat
 
   const passages =
     typeof messageId === 'string' ? passagesForAnswer(chat, messageId) : []

@@ -114,4 +114,56 @@ describe('passagesForAnswer', () => {
     expect(passagesForAnswer(chat, 'm-9')).toEqual([])
     expect(passagesForAnswer(chat, 'm-other')).toEqual([])
   })
+
+  /**
+   * The shape the host actually ships, and the reason the panel stayed empty
+   * for so long: `order` is the VISIBLE transcript order, and the host hides
+   * plain injected-context rows from it. The evidence node is therefore absent
+   * from `order` while still living in `nodes`.
+   */
+  it('finds evidence the visible order omits', () => {
+    const nodes = new Map<string, unknown>([
+      ['c0', contextNode({ turn: 3 }, { kind: 'knowbase', passages: [PASSAGE] })],
+      [
+        'a0',
+        {
+          kind: 'assistant-step',
+          location: { turn: { turn: 3 } },
+          data: { finalNode: { messageId: 'm-3' } },
+        },
+      ],
+    ])
+    const chat = { order: ['a0'], nodes }
+    expect(passagesForAnswer(chat, 'm-3')).toEqual([PASSAGE])
+  })
+
+  it('falls back to order + get when the snapshot exposes no values()', () => {
+    const store: Record<string, unknown> = {
+      c0: contextNode({ turn: 3 }, { kind: 'knowbase', passages: [PASSAGE] }),
+      a0: {
+        kind: 'assistant-step',
+        location: { turn: { turn: 3 } },
+        data: { finalNode: { messageId: 'm-3' } },
+      },
+    }
+    const chat = { order: ['c0', 'a0'], nodes: { get: (key: string) => store[key] } }
+    expect(passagesForAnswer(chat, 'm-3')).toEqual([PASSAGE])
+  })
+
+  it('numbers passages in transcript order, not store order', () => {
+    // Two evidence messages in one turn: the answer's `[n]` markers follow the
+    // transcript, so the panel must too, whatever order the store holds them in.
+    const nodes = new Map<string, unknown>([
+      [
+        'late',
+        { kind: 'context', location: { turn: 4 }, data: { seq: 90, source: { kind: 'knowbase', passages: [{ ...PASSAGE, locator: '第二段' }] } } },
+      ],
+      [
+        'early',
+        { kind: 'context', location: { turn: 4 }, data: { seq: 40, source: { kind: 'knowbase', passages: [PASSAGE] } } },
+      ],
+    ])
+    const chat = { order: [], nodes }
+    expect(passagesOfTurn(chat, 4).map(passage => passage.locator)).toEqual(['第 1 段', '第二段'])
+  })
 })

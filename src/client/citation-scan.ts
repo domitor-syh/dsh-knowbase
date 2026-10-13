@@ -34,17 +34,45 @@ export function turnNoOf(location: unknown): number | undefined {
   return typeof n === 'number' && Number.isSafeInteger(n) && n >= 1 ? n : undefined
 }
 
-/** Read the ordered nodes of a chat snapshot, or `undefined` when unusable. */
-function orderedNodes(
-  chat: unknown,
-): ReadonlyArray<readonly [string, unknown]> | undefined {
-  if (typeof chat !== 'object' || chat === null) return undefined
-  const order = (chat as { order?: unknown }).order
+/**
+ * Every node the snapshot holds, visible or not.
+ *
+ * The snapshot exposes two views: `order`, the *visible* transcript order, and
+ * `nodes`, the full keyed store. Reading only `order` is why the panel never
+ * appeared: the host hides plain injected-context rows from the transcript
+ * (`buildViewNode`'s visibility rule keeps a `context` node only when it carries
+ * tool-addition/tool-removal blocks), so this plugin's evidence node — a text
+ * context message — is absent from `order` while still present in `nodes`.
+ *
+ * `values()` is the published accessor (the empty snapshot declares it too);
+ * the `order` + `get` route stays as a fallback for any snapshot that lacks it.
+ */
+function allNodes(chat: unknown): readonly unknown[] {
+  if (typeof chat !== 'object' || chat === null) return []
   const nodes = (chat as { nodes?: unknown }).nodes
-  if (!Array.isArray(order) || typeof (nodes as Map<string, unknown>)?.get !== 'function') {
-    return undefined
+  if (nodes === null || nodes === undefined) return []
+
+  const values = (nodes as { values?: unknown }).values
+  if (typeof values === 'function') {
+    const list = (values as () => unknown).call(nodes)
+    if (Array.isArray(list)) return list
+    if (list !== null && typeof list === 'object' && Symbol.iterator in (list as object)) {
+      return [...(list as Iterable<unknown>)]
+    }
   }
-  return order.map(key => [key, (nodes as Map<string, unknown>).get(key)] as const)
+
+  const order = (chat as { order?: unknown }).order
+  const get = (nodes as { get?: unknown }).get
+  if (Array.isArray(order) && typeof get === 'function') {
+    return order.map(key => (get as (key: string) => unknown).call(nodes, String(key)))
+  }
+  return []
+}
+
+/** Transcript position of a node, used to keep passage numbering stable. */
+function seqOf(node: unknown): number {
+  const seq = (node as { data?: { seq?: unknown } } | undefined)?.data?.seq
+  return typeof seq === 'number' && Number.isSafeInteger(seq) ? seq : Number.MAX_SAFE_INTEGER
 }
 
 /**
@@ -54,7 +82,7 @@ function orderedNodes(
  * the closing assistant node carries it in `data.finalNode.messageId`.
  */
 export function turnForMessageId(chat: unknown, messageId: string): number | undefined {
-  for (const [, node] of orderedNodes(chat) ?? []) {
+  for (const node of allNodes(chat)) {
     if ((node as { kind?: unknown } | undefined)?.kind !== 'assistant-step') continue
     const finalNode = (node as { data?: { finalNode?: { messageId?: unknown } } }).data
       ?.finalNode
@@ -104,15 +132,23 @@ function passagesOfNode(node: unknown): readonly SourcePassage[] | undefined {
 }
 
 /**
- * Every knowledge-base passage attached to one turn's context nodes.
+ * Every knowledge-base passage attached to one turn's context nodes, in
+ * transcript order so the numbering matches the answer's `[n]` markers.
  *
  * Empty when the turn has none — including turns answered before the plugin
  * started carrying passages in the source payload.
  */
 export function passagesOfTurn(chat: unknown, turn: number): readonly SourcePassage[] {
-  const result: SourcePassage[] = []
-  for (const [, node] of orderedNodes(chat) ?? []) {
+  const matched: unknown[] = []
+  for (const node of allNodes(chat)) {
     if (turnNoOf((node as { location?: unknown }).location) !== turn) continue
+    if (passagesOfNode(node) === undefined) continue
+    matched.push(node)
+  }
+  matched.sort((left, right) => seqOf(left) - seqOf(right))
+
+  const result: SourcePassage[] = []
+  for (const node of matched) {
     const passages = passagesOfNode(node)
     if (passages !== undefined) result.push(...passages)
   }

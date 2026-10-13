@@ -21,14 +21,18 @@ const PASSAGE = {
 }
 
 const CHAT = {
-  order: ['c0', 'a0'],
+  // `order` mirrors the host: the visible transcript lists the assistant node
+  // only, because a plain injected-context row is hidden from it. The evidence
+  // node lives solely in `nodes` — reading `order` alone is what kept this
+  // button from ever rendering.
+  order: ['a0'],
   nodes: new Map<string, unknown>([
     [
       'c0',
       {
         kind: 'context',
         location: { turn: { turn: 1 } },
-        data: { source: { kind: 'knowbase', form: 'recall', passages: [PASSAGE] } },
+        data: { seq: 12, source: { kind: 'knowbase', form: 'recall', passages: [PASSAGE] } },
       },
     ],
     [
@@ -43,26 +47,49 @@ const CHAT = {
 }
 
 describe('KnowbaseSourceAction render', () => {
-  // The component reads the chat slice from the SESSION snapshot (the stable
-  // route — see the hook-discipline note in the component); the fake kit
-  // mirrors that shape.
+  // This host publishes the chat slice through the session kit's `useChat` hook
+  // (ui-chat registers a `chat` source; the renderer turns it into a `useChat`
+  // prop). The session snapshot no longer carries `chat`, which is exactly why
+  // the button never rendered: the seat was fine and the data was on the other
+  // route. The fake kit mirrors both routes so either regression is caught.
   const fakeSession = ((selector: unknown) => {
     void selector
     return { chat: CHAT }
   }) as unknown
 
+  const fakeChat = ((selector: (state: unknown) => unknown) =>
+    selector(CHAT)) as unknown
+
+  /** The kit as this host composes it: `useChat` carries the slice. */
+  const liveKit = { useSession: fakeSession, useChat: fakeChat }
+
   it('renders the action button when the turn carries passages', () => {
     const html = renderToString(
-      createElement(KnowbaseSourceAction, { messageId: 'm-1', useSession: fakeSession }),
+      createElement(KnowbaseSourceAction, { messageId: 'm-1', ...liveKit }),
     )
     expect(html).toContain('知识库来源')
   })
 
+  it('numbers the button with the passage count', () => {
+    const html = renderToString(
+      createElement(KnowbaseSourceAction, { messageId: 'm-1', ...liveKit }),
+    )
+    expect(html).toContain('>1<')
+  })
+
   it('renders null for a turn without passages', () => {
     const html = renderToString(
-      createElement(KnowbaseSourceAction, { messageId: 'm-none', useSession: fakeSession }),
+      createElement(KnowbaseSourceAction, { messageId: 'm-none', ...liveKit }),
     )
     expect(html).toBe('')
+  })
+
+  it('falls back to the session snapshot when the kit has no useChat', () => {
+    // The older route: `chat` rode on the session snapshot.
+    const html = renderToString(
+      createElement(KnowbaseSourceAction, { messageId: 'm-1', useSession: fakeSession }),
+    )
+    expect(html).toContain('知识库来源')
   })
 
   it('renders null when the session kit is absent', () => {
