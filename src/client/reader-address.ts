@@ -83,7 +83,6 @@ const READER_PREFIX = 'dsh-resource://knowbase/'
 export function readerAddress(kbId: string, materialId: string): string {
   return `${READER_PREFIX}${encodeURIComponent(kbId)}/${encodeURIComponent(materialId)}`
 }
-
 /**
  * The resource value for one address, or `undefined` when it is not a reader
  * address.
@@ -107,10 +106,14 @@ export function parseReaderAddress(
   // tolerating one costs nothing and keeps a hand-typed address working.
   const end = address.search(/[?#]/)
   const body = end === -1 ? address.slice(READER_PREFIX.length) : address.slice(READER_PREFIX.length, end)
+  // The material is now a file inside the base's folder, so its identity is a
+  // *relative path* — 「小册子/封面.png」 is legitimate. Its slashes are
+  // percent-encoded by {@link readerAddress}, so the first literal `/` still
+  // separates the two ids.
   const slash = body.indexOf('/')
   if (slash <= 0) return undefined
   const kbId = decodeSegment(body.slice(0, slash))
-  const materialId = decodeSegment(body.slice(slash + 1))
+  const materialId = decodeMaterial(body.slice(slash + 1))
   if (kbId === undefined || materialId === undefined) return undefined
   return { kbId, materialId }
 }
@@ -124,6 +127,26 @@ function decodeSegment(segment: string): string | undefined {
   } catch {
     return undefined
   }
+}
+
+/**
+ * Decode a material id: a path relative to the base folder, with `/` separators.
+ *
+ * Slashes are allowed because a base may hold sub-folders. A `..` segment is
+ * not: it would name a file outside the base folder, which is not what this
+ * address grammar means.
+ */
+function decodeMaterial(segment: string): string | undefined {
+  if (segment === '') return undefined
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(segment)
+  } catch {
+    return undefined
+  }
+  const parts = decoded.split('/')
+  if (parts.some(part => part === '' || part === '..')) return undefined
+  return decoded
 }
 
 /**
@@ -156,6 +179,10 @@ export function titleOfParams(params: unknown): string | undefined {
  */
 export function provisionalTitle(address: string): string {
   const parts = parseReaderAddress(address)
-  if (parts === undefined) return '知识库资料'
-  return `资料 ${parts.materialId.slice(0, 6)}`
+  if (parts === undefined) return '知识库文件'
+  // A material id is a relative path now, so the chip shows the file's own name
+  // rather than the first characters of a folder it may sit under.
+  const segments = parts.materialId.split('/')
+  const name = segments[segments.length - 1] ?? parts.materialId
+  return name.length > 24 ? `${name.slice(0, 23)}…` : name
 }

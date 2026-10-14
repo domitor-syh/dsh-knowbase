@@ -114,11 +114,38 @@ describe('titleOfParams', () => {
 })
 
 describe('provisionalTitle', () => {
-  it('truncates the material id so the chip is obviously provisional', () => {
-    expect(provisionalTitle('dsh-resource://knowbase/kb1/abcdef123456')).toBe('资料 abcdef')
+  it('shows the file name from a path-like material id', () => {
+    // A material id is a path relative to the base folder now, so the chip shows
+    // the file itself rather than the folder it sits under.
+    expect(provisionalTitle('dsh-resource://knowbase/kb1/abcdef123456')).toBe('abcdef123456')
+    expect(provisionalTitle('dsh-resource://knowbase/kb1/手册/封面.png')).toBe('封面.png')
+  })
+
+  it('truncates a very long file name so the chip stays readable', () => {
+    expect(provisionalTitle(`dsh-resource://knowbase/kb1/${'x'.repeat(40)}.txt`)).toBe(
+      `${'x'.repeat(23)}…`,
+    )
   })
 
   it('falls back to a generic label for an address it cannot parse', () => {
-    expect(provisionalTitle('dsh-resource://file/session/s1/a.md')).toBe('知识库资料')
+    expect(provisionalTitle('dsh-resource://file/session/s1/a.md')).toBe('知识库文件')
+  })
+})
+
+describe('parseReaderAddress and nested paths', () => {
+  it('round-trips a material that sits in a sub-folder', () => {
+    const address = readerAddress('kb1', '手册/封面.png')
+    expect(address).toBe('dsh-resource://knowbase/kb1/%E6%89%8B%E5%86%8C%2F%E5%B0%81%E9%9D%A2.png')
+    expect(parseReaderAddress(address)).toEqual({ kbId: 'kb1', materialId: '手册/封面.png' })
+  })
+
+  it('rejects a .. segment, which would name a file outside the base folder', () => {
+    expect(
+      parseReaderAddress('dsh-resource://knowbase/kb1/%2E%2E%2Fsecret.txt'),
+    ).toBeUndefined()
+  })
+
+  it('rejects an empty segment inside the material path', () => {
+    expect(parseReaderAddress('dsh-resource://knowbase/kb1/a%2F%2Fb.txt')).toBeUndefined()
   })
 })

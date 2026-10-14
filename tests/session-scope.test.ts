@@ -15,6 +15,10 @@ import {
   type SessionScopeStore,
 } from '../src/core/session-scope.ts'
 import { KnowbaseService, MemoryStore } from '../src/core/service.ts'
+import { createMemoryVaultFs } from '../src/vault-fs.ts'
+
+/** The vault root this file's fixtures read and write. */
+const TEST_ROOT = 'C:/vault'
 
 /** The port's reference implementation for tests. */
 class MemoryScopeStore implements SessionScopeStore {
@@ -36,7 +40,9 @@ class MemoryScopeStore implements SessionScopeStore {
 }
 
 async function freshService(): Promise<KnowbaseService> {
-  const service = new KnowbaseService(new MemoryStore(), { now: () => 1_700_000_000_000 })
+  const service = new KnowbaseService(new MemoryStore(), createMemoryVaultFs(TEST_ROOT), TEST_ROOT, {
+    now: () => 1_700_000_000_000,
+  })
   await service.initialize()
   return service
 }

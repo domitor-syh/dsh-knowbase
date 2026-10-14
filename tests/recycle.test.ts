@@ -1,126 +1,182 @@
 /**
- * Recycle bin tests.
+ * Deleting, which is a move and never a destroy.
  *
- * The plan's rule is that a delete is reversible and that permanent deletion
- * only happens from the bin, with the contents spelled out. These tests hold
- * the line: soft delete keeps the record and empties the index, restore puts
- * it back exactly as it was, and purge is reachable only through the bin.
+ * There is no recycle-bin UI and there never will be one: the plan's rule is
+ * that a deleted base or file lands in `<root>/_回收站/` and the user drags it
+ * back out with their own explorer if they want it. That makes the property
+ * worth pinning unusual — a deletion has to leave the bytes *exactly* where a
+ * person can find them, under a name they still recognise, while removing the
+ * entry from every list and from retrieval.
+ *
+ * A second property falls out of the same design: the folder is authoritative,
+ * so a deletion cannot be undone by a restart. Nothing records that the entry
+ * used to exist, which is why a record without a folder is dropped rather than
+ * resurrected as an empty base.
  */
 
+import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import {
-  KnowbaseService,
-  MemoryStore,
-} from '../src/core/service.ts'
+import { KnowbaseService, MemoryStore } from '../src/core/service.ts'
+import { RECYCLE_DIR_NAME } from '../src/core/vault.ts'
+import { createMemoryVaultFs } from '../src/vault-fs.ts'
+import type { VaultFileSystem } from '../src/vault-fs.ts'
+
+/** The vault root every fixture in this file reads and writes. */
+const ROOT = path.resolve('C:/vault')
+/** Where deletions land. */
+const BIN = path.join(ROOT, RECYCLE_DIR_NAME)
 
 const MANUAL = '# 设备手册\n\n出厂默认波特率为115200，可在配置文件中修改。'
 
-async function freshService(): Promise<KnowbaseService> {
-  const service = new KnowbaseService(new MemoryStore(), { now: () => 1_700_000_000_000 })
-  await service.initialize()
-  return service
+const encoder = new TextEncoder()
+
+/** One file, as {@link KnowbaseService.addFiles} takes it. */
+function file(name: string, text: string): { name: string; data: Uint8Array } {
+  return { name, data: encoder.encode(text) }
 }
 
-describe('soft-deleted materials', () => {
+interface Fixture {
+  readonly store: MemoryStore
+  readonly fs: VaultFileSystem
+  readonly service: KnowbaseService
+}
+
+async function freshService(): Promise<Fixture> {
+  const store = new MemoryStore()
+  const fs = createMemoryVaultFs(ROOT)
+  const service = new KnowbaseService(store, fs, ROOT, { now: () => 1_700_000_000_000 })
+  await service.initialize()
+  return { store, fs, service }
+}
+
+/** Names currently sitting in the recycle folder, in code-point order. */
+async function binNames(fs: VaultFileSystem): Promise<string[]> {
+  return (await fs.listDir(BIN)).map(entry => entry.name).sort()
+}
+
+describe('recycling a file', () => {
   let service: KnowbaseService
+  let fs: VaultFileSystem
   let kbId: string
-  let materialId: string
 
   beforeEach(async () => {
-    service = await freshService()
+    const fixture = await freshService()
+    service = fixture.service
+    fs = fixture.fs
     kbId = (await service.createKnowledgeBase('产品资料')).id
-    materialId = (await service.addText(kbId, '手册', MANUAL)).id
   })
 
-  it('hides the material from lists and from retrieval', async () => {
-    expect(await service.deleteMaterial(materialId)).toBe(true)
+  it('moves the file into the recycle folder instead of destroying it', async () => {
+    await service.addFiles(kbId, [file('手册.txt', MANUAL)])
+
+    expect(await service.deleteMaterial(kbId, '手册.txt')).toBe(true)
+
+    // Same name, same bytes, one folder over — so dragging it back is a restore
+    // with no export/import step in between.
+    expect(await fs.readText(path.join(BIN, '手册.txt'))).toBe(MANUAL)
     expect(service.listMaterials(kbId)).toHaveLength(0)
-    expect(service.listDeletedMaterials()).toHaveLength(1)
     expect(service.retrieve('波特率', [kbId]).kind).toBe('not_ready')
   })
 
-  it('restores the material exactly as it was', async () => {
-    await service.deleteMaterial(materialId)
-    expect(await service.restoreMaterial(materialId)).toBe(true)
-    expect(service.listMaterials(kbId)).toHaveLength(1)
-    expect(service.getMaterial(materialId)?.deletedAt).toBeUndefined()
-    const outcome = service.retrieve('波特率', [kbId])
-    expect(outcome.kind).toBe('hits')
-  })
-
-  it('brings the base back when restoring a material of a deleted base', async () => {
-    await service.deleteKnowledgeBase(kbId)
-    // The base is in the bin and its material is NOT listed separately.
-    expect(service.listDeletedMaterials()).toHaveLength(0)
-
-    // Delete a material from a DIFFERENT base, then also delete that base.
+  it('numbers a second deletion rather than overwriting the first', async () => {
     const other = await service.createKnowledgeBase('另一库')
-    const otherMaterial = await service.addText(other.id, '其它', MANUAL)
-    await service.deleteMaterial(otherMaterial.id)
-    await service.deleteKnowledgeBase(other.id)
-    expect(service.listDeletedMaterials()).toHaveLength(1)
+    await service.addFiles(kbId, [file('手册.txt', '甲库的手册')])
+    await service.addFiles(other.id, [file('手册.txt', '乙库的手册')])
 
-    // Restoring the material resurrects its base too, or the material would
-    // exist but be visible nowhere.
-    expect(await service.restoreMaterial(otherMaterial.id)).toBe(true)
-    expect(service.listKnowledgeBases().map(base => base.name)).toContain('另一库')
-    expect(service.listMaterials(other.id)).toHaveLength(1)
+    await service.deleteMaterial(kbId, '手册.txt')
+    await service.deleteMaterial(other.id, '手册.txt')
+
+    expect(await fs.readText(path.join(BIN, '手册.txt'))).toBe('甲库的手册')
+    expect(await fs.readText(path.join(BIN, '手册 (2).txt'))).toBe('乙库的手册')
   })
 
-  it('refuses to purge a live material', async () => {
-    await expect(service.purgeMaterial(materialId)).resolves.toBe(false)
-    expect(service.listMaterials(kbId)).toHaveLength(1)
-  })
-
-  it('purges a binned material for good', async () => {
-    await service.deleteMaterial(materialId)
-    expect(await service.purgeMaterial(materialId)).toBe(true)
-    expect(service.listDeletedMaterials()).toHaveLength(0)
-    expect(service.getMaterial(materialId)).toBeUndefined()
-    expect(await service.restoreMaterial(materialId)).toBe(false)
-  })
-
-  it('rejects editing and re-adding through the bin', async () => {
-    await service.deleteMaterial(materialId)
-    await expect(service.updateMaterialText(materialId, '新内容')).rejects.toMatchObject({
-      code: 'not-found',
-    })
-    await expect(service.addText(kbId, '新资料', MANUAL)).resolves.toBeTruthy()
-  })
-
-  it('survives a restart of the service', async () => {
-    // Two services over ONE store model a host restart: the records come back
-    // from disk still marked deleted, and stay out of the index until restored.
+  it('keeps the file out of the index after a restart', async () => {
+    // A restart must not resurrect it: the folder is authoritative, and the file
+    // is no longer in it.
     const store = new MemoryStore()
-    const first = new KnowbaseService(store, { now: () => 1_700_000_000_000 })
+    const vault = createMemoryVaultFs(ROOT)
+    const first = new KnowbaseService(store, vault, ROOT, { now: () => 1 })
     await first.initialize()
-    const restartKb = (await first.createKnowledgeBase('重启库')).id
-    const restartMaterial = (await first.addText(restartKb, '手册', MANUAL)).id
-    await first.deleteMaterial(restartMaterial)
+    const id = (await first.createKnowledgeBase('产品资料')).id
+    await first.addFiles(id, [file('手册.txt', MANUAL)])
+    await first.deleteMaterial(id, '手册.txt')
 
-    const second = new KnowbaseService(store, { now: () => 1_700_000_000_001 })
+    const second = new KnowbaseService(store, vault, ROOT, { now: () => 2 })
     await second.initialize()
-    expect(second.listMaterials(restartKb)).toHaveLength(0)
-    expect(second.listDeletedMaterials()).toHaveLength(1)
-    expect(second.retrieve('波特率', [restartKb]).kind).toBe('not_ready')
 
-    // Restoring after the restart re-indexes from the persisted record.
-    expect(await second.restoreMaterial(restartMaterial)).toBe(true)
-    expect(second.retrieve('波特率', [restartKb]).kind).toBe('hits')
+    expect(second.listMaterials(id)).toHaveLength(0)
+    expect(second.retrieve('波特率', [id]).kind).toBe('not_ready')
+  })
+
+  it('does not read the recycle folder back as content', async () => {
+    await service.addFiles(kbId, [file('手册.txt', MANUAL)])
+    await service.deleteMaterial(kbId, '手册.txt')
+
+    await service.rescan()
+
+    expect(await binNames(fs)).toEqual(['手册.txt'])
+    expect(service.listMaterials(kbId)).toHaveLength(0)
+    expect(service.listKnowledgeBases().map(kb => kb.name)).toEqual(['产品资料'])
+  })
+
+  it('answers false for a file the base does not hold', async () => {
+    expect(await service.deleteMaterial(kbId, '不存在.txt')).toBe(false)
+    expect(await binNames(fs)).toEqual([])
   })
 })
 
-describe('soft-deleted knowledge bases', () => {
+describe('recycling a knowledge base', () => {
   let service: KnowbaseService
+  let fs: VaultFileSystem
 
   beforeEach(async () => {
-    service = await freshService()
+    const fixture = await freshService()
+    service = fixture.service
+    fs = fixture.fs
   })
 
-  it('rejects writes into a binned base', async () => {
+  it('moves the whole folder, files and all, into the recycle folder', async () => {
+    const created = await service.createKnowledgeBase('产品资料')
+    await service.addFiles(created.id, [file('手册.txt', MANUAL)])
+
+    expect(await service.deleteKnowledgeBase(created.id)).toBe(true)
+
+    // Every file survives, and the folder keeps its name so the id it carries is
+    // still readable — that is what makes dragging it back meaningful.
+    expect(await fs.readText(path.join(BIN, created.folderName, '手册.txt'))).toBe(MANUAL)
+    expect(service.listKnowledgeBases()).toHaveLength(0)
+    expect(service.getKnowledgeBase(created.id)).toBeUndefined()
+    expect(service.retrieve('波特率', [created.id]).kind).toBe('empty_scope')
+  })
+
+  it('drops the record, so the next start does not bring the base back', async () => {
+    const store = new MemoryStore()
+    const vault = createMemoryVaultFs(ROOT)
+    const first = new KnowbaseService(store, vault, ROOT, { now: () => 1 })
+    await first.initialize()
+    const created = await first.createKnowledgeBase('产品资料')
+    await first.addFiles(created.id, [file('手册.txt', MANUAL)])
+    await first.deleteKnowledgeBase(created.id)
+
+    const second = new KnowbaseService(store, vault, ROOT, { now: () => 2 })
+    await second.initialize()
+
+    expect(second.listKnowledgeBases()).toHaveLength(0)
+    expect(second.listMaterials()).toHaveLength(0)
+  })
+
+  it('recycles a base once; a second delete answers false', async () => {
+    const created = await service.createKnowledgeBase('产品资料')
+    expect(await service.deleteKnowledgeBase(created.id)).toBe(true)
+    expect(await service.deleteKnowledgeBase(created.id)).toBe(false)
+    expect(await binNames(fs)).toEqual([created.folderName])
+  })
+
+  it('rejects writes into a base that has been recycled', async () => {
     const created = await service.createKnowledgeBase('产品资料')
     await service.deleteKnowledgeBase(created.id)
-    await expect(service.addText(created.id, '手册', MANUAL)).rejects.toMatchObject({
+
+    await expect(service.addFiles(created.id, [file('a.txt', 'x')])).rejects.toMatchObject({
       code: 'not-found',
     })
     await expect(service.renameKnowledgeBase(created.id, '改名')).rejects.toMatchObject({
@@ -131,45 +187,25 @@ describe('soft-deleted knowledge bases', () => {
     })
   })
 
-  it('hides a binned base from name lookup and scope resolution', async () => {
+  it('hides a recycled base from name lookup', async () => {
     await service.createKnowledgeBase('产品资料')
     const created = await service.createKnowledgeBase('技术资料')
     await service.deleteKnowledgeBase(created.id)
+
     expect(service.findKnowledgeBaseByName('技术资料')).toBeUndefined()
-    // `resolveScope` with an `all` selection walks listKnowledgeBases(), so the
-    // binned base is out of every live scope without extra code.
-    expect(service.listKnowledgeBases().map(base => base.name)).toEqual(['产品资料'])
+    expect(service.listKnowledgeBases().map(kb => kb.name)).toEqual(['产品资料'])
   })
 
-  it('purges a binned base together with all its materials', async () => {
+  it('does not adopt a recycled folder as a base again', async () => {
+    // The folder name is a valid base name — `<name>--<id>` — so the only thing
+    // stopping a rescan from adopting it is that it sits inside the recycle
+    // folder. Without that rule a deletion would undo itself on the next scan.
     const created = await service.createKnowledgeBase('产品资料')
-    const live = (await service.addText(created.id, '活资料', MANUAL)).id
-    // Different text from `live` on purpose: two identical materials in one base
-    // are refused now, and this test is about purge cascading, not duplicates.
-    const binned = (await service.addText(created.id, '已删资料', '另一份内容不同的资料。')).id
-    await service.deleteMaterial(binned)
     await service.deleteKnowledgeBase(created.id)
 
-    expect(await service.purgeKnowledgeBase(created.id)).toBe(true)
-    expect(service.getMaterial(live)).toBeUndefined()
-    expect(service.getMaterial(binned)).toBeUndefined()
-    expect(service.getKnowledgeBase(created.id)).toBeUndefined()
-    expect(service.listDeletedKnowledgeBases()).toHaveLength(0)
-    expect(await service.restoreKnowledgeBase(created.id)).toBe(false)
-  })
+    await service.rescan()
 
-  it('refuses to purge a live base', async () => {
-    const created = await service.createKnowledgeBase('产品资料')
-    await expect(service.purgeKnowledgeBase(created.id)).resolves.toBe(false)
-    expect(service.listKnowledgeBases()).toHaveLength(1)
-  })
-
-  it('answers false for unknown or duplicate delete/restore', async () => {
-    expect(await service.deleteKnowledgeBase('kb_missing')).toBe(false)
-    const created = await service.createKnowledgeBase('产品资料')
-    expect(await service.deleteKnowledgeBase(created.id)).toBe(true)
-    expect(await service.deleteKnowledgeBase(created.id)).toBe(false)
-    expect(await service.restoreKnowledgeBase(created.id)).toBe(true)
-    expect(await service.restoreKnowledgeBase(created.id)).toBe(false)
+    expect(service.listKnowledgeBases()).toHaveLength(0)
+    expect(await binNames(fs)).toEqual([created.folderName])
   })
 })

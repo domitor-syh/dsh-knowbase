@@ -1,17 +1,28 @@
 /**
  * Persistence through the host's `storageDomain`.
  *
- * The plan's rule is that metadata lives in the host's storage facility while
- * bulk text lives in plugin-controlled files. This file is the first half; it
- * deliberately does not hand-roll `node:fs` into `~/.dsh/storages` the way the
- * reference plugin does, because `storageDomain` gives version checking,
- * schema validation at the durable boundary and change events for free — and
- * because a hand-rolled directory would have no format version at all.
+ * ## What is still persisted, and what is not
  *
- * Layout is left at the default (`single`): one document per domain, loaded
- * into memory on open. `per-record` is the upgrade path the moment materials
- * grow large enough that rewriting the whole unit per write shows up in
- * measurements — not before, since the default is the better-tested path.
+ * Only knowledge bases. Their content is files in the vault folder, and the
+ * folder is the record: a scan reads whatever is there, so the plugin storing a
+ * second copy of a file's existence would create a way for the two to disagree
+ * — and the one the user can see in their explorer is the one that must win.
+ * What the base needs from storage is the part a folder cannot carry: its
+ * description and when it was created and last changed.
+ *
+ * ## Why the schema was widened rather than versioned
+ *
+ * `storageDomain` has no migration on a version change — opening a domain whose
+ * stored version differs is rejected outright — so bumping the version would
+ * strand every existing install behind a manual migration. Instead version 1 is
+ * kept and `folderName` is added as an optional field: records written before
+ * the vault existed parse unchanged, and the service fills the field in when it
+ * migrates them.
+ *
+ * The `materials` table is kept declared with its original schema for the same
+ * reason on the other side: dropping a table whose records are still on the
+ * medium is a change nothing verifies, and keeping it costs an empty read at
+ * load. It is read exactly once, by `./core/migrate.ts`.
  *
  * @module @domitor-syh/dsh-knowbase/store
  */
@@ -23,35 +34,34 @@ import type { SessionScopeStore } from './core/session-scope.ts'
 import type { KnowbaseStore } from './core/service.ts'
 
 /**
- * On-disk shape. Version 1.
+ * A knowledge base on the medium. Version 1, widened in place.
  *
- * Every field is required rather than defaulted: a schema that invents missing
- * values would let a truncated or hand-edited record load as valid, and the
- * plan's rule is that a corrupt record fails loudly instead of silently
- * becoming an empty knowledge base.
+ * Every field stays required rather than defaulted: a schema that invents
+ * missing values would let a truncated or hand-edited record load as valid, and
+ * the rule is that a corrupt record fails loudly instead of silently becoming
+ * an empty knowledge base.
  */
-const chunkSchema = z.object({
-  id: z.string(),
-  ordinal: z.number(),
-  text: z.string(),
-  headingPath: z.string(),
-  locator: z.string(),
-})
-
 const knowledgeBaseSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
+  // Added with the vault. Optional so pre-vault records load unchanged.
+  folderName: z.string().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
   indexRevision: z.number(),
-  // Soft-delete marker. Optional keeps version 1 loadable by both directions:
-  // old records (absent) parse fine, and a record carrying the marker is
-  // stripped harmlessly by an older build. No version bump, no migration.
+  // Retired soft-delete marker. Kept so a record that carries it still parses;
+  // the migration treats it as "do not resurrect this base".
   deletedAt: z.number().optional(),
 })
 
-const materialSchema = z.object({
+/**
+ * A text material on the medium, as the pre-vault build wrote it.
+ *
+ * Unchanged from that build's schema on purpose: this table exists so the
+ * domain keeps loading, and the migration is the only reader.
+ */
+const legacyMaterialSchema = z.object({
   id: z.string(),
   kbId: z.string(),
   title: z.string(),
@@ -59,16 +69,18 @@ const materialSchema = z.object({
   createdAt: z.number(),
   updatedAt: z.number(),
   revision: z.number(),
-  // Absent in records written before the editor existed; those fall back to
-  // reassembling the text from their chunks.
   text: z.string().optional(),
-  // Soft-delete marker; absence is the live state. See knowledgeBaseSchema.
   deletedAt: z.number().optional(),
-  // Fingerprint for same-base duplicate detection. Optional so version 1 stays
-  // loadable in both directions: records written before it existed parse fine
-  // and are hashed on demand. No version bump — see the note above.
   contentHash: z.string().optional(),
-  chunks: z.array(chunkSchema),
+  chunks: z.array(
+    z.object({
+      id: z.string(),
+      ordinal: z.number(),
+      text: z.string(),
+      headingPath: z.string(),
+      locator: z.string(),
+    }),
+  ),
 })
 
 /**
@@ -83,7 +95,7 @@ export const KNOWBASE_DOMAIN = defineDomain({
   version: 1,
   tables: {
     knowledge_bases: domainTable(knowledgeBaseSchema),
-    materials: domainTable(materialSchema),
+    materials: domainTable(legacyMaterialSchema),
   },
 })
 
@@ -132,24 +144,24 @@ export interface OpenedStore {
 export async function openStorageDomainStore(facility: DomainFacility): Promise<OpenedStore> {
   const domain = await facility.open(KNOWBASE_DOMAIN)
   const knowledgeBases = domain.table('knowledge_bases')
-  const materials = domain.table('materials')
+  const legacyMaterials = domain.table('materials')
 
   const store: KnowbaseStore = {
     loadKnowledgeBases: () => [...knowledgeBases.entries()].map(([, record]) => record),
-    loadMaterials: () => [...materials.entries()].map(([, record]) => record),
-
-    saveKnowledgeBase: knowledgeBase => knowledgeBases.put(knowledgeBase.id, knowledgeBase),
+    saveKnowledgeBase: knowledgeBase =>
+      knowledgeBases.put(knowledgeBase.id, {
+        id: knowledgeBase.id,
+        name: knowledgeBase.name,
+        description: knowledgeBase.description,
+        folderName: knowledgeBase.folderName,
+        createdAt: knowledgeBase.createdAt,
+        updatedAt: knowledgeBase.updatedAt,
+        indexRevision: knowledgeBase.indexRevision,
+      }),
     deleteKnowledgeBase: id => knowledgeBases.delete(id),
 
-    // Spread the chunks into fresh objects: the domain's records are the
-    // schema's mutable shape, and handing it a readonly array would only type
-    // check by accident.
-    saveMaterial: material =>
-      materials.put(material.id, {
-        ...material,
-        chunks: material.chunks.map(chunk => ({ ...chunk })),
-      }),
-    deleteMaterial: id => materials.delete(id),
+    loadLegacyMaterials: () => [...legacyMaterials.entries()].map(([, record]) => record),
+    deleteLegacyMaterial: id => legacyMaterials.delete(id),
   }
 
   return { store, close: () => domain.close() }

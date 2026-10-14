@@ -37,19 +37,22 @@ const knowledgeBaseSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
+  folderName: z.string(),
   materialCount: z.number(),
-  chunkCount: z.number(),
+  indexedCount: z.number(),
+  bytes: z.number(),
   updatedAt: z.number(),
 })
 
 const materialSchema = z.object({
   id: z.string(),
   kbId: z.string(),
+  fileName: z.string(),
   title: z.string(),
-  revision: z.number(),
-  chunkCount: z.number(),
-  createdAt: z.number(),
-  updatedAt: z.number(),
+  bytes: z.number(),
+  extension: z.string(),
+  indexed: z.boolean(),
+  mtimeMs: z.number(),
 })
 
 const passageSchema = z.object({
@@ -57,6 +60,11 @@ const passageSchema = z.object({
   headingPath: z.string(),
   locator: z.string(),
   text: z.string(),
+})
+
+const materialDetailSchema = materialSchema.extend({
+  text: z.string(),
+  chunks: z.array(passageSchema),
 })
 
 const searchHitSchema = z.object({
@@ -84,43 +92,17 @@ const sessionScopeSchema = z.object({
   kbIds: z.array(z.string()),
 })
 
-const recycleBinSchema = z.object({
-  bases: z.array(knowledgeBaseSchema),
-  materials: z.array(materialSchema),
+// A file pushed from the browser. Bytes travel base64-encoded because the
+// channel carries lossless JSON only (see `../remote.ts` and `HANDOFF.md` §15).
+const uploadedFileSchema = z.object({
+  name: z.string(),
+  base64: z.string(),
 })
 
-const duplicateSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  updatedAt: z.number(),
-  chunkCount: z.number(),
+const uploadResultSchema = z.object({
+  added: z.number(),
+  rejected: z.array(z.object({ name: z.string(), reason: z.string() })),
 })
-
-const backupPayloadSchema = z.object({
-  fileName: z.string(),
-  // The file's bytes travel as one string: the Host does not choose where a
-  // backup lands, the page does, so there is nothing to gain from describing
-  // the document twice.
-  json: z.string(),
-  bases: z.number(),
-  materials: z.number(),
-  bytes: z.number(),
-})
-
-const importResultSchema = z.discriminatedUnion('outcome', [
-  z.object({
-    outcome: z.literal('imported'),
-    bases: z.number(),
-    materials: z.number(),
-    skippedMaterials: z.number(),
-    reallocatedBases: z.number(),
-    baseNames: z.array(z.string()),
-  }),
-  z.object({
-    outcome: z.literal('rejected'),
-    reason: z.string(),
-  }),
-])
 
 const string = z.string()
 const strings = z.array(z.string())
@@ -169,43 +151,6 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
     ],
     result: boolean,
   },
-  deleteKnowledgeBase: { parameters: [{ name: 'id', schema: string }], result: boolean },
-  listMaterials: {
-    parameters: [{ name: 'kbId', schema: string }],
-    result: z.array(materialSchema),
-  },
-  addTextMaterial: {
-    parameters: [
-      { name: 'kbId', schema: string },
-      { name: 'title', schema: string },
-      { name: 'text', schema: string },
-      { name: 'allowDuplicate', schema: boolean },
-    ],
-    result: materialSchema,
-  },
-  findDuplicateMaterial: {
-    parameters: [
-      { name: 'kbId', schema: string },
-      { name: 'text', schema: string },
-    ],
-    result: duplicateSchema.nullable(),
-  },
-  deleteMaterial: { parameters: [{ name: 'id', schema: string }], result: boolean },
-  readMaterialChunks: {
-    parameters: [{ name: 'id', schema: string }],
-    result: z.array(passageSchema),
-  },
-  readMaterialText: {
-    parameters: [{ name: 'id', schema: string }],
-    result: string,
-  },
-  updateMaterialText: {
-    parameters: [
-      { name: 'id', schema: string },
-      { name: 'text', schema: string },
-    ],
-    result: materialSchema,
-  },
   updateDescription: {
     parameters: [
       { name: 'id', schema: string },
@@ -213,21 +158,53 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
     ],
     result: boolean,
   },
+  deleteKnowledgeBase: { parameters: [{ name: 'id', schema: string }], result: boolean },
+  listMaterials: {
+    parameters: [{ name: 'kbId', schema: string }],
+    result: z.array(materialSchema),
+  },
+  addFiles: {
+    parameters: [
+      { name: 'kbId', schema: string },
+      { name: 'files', schema: z.array(uploadedFileSchema) },
+    ],
+    result: uploadResultSchema,
+  },
+  readMaterial: {
+    parameters: [
+      { name: 'kbId', schema: string },
+      { name: 'id', schema: string },
+    ],
+    result: materialDetailSchema.nullable(),
+  },
+  readMaterialBytes: {
+    // The result is the file's bytes as one base64 string, or `''` when the
+    // file is gone or too large to pull into the page.
+    parameters: [
+      { name: 'kbId', schema: string },
+      { name: 'id', schema: string },
+    ],
+    result: string,
+  },
+  deleteMaterial: {
+    parameters: [
+      { name: 'kbId', schema: string },
+      { name: 'id', schema: string },
+    ],
+    result: boolean,
+  },
+  rescan: {
+    // `''` rescans every base; anything else rescans that one.
+    parameters: [{ name: 'kbId', schema: string }],
+    result: boolean,
+  },
+  getVaultRoot: { parameters: [], result: string },
   testSearch: {
     parameters: [
       { name: 'query', schema: string },
       { name: 'kbIds', schema: strings },
     ],
     result: searchReportSchema,
-  },
-  exportBackup: {
-    // `''` means every live base; anything else exports that one.
-    parameters: [{ name: 'kbId', schema: string }],
-    result: backupPayloadSchema,
-  },
-  importBackup: {
-    parameters: [{ name: 'json', schema: string }],
-    result: importResultSchema,
   },
   getSessionScope: {
     parameters: [{ name: 'agentId', schema: string }],
@@ -242,11 +219,6 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
     ],
     result: sessionScopeSchema,
   },
-  listRecycleBin: { parameters: [], result: recycleBinSchema },
-  restoreKnowledgeBase: { parameters: [{ name: 'id', schema: string }], result: boolean },
-  restoreMaterial: { parameters: [{ name: 'id', schema: string }], result: boolean },
-  purgeKnowledgeBase: { parameters: [{ name: 'id', schema: string }], result: boolean },
-  purgeMaterial: { parameters: [{ name: 'id', schema: string }], result: boolean },
 }
 
 /** Build a unary (non-stream) invocation descriptor. */
@@ -292,20 +264,16 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     updateDescription: (id: string, description: string) => Promise<unknown>
     deleteKnowledgeBase: (id: string) => Promise<unknown>
     listMaterials: (kbId: string) => Promise<unknown>
-    addTextMaterial: (
+    addFiles: (
       kbId: string,
-      title: string,
-      text: string,
-      allowDuplicate: boolean,
+      files: readonly { readonly name: string; readonly base64: string }[],
     ) => Promise<unknown>
-    updateMaterialText: (id: string, text: string) => Promise<unknown>
-    findDuplicateMaterial: (kbId: string, text: string) => Promise<unknown>
-    deleteMaterial: (id: string) => Promise<unknown>
-    readMaterialChunks: (id: string) => Promise<unknown>
-    readMaterialText: (id: string) => Promise<unknown>
+    readMaterial: (kbId: string, id: string) => Promise<unknown>
+    readMaterialBytes: (kbId: string, id: string) => Promise<unknown>
+    deleteMaterial: (kbId: string, id: string) => Promise<unknown>
+    rescan: (kbId: string) => Promise<unknown>
+    getVaultRoot: () => Promise<unknown>
     testSearch: (query: string, kbIds: readonly string[]) => Promise<unknown>
-    exportBackup: (kbId: string) => Promise<unknown>
-    importBackup: (json: string) => Promise<unknown>
     getSessionScope: (agentId: string) => Promise<unknown>
     setSessionScope: (
       agentId: string,
@@ -313,11 +281,6 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       all: boolean,
       kbIds: readonly string[],
     ) => Promise<unknown>
-    listRecycleBin: () => Promise<unknown>
-    restoreKnowledgeBase: (id: string) => Promise<unknown>
-    restoreMaterial: (id: string) => Promise<unknown>
-    purgeKnowledgeBase: (id: string) => Promise<unknown>
-    purgeMaterial: (id: string) => Promise<unknown>
   }
 
   interface TypertRemoteNamespaceMap {

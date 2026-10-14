@@ -5,11 +5,12 @@
  * up in front of a user:
  *
  *   1. **The highlight lands on the right characters.** The reader shows the
- *      stored text, so a hit has to be located inside it. Getting that wrong
+ *      extracted text, so a hit has to be located inside it. Getting that wrong
  *      paints the wrong sentence as evidence, which is worse than no highlight.
- *   2. **The branch a broken material takes is the one that says so.** A deleted
- *      material and an empty one look identical in the payload, and a panel that
- *      renders an empty box for either is a panel that looks broken.
+ *   2. **The branch a broken file takes is the one that says so.** A file that is
+ *      gone, a file the plugin cannot read, and an image all arrive with no text,
+ *      and a panel that renders one grey box for all three is a panel that looks
+ *      broken.
  *
  * `ReaderView` takes a loaded material, so every branch is reachable from a
  * render-to-string test; the async shell is covered separately through
@@ -31,8 +32,9 @@ import {
   resolveHit,
   type LoadedMaterial,
 } from '../src/client/reader-panel.tsx'
+import type { MaterialDetailView } from '../src/remote.ts'
 
-const MATERIAL_ID = 'mat-1'
+const MATERIAL_ID = '手册/端口说明.txt'
 const KB_ID = 'kb-1'
 
 const CHUNKS = [
@@ -42,7 +44,18 @@ const CHUNKS = [
 
 const TEXT = '本设备默认端口号为 8080。\n出厂默认波特率为 115200。\n'
 
-const LOADED: LoadedMaterial = { title: '端口说明', text: TEXT, chunks: CHUNKS }
+const LOADED: LoadedMaterial = {
+  title: '端口说明.txt',
+  fileName: '手册/端口说明.txt',
+  extension: 'txt',
+  text: TEXT,
+  chunks: CHUNKS,
+}
+
+/** A material with no body, as a file the plugin cannot read arrives. */
+function withoutText(extension: string, title = '端口说明.txt'): LoadedMaterial {
+  return { title, fileName: title, extension, text: '', chunks: [] }
+}
 
 /** Render one element and return its HTML. */
 function html(element: Parameters<typeof renderToString>[0]): string {
@@ -77,7 +90,7 @@ describe('locateHit', () => {
   })
 
   it('declines rather than guessing when nothing matches', () => {
-    expect(locateHit(TEXT, '这段文字根本不在资料里，而且足够长到不会被前缀命中。')).toBeUndefined()
+    expect(locateHit(TEXT, '这段文字根本不在文件里，而且足够长到不会被前缀命中。')).toBeUndefined()
   })
 
   it('declines an empty chunk', () => {
@@ -91,12 +104,17 @@ describe('locateHit', () => {
 })
 
 describe('isEmptyMaterial', () => {
-  it('is true exactly when there is neither text nor chunks', () => {
-    expect(isEmptyMaterial({ title: '', text: '', chunks: [] })).toBe(true)
-    // A title but no body is still an empty material — the title is not content.
-    expect(isEmptyMaterial({ title: 't', text: '', chunks: [] })).toBe(true)
-    expect(isEmptyMaterial({ title: '', text: 'x', chunks: [] })).toBe(false)
-    expect(isEmptyMaterial({ title: '', text: '', chunks: CHUNKS })).toBe(false)
+  it('is true exactly when a load found nothing at all', () => {
+    // This is the payload a deleted file produces: no title, no name, no text,
+    // no chunks. A title means the file exists, whatever its body says.
+    expect(isEmptyMaterial({ title: '', fileName: '', extension: '', text: '', chunks: [] })).toBe(
+      true,
+    )
+    expect(isEmptyMaterial(withoutText('txt', ''))).toBe(true)
+    expect(isEmptyMaterial({ title: 't', fileName: 't', extension: '', text: '', chunks: [] })).toBe(
+      false,
+    )
+    expect(isEmptyMaterial(LOADED)).toBe(false)
   })
 })
 
@@ -109,7 +127,7 @@ describe('resolveHit', () => {
 
   it('reports a hit whose text it cannot locate, rather than dropping it', () => {
     const material: LoadedMaterial = {
-      title: 't',
+      ...withoutText('txt', 't'),
       text: '完全不同的正文。',
       chunks: [{ ordinal: 0, headingPath: '', locator: '第 1 段', text: '索引里的旧文本。' }],
     }
@@ -128,18 +146,25 @@ describe('resolveHit', () => {
 })
 
 describe('ReaderView', () => {
-  it('renders the whole text with the hit marked', () => {
-    const out = html(
+  /** Render one material with the two props the image branch needs. */
+  function view(material: LoadedMaterial, chunk: number | undefined = undefined): string {
+    return html(
       createElement(ReaderView, {
         heading: '端口说明',
-        material: LOADED,
-        hit: resolveHit(LOADED, 1),
+        material,
+        hit: resolveHit(material, chunk),
         revision: 1,
+        kbId: KB_ID,
+        materialId: material.fileName,
       }),
     )
+  }
+
+  it('renders the whole text with the hit marked', () => {
+    const out = view(LOADED, 1)
     expect(out).toContain('data-kb-reader-hit')
     expect(out).toContain('<mark')
-    // The rest of the material is still shown — this is a reader, not a snippet.
+    // The rest of the file is still shown — this is a reader, not a snippet.
     expect(out).toContain('本设备默认端口号为 8080。')
     expect(out).toContain('已定位到片段')
     expect(out).not.toContain('data-kb-reader-callout')
@@ -147,18 +172,11 @@ describe('ReaderView', () => {
 
   it('shows the passage in a callout when it cannot be located inline', () => {
     const material: LoadedMaterial = {
-      title: 't',
+      ...withoutText('txt', 't'),
       text: '完全不同的正文。',
       chunks: [{ ordinal: 0, headingPath: '', locator: '第 7 段', text: '索引里的旧文本。' }],
     }
-    const out = html(
-      createElement(ReaderView, {
-        heading: '端口说明',
-        material,
-        hit: resolveHit(material, 0),
-        revision: 1,
-      }),
-    )
+    const out = view(material, 0)
     expect(out).toContain('data-kb-reader-callout')
     expect(out).toContain('未能精确定位')
     expect(out).toContain('索引里的旧文本。')
@@ -168,41 +186,37 @@ describe('ReaderView', () => {
   })
 
   it('renders the plain text when the navigation named no passage', () => {
-    const out = html(
-      createElement(ReaderView, { heading: '端口说明', material: LOADED, hit: undefined, revision: 0 }),
-    )
+    const out = view(LOADED)
     expect(out).toContain('本设备默认端口号为 8080。')
     expect(out).not.toContain('data-kb-reader-hit')
     expect(out).not.toContain('data-kb-reader-callout')
   })
 
-  it('says a material is gone instead of rendering an empty box', () => {
-    const out = html(
-      createElement(ReaderView, {
-        heading: '端口说明',
-        material: { title: '', text: '', chunks: [] },
-        hit: undefined,
-        revision: 0,
-      }),
-    )
-    expect(out).toContain('这份资料已经不存在了')
+  it('says a file is gone instead of rendering an empty box', () => {
+    const out = view(withoutText('', ''))
+    expect(out).toContain('这份文件已经不存在了')
     expect(out).not.toContain('data-kb-reader-text')
   })
 
-  it('does not call an empty material deleted', () => {
-    // Same payload as the deleted case — no text, no chunks — and the title is
-    // the only thing that tells them apart. Telling a user their material was
-    // deleted right after they saved it empty is the failure this guards.
-    const out = html(
-      createElement(ReaderView, {
-        heading: '端口说明',
-        material: { title: '端口说明', text: '', chunks: [] },
-        hit: undefined,
-        revision: 0,
-      }),
-    )
-    expect(out).toContain('这份资料还没有正文')
+  it('says it cannot preview a file it cannot read, without calling it deleted', () => {
+    // A pdf exists and is listed; the plugin has simply not learned to render or
+    // read it yet. Saying "deleted" here would send the user looking for a file
+    // that is sitting right where they left it.
+    const out = view(withoutText('pdf', '图纸.pdf'))
+    expect(out).toContain('暂时无法在应用内预览')
+    expect(out).toContain('.pdf')
     expect(out).not.toContain('已经不存在了')
+    expect(out).not.toContain('data-kb-reader-text')
+  })
+
+  it('shows an image file as an image rather than as text', () => {
+    // Effects do not run under `renderToString`, so the placeholder is what this
+    // reaches — which is enough to prove the branch was taken instead of the
+    // text branch.
+    const out = view(withoutText('png', '封面.png'))
+    expect(out).toContain('正在读取图片')
+    expect(out).not.toContain('暂时无法在应用内预览')
+    expect(out).not.toContain('data-kb-reader-text')
   })
 })
 
@@ -219,10 +233,10 @@ describe('ReaderTitle', () => {
       }),
     )
     expect(out).toContain('端口说明')
-    expect(out).not.toContain('资料 mat-1')
+    expect(out).not.toContain('mat-1')
   })
 
-  it('falls back to a provisional label when the tab was restored without params', () => {
+  it('falls back to the file name from the address when the tab carries no params', () => {
     const out = html(
       createElement(ReaderTitle, {
         useTabInfo: () => ({
@@ -230,26 +244,37 @@ describe('ReaderTitle', () => {
         }),
       }),
     )
-    expect(out).toContain('资料 mat-1')
+    expect(out).toContain('mat-1')
   })
 
   it('survives a seat that hands it no hook at all', () => {
     // A seat whose hook context is missing is a wiring fault, not a crash: the
     // chip degrades to its generic label.
     const out = html(createElement(ReaderTitle, {}))
-    expect(out).toContain('知识库资料')
+    expect(out).toContain('知识库文件')
   })
 })
 
 describe('loadMaterial', () => {
+  /** One material, as the Host describes it. */
+  function detail(overrides: Partial<MaterialDetailView> = {}): MaterialDetailView {
+    return {
+      id: MATERIAL_ID,
+      kbId: KB_ID,
+      fileName: '手册/端口说明.txt',
+      title: '端口说明.txt',
+      bytes: 128,
+      extension: 'txt',
+      indexed: true,
+      text: TEXT,
+      chunks: CHUNKS,
+      ...overrides,
+    }
+  }
+
   /** The smallest API the reader touches. */
   function api(overrides: Partial<KnowbaseApi> = {}): KnowbaseApi {
-    return {
-      listMaterials: async () => [{ id: MATERIAL_ID, title: '端口说明' }],
-      readMaterialText: async () => TEXT,
-      readMaterialChunks: async () => CHUNKS,
-      ...overrides,
-    } as unknown as KnowbaseApi
+    return { readMaterial: async () => detail(), ...overrides } as unknown as KnowbaseApi
   }
 
   beforeEach(() => {
@@ -261,49 +286,51 @@ describe('loadMaterial', () => {
     clearMaterialCache()
   })
 
-  it('reads text, chunks and title in one load', async () => {
+  it('reads the name, text and chunks in one call', async () => {
     setKnowbaseApi(api())
     await expect(loadMaterial(KB_ID, MATERIAL_ID)).resolves.toEqual({
-      title: '端口说明',
+      title: '端口说明.txt',
+      fileName: '手册/端口说明.txt',
+      extension: 'txt',
       text: TEXT,
       chunks: CHUNKS,
     })
   })
 
   it('shares one request between the body and the title', async () => {
-    const readMaterialText = vi.fn(async () => TEXT)
-    setKnowbaseApi(api({ readMaterialText }))
+    const readMaterial = vi.fn(async () => detail())
+    setKnowbaseApi(api({ readMaterial }))
+
     const [first, second] = await Promise.all([
       loadMaterial(KB_ID, MATERIAL_ID),
       loadMaterial(KB_ID, MATERIAL_ID),
     ])
+
     expect(first).toBe(second)
-    expect(readMaterialText).toHaveBeenCalledTimes(1)
+    expect(readMaterial).toHaveBeenCalledTimes(1)
   })
 
-  it('keys the cache by knowledge base as well as material', async () => {
-    const readMaterialText = vi.fn(async () => TEXT)
-    setKnowbaseApi(api({ readMaterialText }))
+  it('keys the cache by knowledge base as well as file', async () => {
+    // A file path is only unique inside its base, so two bases both holding
+    // 「手册/端口说明.txt」 are two different files.
+    const readMaterial = vi.fn(async () => detail())
+    setKnowbaseApi(api({ readMaterial }))
+
     await loadMaterial('kb-a', MATERIAL_ID)
     await loadMaterial('kb-b', MATERIAL_ID)
-    expect(readMaterialText).toHaveBeenCalledTimes(2)
+
+    expect(readMaterial).toHaveBeenCalledTimes(2)
   })
 
-  it('still reads the text when the knowledge base cannot be listed', async () => {
-    // A knowledge base that vanished must not take the material with it; the
-    // title is the only thing that lookup provides.
-    setKnowbaseApi(
-      api({
-        listMaterials: async () => {
-          throw new Error('知识库不存在')
-        },
-      }),
-    )
-    await expect(loadMaterial(KB_ID, MATERIAL_ID)).resolves.toEqual({
-      title: '',
-      text: TEXT,
-      chunks: CHUNKS,
-    })
+  it('reads a file that is gone as an empty load rather than as a failure', async () => {
+    // A citation to a file the user deleted afterwards is ordinary, not a bug:
+    // the panel says the file is gone instead of showing a retry that will never
+    // succeed.
+    setKnowbaseApi(api({ readMaterial: async () => null }))
+
+    const loaded = await loadMaterial(KB_ID, MATERIAL_ID)
+    expect(isEmptyMaterial(loaded)).toBe(true)
+    expect(loaded.fileName).toBe(MATERIAL_ID)
   })
 
   it('reports a channel that is not mounted instead of hanging', async () => {
@@ -312,14 +339,14 @@ describe('loadMaterial', () => {
   })
 
   it('does not cache a failure, so a retry actually retries', async () => {
-    const readMaterialText = vi
-      .fn<() => Promise<string>>()
+    const readMaterial = vi
+      .fn<() => Promise<MaterialDetailView | null>>()
       .mockRejectedValueOnce(new Error('第一次失败'))
-      .mockResolvedValue(TEXT)
-    setKnowbaseApi(api({ readMaterialText }))
+      .mockResolvedValue(detail())
+    setKnowbaseApi(api({ readMaterial }))
 
     await expect(loadMaterial(KB_ID, MATERIAL_ID)).rejects.toThrow('第一次失败')
     await expect(loadMaterial(KB_ID, MATERIAL_ID)).resolves.toMatchObject({ text: TEXT })
-    expect(readMaterialText).toHaveBeenCalledTimes(2)
+    expect(readMaterial).toHaveBeenCalledTimes(2)
   })
 })

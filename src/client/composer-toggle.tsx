@@ -370,8 +370,8 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
                   title={base.name}
                   subtitle={
                     base.materialCount === 0
-                      ? '暂无资料'
-                      : `${base.materialCount} 份资料 / ${base.chunkCount} 个片段`
+                      ? '暂无文件'
+                      : `${base.materialCount} 个文件 / ${base.indexedCount} 可检索`
                   }
                   onSelect={() =>
                     void apply(true, false, toggleBaseSelection(scope, bases, base.id))

@@ -55,6 +55,15 @@ export interface RetrievedPassage {
   /** Identity of the material within that knowledge base. */
   readonly materialId?: string
   /**
+   * Absolute path of the file the passage came from.
+   *
+   * The reader opens disk files now, so this is what a citation needs to open
+   * one. It rides in the payload for the same reason the ids do — the browser
+   * half would otherwise need a second round trip to resolve a title back to a
+   * path. Absent on messages written before materials were files.
+   */
+  readonly filePath?: string
+  /**
    * Ordinal of the chunk inside the material, which is what the reader scrolls
    * to and highlights.
    */

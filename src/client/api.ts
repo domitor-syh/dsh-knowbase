@@ -15,15 +15,12 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  BackupPayloadView,
-  DuplicateView,
-  ImportResultView,
   KnowledgeBaseView,
+  MaterialDetailView,
   MaterialView,
-  PassageView,
-  RecycleBinView,
   SearchReportView,
   SessionScopeView,
+  UploadResultView,
 } from '../remote.ts'
 
 /** A Remote call that failed on the Host. */
@@ -39,7 +36,14 @@ export class KnowbaseRemoteError extends Error {
   }
 }
 
-/** Everything the settings page and the composer toggle need. */
+/** A file the page is pushing into a base. */
+export interface UploadFile {
+  readonly name: string
+  /** Raw bytes; the API encodes them to base64 for the wire. */
+  readonly bytes: Uint8Array
+}
+
+/** Everything the settings page, the reader and the composer toggle need. */
 export interface KnowbaseApi {
   listKnowledgeBases(): Promise<readonly KnowledgeBaseView[]>
   createKnowledgeBase(name: string, description: string): Promise<KnowledgeBaseView>
@@ -48,23 +52,17 @@ export interface KnowbaseApi {
   deleteKnowledgeBase(id: string): Promise<boolean>
 
   listMaterials(kbId: string): Promise<readonly MaterialView[]>
-  addTextMaterial(
-    kbId: string,
-    title: string,
-    text: string,
-    allowDuplicate?: boolean,
-  ): Promise<MaterialView>
-  updateMaterialText(id: string, text: string): Promise<MaterialView>
-  findDuplicateMaterial(kbId: string, text: string): Promise<DuplicateView | null>
-  deleteMaterial(id: string): Promise<boolean>
-  readMaterialChunks(id: string): Promise<readonly PassageView[]>
-  readMaterialText(id: string): Promise<string>
+  addFiles(kbId: string, files: readonly UploadFile[]): Promise<UploadResultView>
+  readMaterial(kbId: string, id: string): Promise<MaterialDetailView | null>
+  /** A file's bytes, decoded from the wire's base64; `undefined` when unavailable. */
+  readMaterialBytes(kbId: string, id: string): Promise<Uint8Array | undefined>
+  deleteMaterial(kbId: string, id: string): Promise<boolean>
+
+  /** `kbId` of `''` rescans every base. */
+  rescan(kbId: string): Promise<boolean>
+  getVaultRoot(): Promise<string>
 
   testSearch(query: string, kbIds: readonly string[]): Promise<SearchReportView>
-
-  /** `kbId` of `''` exports every live knowledge base. */
-  exportBackup(kbId: string): Promise<BackupPayloadView>
-  importBackup(json: string): Promise<ImportResultView>
 
   getSessionScope(agentId: string): Promise<SessionScopeView>
   setSessionScope(
@@ -73,12 +71,6 @@ export interface KnowbaseApi {
     all: boolean,
     kbIds: readonly string[],
   ): Promise<SessionScopeView>
-
-  listRecycleBin(): Promise<RecycleBinView>
-  restoreKnowledgeBase(id: string): Promise<boolean>
-  restoreMaterial(id: string): Promise<boolean>
-  purgeKnowledgeBase(id: string): Promise<boolean>
-  purgeMaterial(id: string): Promise<boolean>
 }
 
 /** Unwrap a Remote result, turning a Host-side failure into a rejection. */
@@ -104,20 +96,16 @@ interface KnowbaseWire {
   updateDescription: (id: string, description: string) => Promise<RemoteResult<boolean>>
   deleteKnowledgeBase: (id: string) => Promise<RemoteResult<boolean>>
   listMaterials: (kbId: string) => Promise<RemoteResult<readonly MaterialView[]>>
-  addTextMaterial: (
+  addFiles: (
     kbId: string,
-    title: string,
-    text: string,
-    allowDuplicate: boolean,
-  ) => Promise<RemoteResult<MaterialView>>
-  updateMaterialText: (id: string, text: string) => Promise<RemoteResult<MaterialView>>
-  findDuplicateMaterial: (kbId: string, text: string) => Promise<RemoteResult<DuplicateView | null>>
-  deleteMaterial: (id: string) => Promise<RemoteResult<boolean>>
-  readMaterialChunks: (id: string) => Promise<RemoteResult<readonly PassageView[]>>
-  readMaterialText: (id: string) => Promise<RemoteResult<string>>
+    files: readonly { readonly name: string; readonly base64: string }[],
+  ) => Promise<RemoteResult<UploadResultView>>
+  readMaterial: (kbId: string, id: string) => Promise<RemoteResult<MaterialDetailView | null>>
+  readMaterialBytes: (kbId: string, id: string) => Promise<RemoteResult<string>>
+  deleteMaterial: (kbId: string, id: string) => Promise<RemoteResult<boolean>>
+  rescan: (kbId: string) => Promise<RemoteResult<boolean>>
+  getVaultRoot: () => Promise<RemoteResult<string>>
   testSearch: (query: string, kbIds: readonly string[]) => Promise<RemoteResult<SearchReportView>>
-  exportBackup: (kbId: string) => Promise<RemoteResult<BackupPayloadView>>
-  importBackup: (json: string) => Promise<RemoteResult<ImportResultView>>
   getSessionScope: (agentId: string) => Promise<RemoteResult<SessionScopeView>>
   setSessionScope: (
     agentId: string,
@@ -125,11 +113,6 @@ interface KnowbaseWire {
     all: boolean,
     kbIds: readonly string[],
   ) => Promise<RemoteResult<SessionScopeView>>
-  listRecycleBin: () => Promise<RemoteResult<RecycleBinView>>
-  restoreKnowledgeBase: (id: string) => Promise<RemoteResult<boolean>>
-  restoreMaterial: (id: string) => Promise<RemoteResult<boolean>>
-  purgeKnowledgeBase: (id: string) => Promise<RemoteResult<boolean>>
-  purgeMaterial: (id: string) => Promise<RemoteResult<boolean>>
 }
 
 /**
@@ -171,6 +154,29 @@ export function knowbaseChannelError(): string | undefined {
   return channelError
 }
 
+/** Encode bytes as base64 for the wire, in chunks small enough to not blow the stack. */
+function toBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const chunk = 0x8000
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk))
+  }
+  return btoa(binary)
+}
+
+/** Decode the wire's base64 back to bytes; `undefined` for the empty string. */
+function fromBase64(value: string): Uint8Array | undefined {
+  if (value === '') return undefined
+  try {
+    const binary = atob(value)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+    return bytes
+  } catch {
+    return undefined
+  }
+}
+
 /** Build the typed API over a mounted client context. */
 export function createKnowbaseApi(ctx: Context): KnowbaseApi {
   const wire = (ctx.remote as unknown as { knowbase: KnowbaseWire }).knowbase
@@ -182,23 +188,16 @@ export function createKnowbaseApi(ctx: Context): KnowbaseApi {
     updateDescription: (id, description) => unwrap(wire.updateDescription(id, description)),
     deleteKnowledgeBase: id => unwrap(wire.deleteKnowledgeBase(id)),
     listMaterials: kbId => unwrap(wire.listMaterials(kbId)),
-    addTextMaterial: (kbId, title, text, allowDuplicate = false) =>
-      unwrap(wire.addTextMaterial(kbId, title, text, allowDuplicate)),
-    updateMaterialText: (id, text) => unwrap(wire.updateMaterialText(id, text)),
-    findDuplicateMaterial: (kbId, text) => unwrap(wire.findDuplicateMaterial(kbId, text)),
-    deleteMaterial: id => unwrap(wire.deleteMaterial(id)),
-    readMaterialChunks: id => unwrap(wire.readMaterialChunks(id)),
-    readMaterialText: id => unwrap(wire.readMaterialText(id)),
+    addFiles: (kbId, files) =>
+      unwrap(wire.addFiles(kbId, files.map(file => ({ name: file.name, base64: toBase64(file.bytes) })))),
+    readMaterial: (kbId, id) => unwrap(wire.readMaterial(kbId, id)),
+    readMaterialBytes: async (kbId, id) => fromBase64(await unwrap(wire.readMaterialBytes(kbId, id))),
+    deleteMaterial: (kbId, id) => unwrap(wire.deleteMaterial(kbId, id)),
+    rescan: kbId => unwrap(wire.rescan(kbId)),
+    getVaultRoot: () => unwrap(wire.getVaultRoot()),
     testSearch: (query, kbIds) => unwrap(wire.testSearch(query, kbIds)),
-    exportBackup: kbId => unwrap(wire.exportBackup(kbId)),
-    importBackup: json => unwrap(wire.importBackup(json)),
     getSessionScope: agentId => unwrap(wire.getSessionScope(agentId)),
     setSessionScope: (agentId, enabled, all, kbIds) =>
       unwrap(wire.setSessionScope(agentId, enabled, all, kbIds)),
-    listRecycleBin: () => unwrap(wire.listRecycleBin()),
-    restoreKnowledgeBase: id => unwrap(wire.restoreKnowledgeBase(id)),
-    restoreMaterial: id => unwrap(wire.restoreMaterial(id)),
-    purgeKnowledgeBase: id => unwrap(wire.purgeKnowledgeBase(id)),
-    purgeMaterial: id => unwrap(wire.purgeMaterial(id)),
   }
 }

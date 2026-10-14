@@ -74,24 +74,26 @@ function describeOutcome(outcome: ReturnType<KnowbaseService['retrieve']>): stri
 
 const HELP = [
   '知识库命令：',
-  '  /kb list                              列出知识库与资料数',
-  '  /kb create <名称>                      新建知识库',
-  '  /kb rename <旧名> :: <新名>            重命名',
-  '  /kb delete <名称>                      删除知识库及其资料',
-  '  /kb add <库名> :: <标题> :: <正文>      添加文本资料',
-  '  /kb rm <标题>                          删除资料',
+  '  /kb list                              列出知识库与文件数',
+  '  /kb files <库名>                       列出库内的文件',
+  '  /kb create <名称>                      新建知识库（同时建好它的文件夹）',
+  '  /kb rename <旧名> :: <新名>            重命名（文件夹一起改名）',
+  '  /kb delete <名称>                      删除知识库（文件夹移入 _回收站，不销毁）',
+  '  /kb rm <库名> :: <文件名>               删除文件（移入 _回收站，不销毁）',
+  '  /kb rescan [库名]                      重新扫描磁盘（在资源管理器里丢进文件后用它）',
   '  /kb use <库名[,库名]|全部|关闭>        设置本会话的检索范围',
   '  /kb search <问题>                      检索测试（不调用模型）',
+  '  /kb root                               显示知识库根目录（你的文件实际存放的位置）',
 ].join('\n')
 
 /** Register the `/kb` command. */
 export function installCommands(ctx: Context, deps: CommandDeps): void {
-  const { service, selection } = deps
+  const { selection } = deps
 
   ctx.commands.register({
     name: 'kb',
-    description: '知识库：管理库与资料、设置本会话检索范围 / Knowledge base',
-    input: { hint: 'list | create <名称> | add <库名> :: <标题> :: <正文> | use <库名[,库名]|全部|关闭>' },
+    description: '知识库：管理库与文件、设置本会话检索范围 / Knowledge base',
+    input: { hint: 'list | files <库名> | create <名称> | rescan [库名] | use <库名[,库名]|全部|关闭>' },
     async handler(invocation): Promise<CommandResult> {
       const agentId = invocation.agent.id
       const raw = invocation.rawInput.trim()
@@ -114,6 +116,9 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
             return { kind: 'success', text: `${HELP}\n\n${status}` }
           }
 
+          case 'root':
+            return { kind: 'success', text: `知识库根目录：${service.root}` }
+
           case 'list': {
             const bases = service.listKnowledgeBases()
             if (bases.length === 0) {
@@ -121,15 +126,32 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
             }
             const lines = bases.map(knowledgeBase => {
               const materials = service.listMaterials(knowledgeBase.id)
-              const chunks = materials.reduce((sum, material) => sum + material.chunks.length, 0)
-              return `- ${knowledgeBase.name}（${materials.length} 份资料 / ${chunks} 个片段）`
+              const indexed = materials.filter(material => material.indexed).length
+              return `- ${knowledgeBase.name}（${materials.length} 个文件 / ${indexed} 个可检索）/ ${knowledgeBase.folderName}`
             })
+            return { kind: 'success', text: lines.join('\n') }
+          }
+
+          case 'files': {
+            const target = service.findKnowledgeBaseByName(argument)
+            if (target === undefined) return { kind: 'error', text: `没有名为「${argument}」的知识库。` }
+            const materials = service.listMaterials(target.id)
+            if (materials.length === 0) {
+              return {
+                kind: 'success',
+                text: `「${target.name}」里还没有文件。把文件放进 ${service.root}\\${target.folderName}，再 /kb rescan。`,
+              }
+            }
+            const lines = materials.map(
+              material =>
+                `- ${material.fileName}（${formatBytes(material.bytes)}${material.indexed ? '' : '，不可检索'}）`,
+            )
             return { kind: 'success', text: lines.join('\n') }
           }
 
           case 'create': {
             const created = await service.createKnowledgeBase(argument)
-            return { kind: 'success', text: `已创建知识库「${created.name}」。` }
+            return { kind: 'success', text: `已创建知识库「${created.name}」，文件夹：${created.folderName}` }
           }
 
           case 'rename': {
@@ -140,7 +162,7 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
             const target = service.findKnowledgeBaseByName(from)
             if (target === undefined) return { kind: 'error', text: `没有名为「${from}」的知识库。` }
             const renamed = await service.renameKnowledgeBase(target.id, to)
-            return { kind: 'success', text: `已重命名为「${renamed.name}」。` }
+            return { kind: 'success', text: `已重命名为「${renamed.name}」，文件夹：${renamed.folderName}` }
           }
 
           case 'delete': {
@@ -148,35 +170,39 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
             if (target === undefined) {
               return { kind: 'error', text: `没有名为「${argument}」的知识库。` }
             }
-            const materials = service.listMaterials(target.id).length
+            const files = service.listMaterials(target.id).length
             await service.deleteKnowledgeBase(target.id)
             return {
               kind: 'success',
-              text: `已把「${target.name}」（${materials} 份资料）移入回收站，可在设置页恢复。`,
-            }
-          }
-
-          case 'add': {
-            const [kbName, title, ...body] = segments(argument)
-            const text = body.join('::').trim()
-            if (kbName === undefined || title === undefined || text === '') {
-              return { kind: 'error', text: '用法：/kb add <库名> :: <标题> :: <正文>' }
-            }
-            const target = service.findKnowledgeBaseByName(kbName)
-            if (target === undefined) return { kind: 'error', text: `没有名为「${kbName}」的知识库。` }
-            const material = await service.addText(target.id, title, text)
-            return {
-              kind: 'success',
-              text: `已加入「${target.name}」：${material.title}（${material.chunks.length} 个片段）。`,
+              text: `已把「${target.name}」（${files} 个文件）的文件夹移入 _回收站。它没有被销毁，需要时可以自己拖回来。`,
             }
           }
 
           case 'rm': {
-            const materials = service.listMaterials()
-            const matches = materials.filter(material => material.title === argument.trim())
-            if (matches.length === 0) return { kind: 'error', text: `没有标题为「${argument}」的资料。` }
-            for (const material of matches) await service.deleteMaterial(material.id)
-            return { kind: 'success', text: `已把 ${matches.length} 份资料移入回收站。` }
+            const [kbName, fileName] = segments(argument)
+            if (kbName === undefined || fileName === undefined || fileName === '') {
+              return { kind: 'error', text: '用法：/kb rm <库名> :: <文件名>' }
+            }
+            const target = service.findKnowledgeBaseByName(kbName)
+            if (target === undefined) return { kind: 'error', text: `没有名为「${kbName}」的知识库。` }
+            const matches = service
+              .listMaterials(target.id)
+              .filter(material => material.fileName === fileName || material.title === fileName)
+            if (matches.length === 0) {
+              return { kind: 'error', text: `「${target.name}」里没有文件「${fileName}」。` }
+            }
+            for (const material of matches) await service.deleteMaterial(target.id, material.id)
+            return { kind: 'success', text: `已把 ${matches.length} 个文件移入 _回收站。` }
+          }
+
+          case 'rescan': {
+            await service.rescan(argument === '' ? undefined : service.findKnowledgeBaseByName(argument)?.id)
+            const bases = service.listKnowledgeBases()
+            const files = service.listMaterials().length
+            return {
+              kind: 'success',
+              text: `已重新扫描：${bases.length} 个知识库、${files} 个文件。`,
+            }
           }
 
           case 'use': {
@@ -247,4 +273,11 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
       }
     },
   })
+}
+
+/** Human-readable file size. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }

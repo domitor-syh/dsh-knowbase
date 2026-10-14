@@ -4,36 +4,30 @@
  *
  * ## Why the right column and not an overlay
  *
- * The host ships a document-preview surface for `dsh-resource://file/…`
- * addresses, but a knowledge-base material is not a workspace file — it lives in
- * the plugin's own storage domain. What *is* reusable is the surface itself: the
- * right column docks, resizes, survives collapse and session switches, and keeps
- * the chat visible beside the material. So the reader reuses the host's tab
- * infrastructure (`ctx.resources` + `ctx.sidebarRightTabs` + the two keyed
- * seats) and contributes only the body.
+ * The host docks, resizes and keeps the right column alive across session
+ * switches, and it keeps the chat visible beside the material. The reader
+ * reuses that infrastructure (`ctx.resources` + `ctx.sidebarRightTabs` + the two
+ * keyed seats) and contributes only the body.
  *
- * ## Why the text is rendered whole
+ * ## Read-only by design
  *
- * The indexed view of a material is its chunks; the *material* is its text.
- * Showing chunks would silently reflow what the user wrote, so the panel renders
- * the stored text and locates the hit chunk inside it. When the chunk cannot be
- * located — a chunk normalised differently from the stored text — the panel says
- * so and shows the passage in a callout rather than highlighting the wrong
- * characters.
+ * A file in the vault belongs to the user's own file manager, and two editors
+ * over one path is how a document gets silently clobbered. So this panel can
+ * only *show*: text files render their extracted text with the hit located
+ * inside it, images render their bytes, and anything it cannot render says so.
+ * Editing happens in the user's own editor, on the file in the base's folder.
  *
  * ## Why the load and the view are separate components
  *
  * `ReaderView` takes a loaded material and nothing else, so every branch that
  * matters — the highlight, the callout for an unlocatable hit, the deleted
- * material, the empty material — is reachable from a render-to-string test. The
- * async shell around it would otherwise hide all of them behind an effect the
- * test environment never runs.
+ * material, the unrenderable file — is reachable from a render-to-string test.
  *
  * @module @domitor-syh/dsh-knowbase/client/reader-panel
  */
 
 import * as React from 'react'
-import type { MaterialView, PassageView } from '../remote.ts'
+import type { MaterialDetailView, PassageView } from '../remote.ts'
 import { knowbaseApi, knowbaseChannelError } from './api.ts'
 import { chunkOfParams, parseReaderAddress, provisionalTitle, titleOfParams } from './reader-address.ts'
 
@@ -47,19 +41,30 @@ const COLORS = {
   text: '#1c2733',
 } as const
 
+/** Extensions the panel renders as an image. */
+const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'])
+
 /** A material as the reader needs it. */
 export interface LoadedMaterial {
   /** Title, or `''` when the material could not be found in its knowledge base. */
   readonly title: string
-  /** The text exactly as stored. */
+  /** The file's name and extension, so the panel knows what it is looking at. */
+  readonly fileName: string
+  readonly extension: string
+  /** The text the plugin extracted; `''` for a file it cannot read. */
   readonly text: string
   /** The indexed chunks, in order. */
   readonly chunks: readonly PassageView[]
 }
 
-/** True when the load found nothing — a deleted material reads as empty too. */
+/** True when the load found nothing — a deleted file reads as empty too. */
 export function isEmptyMaterial(material: LoadedMaterial): boolean {
-  return material.text === '' && material.chunks.length === 0
+  return material.title === '' && material.text === '' && material.chunks.length === 0
+}
+
+/** True when the panel can show this file as an image. */
+export function isImageMaterial(material: LoadedMaterial): boolean {
+  return IMAGE_EXTENSIONS.has(material.extension)
 }
 
 /**
@@ -78,9 +83,9 @@ export function clearMaterialCache(): void {
 /**
  * Load one material through the typed Remote.
  *
- * @param kbId - owning knowledge base, needed only for the title lookup.
- * @param materialId - the material to read.
- * @returns its title, text and chunks.
+ * @param kbId - owning knowledge base.
+ * @param materialId - the file's path relative to the base folder.
+ * @returns its title, extension, text and chunks.
  * @throws when the channel is not mounted, or a call fails on the Host.
  */
 export function loadMaterial(kbId: string, materialId: string): Promise<LoadedMaterial> {
@@ -101,18 +106,19 @@ async function fetchMaterial(kbId: string, materialId: string): Promise<LoadedMa
   if (api === undefined) {
     throw new Error(knowbaseChannelError() ?? '知识库通道尚未就绪，请稍后重试。')
   }
-  // The title lookup is best-effort: a knowledge base that vanished must not
-  // stop the text from being read, and the address already names the material.
-  const title = api
-    .listMaterials(kbId)
-    .then((materials: readonly MaterialView[]) => materials.find(row => row.id === materialId)?.title ?? '')
-    .catch(() => '')
-  const [text, chunks, resolvedTitle] = await Promise.all([
-    api.readMaterialText(materialId),
-    api.readMaterialChunks(materialId),
-    title,
-  ])
-  return { title: resolvedTitle, text, chunks }
+  const detail: MaterialDetailView | null = await api.readMaterial(kbId, materialId)
+  if (detail === null) {
+    // A file that is gone reads as an empty load; the view says so instead of
+    // throwing, because a citation to a deleted file is ordinary, not a bug.
+    return { title: '', fileName: materialId, extension: '', text: '', chunks: [] }
+  }
+  return {
+    title: detail.title,
+    fileName: detail.fileName,
+    extension: detail.extension,
+    text: detail.text,
+    chunks: detail.chunks,
+  }
 }
 
 /**
@@ -125,9 +131,7 @@ async function fetchMaterial(kbId: string, materialId: string): Promise<LoadedMa
  * reader ends up unable to locate a passage it is literally showing.
  *
  * Every character of the projection carries the index it came from, so a match
- * found in the projection converts back to a range in the original. A collapsed
- * run is represented by one space mapped to the run's first whitespace
- * character, which keeps a range's start on the whitespace the user typed.
+ * found in the projection converts back to a range in the original.
  */
 function collapseWhitespace(text: string): { readonly normalized: string; readonly map: readonly number[] } {
   const chars: string[] = []
@@ -161,10 +165,6 @@ function collapseWhitespace(text: string): { readonly normalized: string; readon
  * original indices. When neither finds it, the honest answer is "not locatable"
  * and the caller shows a callout: highlighting the wrong characters would put
  * evidence in the user's face that the answer never cited.
- *
- * @param text - the stored material text.
- * @param chunk - the chunk's text as the index holds it.
- * @returns the half-open range in `text`, or `undefined`.
  */
 export function locateHit(text: string, chunk: string): { start: number; end: number } | undefined {
   if (chunk === '') return undefined
@@ -230,13 +230,66 @@ function HitCallout(props: { hit: Hit }): React.ReactElement {
 }
 
 /**
+ * An image file, rendered from the bytes the Host sends base64-encoded.
+ *
+ * The object URL is revoked when the component unmounts — a long-lived tab that
+ * viewed twenty images would otherwise hold twenty decoded blobs.
+ */
+function ImagePreview(props: { kbId: string; materialId: string; extension: string }): React.ReactElement {
+  const { kbId, materialId, extension } = props
+  const [url, setUrl] = React.useState<string | undefined>(undefined)
+  const [failure, setFailure] = React.useState('')
+
+  React.useEffect(() => {
+    let live = true
+    let created: string | undefined
+    const api = knowbaseApi()
+    if (api === undefined) {
+      setFailure(knowbaseChannelError() ?? '知识库通道尚未就绪。')
+      return
+    }
+    api
+      .readMaterialBytes(kbId, materialId)
+      .then(bytes => {
+        if (bytes === undefined) {
+          if (live) setFailure('文件已不存在，或它太大，无法在这里预览。')
+          return
+        }
+        // `svg` has a text mime type; everything else here is binary.
+        const mime = extension === 'svg' ? 'image/svg+xml' : `image/${extension === 'jpg' ? 'jpeg' : extension}`
+        // A copied ArrayBuffer keeps the Blob independent of the source view.
+        const blob = new Blob([bytes.slice().buffer as ArrayBuffer], { type: mime })
+        created = URL.createObjectURL(blob)
+        if (live) setUrl(created)
+        else URL.revokeObjectURL(created)
+      })
+      .catch((error: unknown) => {
+        if (live) setFailure(error instanceof Error ? error.message : String(error))
+      })
+    return () => {
+      live = false
+      if (created !== undefined) URL.revokeObjectURL(created)
+    }
+  }, [kbId, materialId, extension])
+
+  if (failure !== '') return <Notice>{failure}</Notice>
+  if (url === undefined) return <Notice>正在读取图片…</Notice>
+  return (
+    <img
+      data-kb-reader-image
+      src={url}
+      alt={materialId}
+      style={{ maxWidth: '100%', borderRadius: 6, border: `1px solid ${COLORS.border}` }}
+    />
+  )
+}
+
+/**
  * The material, rendered.
  *
  * Pure in its props: the heading, the text, and where the hit is. Everything
  * that decides *what* to show lives here, so a render-to-string test reaches
  * every branch.
- *
- * @param props - the heading to show, the loaded material, and the resolved hit.
  */
 export function ReaderView(props: {
   heading: string
@@ -244,8 +297,11 @@ export function ReaderView(props: {
   hit: Hit | undefined
   /** Bumped by the host on every navigation; moving the viewport keys off it. */
   revision: number
+  /** Owning base and file path, so the image preview can fetch bytes. */
+  kbId: string
+  materialId: string
 }): React.ReactElement {
-  const { heading, material, hit, revision } = props
+  const { heading, material, hit, revision, kbId, materialId } = props
   const hitRef = React.useRef<HTMLElement | null>(null)
 
   // Scroll on every navigation, not only the first: re-opening the same
@@ -257,18 +313,33 @@ export function ReaderView(props: {
   }, [revision, hit])
 
   if (isEmptyMaterial(material)) {
-    // An empty material and a deleted one produce the same payload — no text,
-    // no chunks — and the title lookup is the only thing that separates them:
-    // it finds the material in its knowledge base only while the material
-    // exists. Saying "deleted" about a material the user just saved empty would
-    // be a lie, so the two get different sentences.
+    // A file that is gone and a file with nothing to show produce the same
+    // payload — no title, no text, no chunks — so the panel says "gone" rather
+    // than inventing an empty document.
+    return (
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{heading}</div>
+        <Notice>这份文件已经不存在了，可能已被删除或改名。请回到对话重新检索。</Notice>
+      </div>
+    )
+  }
+
+  if (isImageMaterial(material)) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>{heading}</div>
+        <ImagePreview kbId={kbId} materialId={materialId} extension={material.extension} />
+      </div>
+    )
+  }
+
+  if (material.text === '') {
     return (
       <div>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{heading}</div>
         <Notice>
-          {material.title === ''
-            ? '这份资料已经不存在了，可能已被删除。请回到对话重新检索。'
-            : '这份资料还没有正文。'}
+          这个文件（{material.extension === '' ? '未知格式' : `.${material.extension}`}）暂时无法在应用内预览，
+          插件也还不能从它里面提取可检索的文字。文件本身已保存在知识库文件夹里，可以用系统自带的方式打开。
         </Notice>
       </div>
     )
@@ -363,7 +434,7 @@ export function ReaderPanel(props: Record<string, unknown>): React.ReactElement 
 
   React.useEffect(() => {
     if (materialId === '') {
-      setState({ kind: 'error', message: '这个标签页没有指向任何资料。' })
+      setState({ kind: 'error', message: '这个标签页没有指向任何文件。' })
       return
     }
     let live = true
@@ -381,7 +452,7 @@ export function ReaderPanel(props: Record<string, unknown>): React.ReactElement 
     }
   }, [kbId, materialId, attempt])
 
-  if (state.kind === 'loading') return <Notice>正在读取资料…</Notice>
+  if (state.kind === 'loading') return <Notice>正在读取文件…</Notice>
   if (state.kind === 'error') {
     return (
       <div>
@@ -408,7 +479,14 @@ export function ReaderPanel(props: Record<string, unknown>): React.ReactElement 
   const material = state.material
   const heading = paramTitle ?? (material.title === '' ? provisionalTitle(address) : material.title)
   return (
-    <ReaderView heading={heading} material={material} hit={resolveHit(material, chunk)} revision={revision} />
+    <ReaderView
+      heading={heading}
+      material={material}
+      hit={resolveHit(material, chunk)}
+      revision={revision}
+      kbId={kbId}
+      materialId={materialId}
+    />
   )
 }
 

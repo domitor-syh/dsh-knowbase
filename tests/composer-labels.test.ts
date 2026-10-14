@@ -12,8 +12,26 @@ import { missingBaseIds, scopeLabel, toggleBaseSelection } from '../src/client/l
 import type { KnowledgeBaseView } from '../src/remote.ts'
 
 const BASES: readonly KnowledgeBaseView[] = [
-  { id: 'kb_a', name: '产品资料', description: '', materialCount: 3, chunkCount: 9, updatedAt: 0 },
-  { id: 'kb_b', name: '技术资料', description: '', materialCount: 0, chunkCount: 0, updatedAt: 0 },
+  {
+    id: 'kb_a',
+    name: '产品资料',
+    description: '',
+    folderName: '产品资料--kb_a',
+    materialCount: 3,
+    indexedCount: 2,
+    bytes: 2048,
+    updatedAt: 0,
+  },
+  {
+    id: 'kb_b',
+    name: '技术资料',
+    description: '',
+    folderName: '技术资料--kb_b',
+    materialCount: 0,
+    indexedCount: 0,
+    bytes: 0,
+    updatedAt: 0,
+  },
 ]
 
 describe('scopeLabel', () => {

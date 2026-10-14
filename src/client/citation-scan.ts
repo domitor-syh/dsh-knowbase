@@ -34,6 +34,8 @@ export type SourcePassage = Readonly<{
    */
   kbId?: string
   materialId?: string
+  /** Absolute path of the file the passage came from, for the reader. */
+  filePath?: string
   /** Chunk position inside the material — where the reader lands. */
   ordinal?: number
 }>
@@ -149,6 +151,7 @@ function readPassage(passage: unknown): SourcePassage | undefined {
   // action, never the passage.
   const kbId = (passage as { kbId?: unknown }).kbId
   const materialId = (passage as { materialId?: unknown }).materialId
+  const filePath = (passage as { filePath?: unknown }).filePath
   const ordinal = (passage as { ordinal?: unknown }).ordinal
   return {
     kbName,
@@ -157,6 +160,7 @@ function readPassage(passage: unknown): SourcePassage | undefined {
     text,
     ...(typeof kbId === 'string' && kbId !== '' ? { kbId } : {}),
     ...(typeof materialId === 'string' && materialId !== '' ? { materialId } : {}),
+    ...(typeof filePath === 'string' && filePath !== '' ? { filePath } : {}),
     ...(typeof ordinal === 'number' && Number.isSafeInteger(ordinal) && ordinal >= 0
       ? { ordinal }
       : {}),

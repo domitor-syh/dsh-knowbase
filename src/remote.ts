@@ -24,19 +24,11 @@
  * that its `Remote` symbol belongs to a registered project. That is not a
  * reasonable price for a standalone plugin (see the stage-0 report, §12).
  *
- * The artifacts it emits are plain data — zod schemas plus
- * `InvocationDescriptor` records — over public, documented protocol types. The
- * Host half needs nothing generated at all: the Gateway discovers a
- * `TypertRemoteService` through its own runtime binding. Only the client
- * contribution is written by hand, in `./client/contribution.ts`.
- *
  * @module @domitor-syh/dsh-knowbase/remote
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import { backupFileName, BackupError, parseBackupDocument, serializeBackup, type BackupDocument } from './core/backup.ts'
-import { materialText } from './core/model.ts'
 import type { SessionSelectionRegistry } from './core/session-scope.ts'
 import type { KnowbaseService } from './core/service.ts'
 import { installRemoteMarkers } from './remote-methods.ts'
@@ -44,28 +36,62 @@ import { installRemoteMarkers } from './remote-methods.ts'
 /** Cordis service key, wire namespace, and registry key. */
 const SERVICE_KEY = 'knowbase'
 
-/** One knowledge base, as the settings list needs it. */
+/**
+ * Largest file the browser may push through the Remote channel.
+ *
+ * The channel carries lossless JSON only (see `HANDOFF.md` §15 ④), so a file
+ * travels base64-encoded inside a string — a third larger than the file, held
+ * in memory on both sides at once. The cap is where that stops being reasonable
+ * for a browser tab; past it the user is told to drop the file into the base's
+ * folder instead, which costs nothing.
+ */
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+/** Largest file the reading pane will pull back as bytes. */
+const MAX_PREVIEW_BYTES = 12 * 1024 * 1024
+
+/** One knowledge base, as the list needs it. */
 export interface KnowledgeBaseView {
   readonly id: string
   readonly name: string
   readonly description: string
+  /** Folder name inside the vault; shown so the user can find it in their explorer. */
+  readonly folderName: string
   readonly materialCount: number
-  readonly chunkCount: number
+  /** Files the plugin can search inside, i.e. those it extracted text from. */
+  readonly indexedCount: number
+  readonly bytes: number
   readonly updatedAt: number
 }
 
-/** One material, as the material list needs it. */
+/** One file inside a knowledge base, as the list needs it. */
 export interface MaterialView {
   readonly id: string
   readonly kbId: string
+  readonly fileName: string
   readonly title: string
-  readonly revision: number
-  readonly chunkCount: number
-  readonly createdAt: number
-  readonly updatedAt: number
+  readonly bytes: number
+  readonly extension: string
+  /** Whether the plugin extracted searchable text from it. */
+  readonly indexed: boolean
+  readonly mtimeMs: number
 }
 
-/** One retrievable passage, for the material detail view. */
+/** One file with its extracted text, for the reading pane. */
+export interface MaterialDetailView {
+  readonly id: string
+  readonly kbId: string
+  readonly fileName: string
+  readonly title: string
+  readonly bytes: number
+  readonly extension: string
+  readonly indexed: boolean
+  /** Extracted text, `''` for a file the plugin cannot read. */
+  readonly text: string
+  readonly chunks: readonly PassageView[]
+}
+
+/** One retrievable passage, for the reading pane's locator. */
 export interface PassageView {
   readonly ordinal: number
   readonly headingPath: string
@@ -104,64 +130,19 @@ export interface SessionScopeView {
   readonly kbIds: readonly string[]
 }
 
-/** The recycle bin: soft-deleted bases and materials, as one view. */
-export interface RecycleBinView {
-  readonly bases: readonly KnowledgeBaseView[]
-  readonly materials: readonly MaterialView[]
+/** A file the browser is pushing into a base. */
+export interface UploadedFileView {
+  readonly name: string
+  /** The file's bytes, base64-encoded — see {@link MAX_UPLOAD_BYTES}. */
+  readonly base64: string
 }
 
-/**
- * A material already holding the text the user is about to add.
- *
- * Returned instead of thrown so the page can warn inline and offer 「仍然添加」;
- * the Host still refuses the add itself, so a client that skips the check gets
- * an error rather than a silent duplicate.
- */
-export interface DuplicateView {
-  readonly id: string
-  readonly title: string
-  readonly updatedAt: number
-  readonly chunkCount: number
+/** What one upload did. */
+export interface UploadResultView {
+  readonly added: number
+  /** Files that were refused, by name, with the reason. */
+  readonly rejected: readonly { readonly name: string; readonly reason: string }[]
 }
-
-/**
- * A backup, ready to be written to a file by the browser.
- *
- * The bytes travel as a string because the Host is not the one choosing where
- * the file lands: the page turns this into a download, so the user picks the
- * destination with the file dialog they already know.
- */
-export interface BackupPayloadView {
-  readonly fileName: string
-  readonly json: string
-  readonly bases: number
-  readonly materials: number
-  readonly bytes: number
-}
-
-/**
- * What a restore did.
- *
- * A discriminated result rather than a throw for the "wrong file" case: picking
- * the wrong file is an ordinary thing to do, and it has to arrive in the page as
- * a sentence the user can read. Whether a thrown error keeps its message across
- * the Remote boundary is the gateway's business, and this is not the place to
- * depend on it. Genuine faults — a store that fails to write — still throw.
- */
-export type ImportResultView =
-  | {
-      readonly outcome: 'imported'
-      readonly bases: number
-      readonly materials: number
-      readonly skippedMaterials: number
-      readonly reallocatedBases: number
-      readonly baseNames: readonly string[]
-    }
-  | {
-      readonly outcome: 'rejected'
-      /** Why the file was refused, in words the user can act on. */
-      readonly reason: string
-    }
 
 /** What the service methods need from the plugin. */
 interface Dependencies {
@@ -191,13 +172,30 @@ function readScope(agentId: string): SessionScopeView {
   }
 }
 
+/** Project one base, with the counts the list shows. */
+function baseView(service: KnowbaseService, id: string): KnowledgeBaseView | undefined {
+  const knowledgeBase = service.getKnowledgeBase(id)
+  if (knowledgeBase === undefined) return undefined
+  const materials = service.listMaterials(id)
+  return {
+    id: knowledgeBase.id,
+    name: knowledgeBase.name,
+    description: knowledgeBase.description,
+    folderName: knowledgeBase.folderName,
+    materialCount: materials.length,
+    indexedCount: materials.filter(material => material.indexed).length,
+    bytes: materials.reduce((sum, material) => sum + material.bytes, 0),
+    updatedAt: knowledgeBase.updatedAt,
+  }
+}
+
 /**
- * Operations the settings page needs.
+ * Operations the settings page and the reading pane need.
  *
  * Which methods reach the browser is decided by `./remote-methods.ts`, which
- * installs the prototype marker the Gateway reads — see that module for why the
- * `@Remote` decorator is not used here. A method missing from that list is
- * unreachable from the browser, which `tests/contribution.test.ts` catches.
+ * installs the prototype marker the Gateway reads — a method missing from that
+ * list is unreachable from the browser, which `tests/contribution.test.ts`
+ * catches.
  */
 export class KnowbaseRemote extends TypertRemoteService {
   constructor(ctx: Context, service: KnowbaseService, selection: SessionSelectionRegistry) {
@@ -208,131 +206,32 @@ export class KnowbaseRemote extends TypertRemoteService {
   /** Every knowledge base, ordered by name. */
   async listKnowledgeBases(): Promise<readonly KnowledgeBaseView[]> {
     const { service } = deps()
-    return service.listKnowledgeBases().map(knowledgeBase => {
-      const materials = service.listMaterials(knowledgeBase.id)
-      return {
-        id: knowledgeBase.id,
-        name: knowledgeBase.name,
-        description: knowledgeBase.description,
-        materialCount: materials.length,
-        chunkCount: materials.reduce((sum, material) => sum + material.chunks.length, 0),
-        updatedAt: knowledgeBase.updatedAt,
-      }
-    })
+    return service
+      .listKnowledgeBases()
+      .map(knowledgeBase => baseView(service, knowledgeBase.id))
+      .filter((view): view is KnowledgeBaseView => view !== undefined)
   }
 
-  /** Create a knowledge base. */
+  /** Create a knowledge base and its folder. */
   async createKnowledgeBase(name: string, description: string): Promise<KnowledgeBaseView> {
-    const created = await deps().service.createKnowledgeBase(name, description)
-    return {
+    const { service } = deps()
+    const created = await service.createKnowledgeBase(name, description)
+    return baseView(service, created.id) ?? {
       id: created.id,
       name: created.name,
       description: created.description,
+      folderName: created.folderName,
       materialCount: 0,
-      chunkCount: 0,
+      indexedCount: 0,
+      bytes: 0,
       updatedAt: created.updatedAt,
     }
   }
 
-  /** Rename a knowledge base. */
+  /** Rename a knowledge base, renaming its folder with it. */
   async renameKnowledgeBase(id: string, name: string): Promise<boolean> {
     await deps().service.renameKnowledgeBase(id, name)
     return true
-  }
-
-  /** Delete a knowledge base and everything inside it. */
-  async deleteKnowledgeBase(id: string): Promise<boolean> {
-    return deps().service.deleteKnowledgeBase(id)
-  }
-
-  /** Materials inside one knowledge base. */
-  async listMaterials(kbId: string): Promise<readonly MaterialView[]> {
-    return deps()
-      .service.listMaterials(kbId)
-      .map(material => ({
-        id: material.id,
-        kbId: material.kbId,
-        title: material.title,
-        revision: material.revision,
-        chunkCount: material.chunks.length,
-        createdAt: material.createdAt,
-        updatedAt: material.updatedAt,
-      }))
-  }
-
-  /** Add typed or pasted text as a new material. */
-  async addTextMaterial(
-    kbId: string,
-    title: string,
-    text: string,
-    allowDuplicate: boolean,
-  ): Promise<MaterialView> {
-    const material = await deps().service.addText(kbId, title, text, { allowDuplicate })
-    return {
-      id: material.id,
-      kbId: material.kbId,
-      title: material.title,
-      revision: material.revision,
-      chunkCount: material.chunks.length,
-      createdAt: material.createdAt,
-      updatedAt: material.updatedAt,
-    }
-  }
-
-  /** The material already holding this text in this base, if any. */
-  async findDuplicateMaterial(kbId: string, text: string): Promise<DuplicateView | null> {
-    const found = deps().service.findDuplicateMaterial(kbId, text)
-    if (found === undefined) return null
-    return {
-      id: found.id,
-      title: found.title,
-      updatedAt: found.updatedAt,
-      chunkCount: found.chunks.length,
-    }
-  }
-
-  /** Remove a material. */
-  async deleteMaterial(id: string): Promise<boolean> {
-    return deps().service.deleteMaterial(id)
-  }
-
-  /** The chunks a material was split into, for the detail view. */
-  async readMaterialChunks(id: string): Promise<readonly PassageView[]> {
-    const material = deps().service.getMaterial(id)
-    if (material === undefined) return []
-    return material.chunks.map(chunk => ({
-      ordinal: chunk.ordinal,
-      headingPath: chunk.headingPath,
-      locator: chunk.locator,
-      text: chunk.text,
-    }))
-  }
-
-  /**
-   * The text as the user supplied it, for the editor.
-   *
-   * Records written before the editor existed have no stored text and are
-   * reassembled from their chunks, which normalises blank lines — good enough to
-   * edit, and the next save writes the field properly.
-   */
-  async readMaterialText(id: string): Promise<string> {
-    const material = deps().service.getMaterial(id)
-    if (material === undefined) return ''
-    return materialText(material)
-  }
-
-  /** Replace a material's text and re-index it. */
-  async updateMaterialText(id: string, text: string): Promise<MaterialView> {
-    const material = await deps().service.updateMaterialText(id, text)
-    return {
-      id: material.id,
-      kbId: material.kbId,
-      title: material.title,
-      revision: material.revision,
-      chunkCount: material.chunks.length,
-      createdAt: material.createdAt,
-      updatedAt: material.updatedAt,
-    }
   }
 
   /** Update a knowledge base's description. */
@@ -341,12 +240,120 @@ export class KnowbaseRemote extends TypertRemoteService {
     return true
   }
 
+  /** Delete a knowledge base by moving its folder into the recycle folder. */
+  async deleteKnowledgeBase(id: string): Promise<boolean> {
+    return deps().service.deleteKnowledgeBase(id)
+  }
+
+  /** Files inside one knowledge base. */
+  async listMaterials(kbId: string): Promise<readonly MaterialView[]> {
+    return deps()
+      .service.listMaterials(kbId)
+      .map(material => ({
+        id: material.id,
+        kbId: material.kbId,
+        fileName: material.fileName,
+        title: material.title,
+        bytes: material.bytes,
+        extension: material.extension,
+        indexed: material.indexed,
+        mtimeMs: material.mtimeMs,
+      }))
+  }
+
+  /**
+   * Push files from the browser into a base.
+   *
+   * Bytes arrive base64-encoded because the channel carries lossless JSON only;
+   * anything larger than {@link MAX_UPLOAD_BYTES} is refused here rather than
+   * discovered as a browser hang.
+   */
+  async addFiles(kbId: string, files: readonly UploadedFileView[]): Promise<UploadResultView> {
+    const { service } = deps()
+    const rejected: { name: string; reason: string }[] = []
+    const accepted: { name: string; data: Uint8Array }[] = []
+
+    for (const file of files) {
+      const data = decodeBase64(file.base64)
+      if (data === undefined) {
+        rejected.push({ name: file.name, reason: '文件内容不是合法的 base64。' })
+        continue
+      }
+      if (data.byteLength > MAX_UPLOAD_BYTES) {
+        rejected.push({
+          name: file.name,
+          reason: '文件过大，无法通过浏览器上传。请把它直接放进该知识库的文件夹。',
+        })
+        continue
+      }
+      accepted.push({ name: file.name, data })
+    }
+
+    const created = await service.addFiles(kbId, accepted)
+    return { added: created.length, rejected }
+  }
+
+  /** One file with its extracted text, for the reading pane. */
+  async readMaterial(kbId: string, id: string): Promise<MaterialDetailView | null> {
+    const material = deps().service.getMaterial(kbId, id)
+    if (material === undefined) return null
+    return {
+      id: material.id,
+      kbId: material.kbId,
+      fileName: material.fileName,
+      title: material.title,
+      bytes: material.bytes,
+      extension: material.extension,
+      indexed: material.indexed,
+      text: material.extractedText ?? '',
+      chunks: material.chunks.map(chunk => ({
+        ordinal: chunk.ordinal,
+        headingPath: chunk.headingPath,
+        locator: chunk.locator,
+        text: chunk.text,
+      })),
+    }
+  }
+
+  /**
+   * One file's bytes, base64-encoded, so the pane can show an image.
+   *
+   * `''` means "not available": the file is gone, or it is larger than
+   * {@link MAX_PREVIEW_BYTES} and pulling it into the page would cost more than
+   * the preview is worth.
+   */
+  async readMaterialBytes(kbId: string, id: string): Promise<string> {
+    const bytes = await deps().service.readMaterialBytes(kbId, id, MAX_PREVIEW_BYTES)
+    return bytes === undefined ? '' : Buffer.from(bytes).toString('base64')
+  }
+
+  /** Delete one file by moving it into the recycle folder. */
+  async deleteMaterial(kbId: string, id: string): Promise<boolean> {
+    return deps().service.deleteMaterial(kbId, id)
+  }
+
+  /**
+   * Re-read the vault from the disk.
+   *
+   * The button that makes the user's own explorer a supported way to add files:
+   * drop a document into the base's folder, press this, and it appears.
+   */
+  async rescan(kbId: string): Promise<boolean> {
+    await deps().service.rescan(kbId === '' ? undefined : kbId)
+    return true
+  }
+
+  /** The vault root, so the page can show where the user's files actually live. */
+  async getVaultRoot(): Promise<string> {
+    return deps().service.root
+  }
+
   /**
    * Run retrieval without touching the model.
    *
-   * The plan's retrieval-test panel: it answers "what would be sent?" without
-   * spending a model call, which is the only way to calibrate ranking against
-   * real questions.
+   * The retrieval-test panel: it answers "what would be sent?" without spending
+   * a model call, which is the only way to calibrate ranking against real
+   * questions.
    */
   async testSearch(query: string, kbIds: readonly string[]): Promise<SearchReportView> {
     const started = Date.now()
@@ -361,9 +368,6 @@ export class KnowbaseRemote extends TypertRemoteService {
           materialTitle: passage.materialTitle,
           locator: passage.locator,
           text: passage.text,
-          // Absent on passages recorded before the panel showed them; the test
-          // endpoint always searches live, so here they are always present. A
-          // zero is honest for a ranking signal the index did not report.
           score: passage.score ?? 0,
           coverage: passage.coverage ?? 0,
         })),
@@ -396,104 +400,15 @@ export class KnowbaseRemote extends TypertRemoteService {
     // Remote call arrives through, and nothing here should depend on it.
     return readScope(agentId)
   }
+}
 
-  // ------------------------------------------------------------------- backup
-
-  /**
-   * Serialize the library into a downloadable backup.
-   *
-   * `kbId` of `''` means every live knowledge base; anything else exports that
-   * one. The filename is generated on the Host rather than the client so it is
-   * the same name however the file is produced — including from a script that
-   * never renders the page.
-   */
-  async exportBackup(kbId: string): Promise<BackupPayloadView> {
-    const { service } = deps()
-    const document = service.exportBackup(Date.now())
-    const scoped =
-      kbId === '' ? document : { ...document, bases: document.bases.filter(base => base.id === kbId) }
-
-    const json = serializeBackup(scoped)
-    return {
-      fileName: backupFileName(scoped.exportedAt),
-      json,
-      bases: scoped.bases.length,
-      materials: scoped.bases.reduce((sum, base) => sum + base.materials.length, 0),
-      bytes: new TextEncoder().encode(json).length,
-    }
-  }
-
-  /**
-   * Restore a backup file.
-   *
-   * Parsing happens here rather than in the page so the file is validated
-   * against the format on the side that owns the format, and a malformed file is
-   * refused as a whole instead of half-importing.
-   */
-  async importBackup(json: string): Promise<ImportResultView> {
-    let document: BackupDocument
-    try {
-      document = parseBackupDocument(json)
-    } catch (error) {
-      if (error instanceof BackupError) return { outcome: 'rejected', reason: error.message }
-      throw error
-    }
-    const summary = await deps().service.importBackup(document)
-    return { outcome: 'imported', ...summary }
-  }
-
-  // --------------------------------------------------------------- recycle bin
-
-  /** Everything currently in the recycle bin. */
-  async listRecycleBin(): Promise<RecycleBinView> {
-    const { service } = deps()
-    // Every material that belongs to the base, whatever its own state: a base
-    // in the bin is restored (or purged) together with all of them.
-    const everyMaterial = [...service.listMaterials(), ...service.listDeletedMaterials()]
-
-    const bases = service.listDeletedKnowledgeBases().map(base => {
-      const inside = everyMaterial.filter(material => material.kbId === base.id)
-      return {
-        id: base.id,
-        name: base.name,
-        description: base.description,
-        materialCount: inside.length,
-        chunkCount: inside.reduce((sum, material) => sum + material.chunks.length, 0),
-        updatedAt: base.deletedAt ?? base.updatedAt,
-      }
-    })
-
-    const materials = service.listDeletedMaterials().map(material => ({
-      id: material.id,
-      kbId: material.kbId,
-      title: material.title,
-      revision: material.revision,
-      chunkCount: material.chunks.length,
-      createdAt: material.createdAt,
-      updatedAt: material.deletedAt ?? material.updatedAt,
-    }))
-    return { bases, materials }
-  }
-
-  /** Take a soft-deleted knowledge base out of the bin. */
-  async restoreKnowledgeBase(id: string): Promise<boolean> {
-    return deps().service.restoreKnowledgeBase(id)
-  }
-
-  /** Take a soft-deleted material out of the bin. */
-  async restoreMaterial(id: string): Promise<boolean> {
-    return deps().service.restoreMaterial(id)
-  }
-
-  /** Destroy a soft-deleted knowledge base and its materials for good. */
-  async purgeKnowledgeBase(id: string): Promise<boolean> {
-    return deps().service.purgeKnowledgeBase(id)
-  }
-
-  /** Destroy a soft-deleted material for good. */
-  async purgeMaterial(id: string): Promise<boolean> {
-    return deps().service.purgeMaterial(id)
-  }
+/** Decode base64 to bytes, or `undefined` when the string is not base64. */
+function decodeBase64(value: string): Uint8Array | undefined {
+  // `Buffer` accepts almost anything, so the shape is checked first: a client
+  // that sent a truncated payload should be told, not handed empty bytes.
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return undefined
+  const buffer = Buffer.from(value, 'base64')
+  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
 }
 
 // Publish the method list as the prototype marker the Gateway reads. See

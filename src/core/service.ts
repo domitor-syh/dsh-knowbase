@@ -1,48 +1,64 @@
 /**
  * Knowledge base domain logic.
  *
- * The store is an interface, not a concrete backend, so all of this is testable
- * without a host: `StorageDomainStore` in `../store.ts` is one implementation,
- * and the tests use an in-memory one. The plan's requirement that "核心接口与宿主
- * 适配器分离" is what makes this file possible to verify at all.
+ * The disk is the record: a base is a folder, a material is a file in it, and
+ * every listing is produced by reading the folder rather than by consulting a
+ * table. That is what makes a file dropped in through the user's own explorer
+ * show up, and it is why nothing here caches a file's existence — a cache is a
+ * second copy of the truth, and the copy the user cannot see is the one that
+ * would win.
  *
- * Reads are synchronous and writes are asynchronous, matching the storage
- * contract: the backend loads a snapshot into memory on open, so `get` and
- * iteration need no await, while `put` and `delete` resolve only after
- * durability.
+ * The store is an interface, not a concrete backend, and so is the filesystem
+ * ({@link VaultFileSystem}), so all of this is testable without a host: the
+ * tests drive an in-memory pair.
+ *
+ * Reads of the vault are asynchronous; reads of the knowledge-base metadata are
+ * synchronous, matching the storage contract, which loads a snapshot into memory
+ * on open.
  *
  * @module @domitor-syh/dsh-knowbase/core/service
  */
 
+import path from 'node:path'
 import type { RetrievedPassage, ServiceOutcome } from '../pre-step.ts'
-import { buildBackupDocument, planImport, type BackupDocument } from './backup.ts'
+import type { VaultFileSystem } from '../vault-fs.ts'
 import { Bm25Index } from './bm25.ts'
 import { chunkText, type ChunkOptions } from './chunk.ts'
-import { contentFingerprint } from './fingerprint.ts'
-import { materialText, newId, normalizeName, type KnowledgeBase, type Material } from './model.ts'
+import {
+  extensionOf,
+  isIndexable,
+  legacyMaterialText,
+  newId,
+  normalizeName,
+  type KnowledgeBase,
+  type LegacyMaterial,
+  type Material,
+  type StoredKnowledgeBase,
+} from './model.ts'
 import { compareText } from './order.ts'
+import {
+  isRecycleName,
+  parseVaultFolderName,
+  recycleDir,
+  recycleTarget,
+  sanitizeSegment,
+  uniqueSegment,
+  vaultFolderName,
+} from './vault.ts'
 
-/** Recorded in every backup so a file says which build wrote it. */
-const PACKAGE_NAME = '@domitor-syh/dsh-knowbase'
-
-/** Persistence port. */
+/** Persistence port for knowledge-base metadata. */
 export interface KnowbaseStore {
-  /** Snapshot of every knowledge base. */
-  loadKnowledgeBases(): readonly KnowledgeBase[]
-  /** Snapshot of every material, including its chunks. */
-  loadMaterials(): readonly Material[]
+  /** Snapshot of every knowledge base record, live and legacy alike. */
+  loadKnowledgeBases(): readonly StoredKnowledgeBase[]
   saveKnowledgeBase(knowledgeBase: KnowledgeBase): Promise<void>
   deleteKnowledgeBase(id: string): Promise<boolean>
-  saveMaterial(material: Material): Promise<void>
-  deleteMaterial(id: string): Promise<boolean>
+  /** Text materials left behind by the pre-vault build; read once, by the migration. */
+  loadLegacyMaterials(): readonly LegacyMaterial[]
+  deleteLegacyMaterial(id: string): Promise<boolean>
 }
 
 /** Failure codes a caller can act on, rather than parsing messages. */
-export type KnowbaseErrorCode =
-  | 'duplicate-name'
-  | 'duplicate-material'
-  | 'invalid-name'
-  | 'not-found'
+export type KnowbaseErrorCode = 'duplicate-name' | 'invalid-name' | 'not-found' | 'io'
 
 /** A domain failure with a machine-readable code. */
 export class KnowbaseError extends Error {
@@ -63,6 +79,8 @@ interface ChunkContext {
   readonly ordinal: number
   readonly kbName: string
   readonly materialTitle: string
+  /** Absolute path of the file the passage came from, for the reader. */
+  readonly filePath: string
   readonly headingPath: string
   readonly locator: string
   readonly text: string
@@ -76,45 +94,17 @@ export interface RetrieveOptions {
   readonly minCoverage?: number
 }
 
-/**
- * Identity a restore carries over from a backup.
- *
- * Only a restore sets these. A normal create allocates a fresh id and stamps
- * the clock, which is what makes "restore onto a clean profile" reproduce the
- * original exactly — including the session selections that reference base ids —
- * without giving every other caller a way to invent an id.
- */
-export interface RestoreFields {
-  /** Keep this id when it is free. */
-  readonly id?: string
-  readonly createdAt?: number
-  readonly updatedAt?: number
-  /** Keep this revision, so citations recorded against it still resolve. */
-  readonly revision?: number
+/** Options for {@link KnowbaseService.addFiles}. */
+export interface AddFilesOptions {
+  /** Overwrite a same-named file instead of keeping both. Default `false`. */
+  readonly overwrite?: boolean
 }
 
-/** Options for {@link KnowbaseService.addText}. */
-export interface AddTextOptions {
-  /**
-   * Accept content that already exists in this base. Default `false`: the plan
-   * asks for 同库重复检测, and a silent duplicate doubles the chunks, the bytes
-   * and every retrieval result.
-   */
-  readonly allowDuplicate?: boolean
-  /** Preserved identity, used by restore. */
-  readonly restore?: RestoreFields
-}
-
-/** What {@link KnowbaseService.importBackup} did. */
-export interface ImportSummary {
-  readonly bases: number
-  readonly materials: number
-  /** Materials in the file that carried no indexable text and were dropped. */
-  readonly skippedMaterials: number
-  /** Bases that could not keep their original id because something already used it. */
-  readonly reallocatedBases: number
-  /** Names actually created, after any 「（导入 n）」 disambiguation. */
-  readonly baseNames: readonly string[]
+/** A file arriving from outside the plugin. */
+export interface IncomingFile {
+  /** The name the uploader had for it; sanitised and de-duplicated on the way in. */
+  readonly name: string
+  readonly data: Uint8Array
 }
 
 /** Construction options. */
@@ -125,58 +115,82 @@ export interface KnowbaseServiceOptions {
   readonly chunk?: ChunkOptions
 }
 
-/** Knowledge base and material operations over a {@link KnowbaseStore}. */
+/**
+ * Largest file the plugin will read to build the index.
+ *
+ * A knowledge base is for documents, not for disk images: past this size the
+ * file is still stored and listed, it just contributes no chunks. The bound
+ * exists so one stray 500 MB file cannot turn a scan into a memory event.
+ */
+const MAX_INDEX_BYTES = 2 * 1024 * 1024
+
+/** How deep a scan walks into sub-folders of a base. */
+const MAX_SCAN_DEPTH = 8
+
+/** Knowledge base and material operations over a {@link KnowbaseStore} and a vault. */
 export class KnowbaseService {
   readonly #store: KnowbaseStore
+  readonly #fs: VaultFileSystem
+  readonly #root: string
   readonly #now: () => number
   readonly #chunkOptions: ChunkOptions
   readonly #index = new Bm25Index()
   readonly #chunks = new Map<string, ChunkContext>()
   readonly #knowledgeBases = new Map<string, KnowledgeBase>()
-  readonly #materials = new Map<string, Material>()
+  readonly #materials = new Map<string, Map<string, Material>>()
 
-  constructor(store: KnowbaseStore, options: KnowbaseServiceOptions = {}) {
+  constructor(
+    store: KnowbaseStore,
+    fs: VaultFileSystem,
+    root: string,
+    options: KnowbaseServiceOptions = {},
+  ) {
     this.#store = store
+    this.#fs = fs
+    this.#root = root
     this.#now = options.now ?? (() => Date.now())
     this.#chunkOptions = options.chunk ?? {}
   }
 
-  /** Load persisted state and build the index. Call once, before serving. */
-  async initialize(): Promise<void> {
+  /** The vault root this service reads and writes. */
+  get root(): string {
+    return this.#root
+  }
+
+  /**
+   * Reconcile the metadata with the disk, then build the index.
+   *
+   * Order matters: legacy text is written out first so the bases the migration
+   * creates are the ones the subsequent sync sees, and the sync runs before the
+   * scan so every listed base has a folder to read.
+   */
+  async initialize(): Promise<{ knowledgeBases: number; materials: number; migrated: number }> {
     this.#knowledgeBases.clear()
     this.#materials.clear()
     this.#chunks.clear()
     this.#index.clear()
 
-    for (const knowledgeBase of this.#store.loadKnowledgeBases()) {
-      this.#knowledgeBases.set(knowledgeBase.id, knowledgeBase)
+    await this.#fs.ensureDir(this.#root)
+    await this.#fs.ensureDir(recycleDir(this.#root))
+
+    this.#loadRecords()
+    await this.#ensureFolders()
+    const migrated = await this.#migrateLegacy()
+    await this.#syncFromDisk()
+
+    let materials = 0
+    for (const base of this.#knowledgeBases.values()) {
+      materials += (await this.#scanBase(base)).length
     }
-    for (const material of this.#store.loadMaterials()) {
-      this.#materials.set(material.id, material)
-      // The index holds only what is currently retrievable: a soft-deleted
-      // material, and any material inside a soft-deleted base, is invisible
-      // until restored. Everything else about the record is kept as-is.
-      if (material.deletedAt !== undefined) continue
-      const base = this.#knowledgeBases.get(material.kbId)
-      if (base === undefined || base.deletedAt !== undefined) continue
-      this.#indexMaterial(material)
-    }
+
+    return { knowledgeBases: this.#knowledgeBases.size, materials, migrated }
   }
 
   // ------------------------------------------------------------- knowledge bases
 
-  /** Every live knowledge base, ordered by name. Soft-deleted ones are hidden. */
+  /** Every knowledge base, ordered by name. */
   listKnowledgeBases(): readonly KnowledgeBase[] {
-    return [...this.#knowledgeBases.values()]
-      .filter(knowledgeBase => knowledgeBase.deletedAt === undefined)
-      .sort((left, right) => compareText(left.name, right.name))
-  }
-
-  /** Every soft-deleted knowledge base, most recently deleted first. */
-  listDeletedKnowledgeBases(): readonly KnowledgeBase[] {
-    return [...this.#knowledgeBases.values()]
-      .filter(knowledgeBase => knowledgeBase.deletedAt !== undefined)
-      .sort((left, right) => (right.deletedAt ?? 0) - (left.deletedAt ?? 0))
+    return [...this.#knowledgeBases.values()].sort((left, right) => compareText(left.name, right.name))
   }
 
   /** Look one up by id. */
@@ -191,45 +205,42 @@ export class KnowbaseService {
   }
 
   /**
-   * Create a knowledge base. Names are display-only and must be unique.
+   * Create a knowledge base and its folder.
    *
-   * `restore` is set only by {@link importBackup}; see {@link RestoreFields} for
-   * why a restore keeps the original identity and nothing else does.
+   * The folder is created before the record is written: a record whose folder
+   * does not exist would be dropped by the next sync, which reads to the user as
+   * "I made a base and it vanished".
    */
-  async createKnowledgeBase(
-    rawName: string,
-    description = '',
-    restore: RestoreFields = {},
-  ): Promise<KnowledgeBase> {
+  async createKnowledgeBase(rawName: string, description = ''): Promise<KnowledgeBase> {
     const name = normalizeName(rawName)
     if (name.length === 0) throw new KnowbaseError('invalid-name', '知识库名称不能为空。')
     if (this.findKnowledgeBaseByName(name) !== undefined) {
       throw new KnowbaseError('duplicate-name', `已存在名为「${name}」的知识库。`)
     }
-    // A restore may ask to keep an id, but only if it is genuinely free: an id
-    // that is already in use would replace an existing base rather than add one,
-    // which is the one thing a restore must never do.
-    const id = restore.id !== undefined && restore.id !== '' && !this.#knowledgeBases.has(restore.id)
-      ? restore.id
-      : newId('kb')
+
+    const id = newId('kb')
+    const folderName = vaultFolderName(name, id)
+    await this.#fs.ensureDir(this.#baseDir({ folderName }))
 
     const timestamp = this.#now()
     const knowledgeBase: KnowledgeBase = {
       id,
       name,
       description: description.trim(),
-      createdAt: restore.createdAt ?? timestamp,
-      updatedAt: restore.updatedAt ?? timestamp,
+      folderName,
+      createdAt: timestamp,
+      updatedAt: timestamp,
       indexRevision: 0,
     }
-    this.#knowledgeBases.set(knowledgeBase.id, knowledgeBase)
+    this.#knowledgeBases.set(id, knowledgeBase)
+    this.#materials.set(id, new Map())
     await this.#store.saveKnowledgeBase(knowledgeBase)
     return knowledgeBase
   }
 
-  /** Rename. Never touches the index — names are not searchable content. */
+  /** Rename a base, moving its folder so the name is the same in both places. */
   async renameKnowledgeBase(id: string, rawName: string): Promise<KnowledgeBase> {
-    const current = this.#requireLiveKnowledgeBase(id)
+    const current = this.#requireKnowledgeBase(id)
 
     const name = normalizeName(rawName)
     if (name.length === 0) throw new KnowbaseError('invalid-name', '知识库名称不能为空。')
@@ -238,10 +249,15 @@ export class KnowbaseService {
       throw new KnowbaseError('duplicate-name', `已存在名为「${name}」的知识库。`)
     }
 
-    const updated: KnowledgeBase = { ...current, name, updatedAt: this.#now() }
+    const folderName = vaultFolderName(name, id)
+    if (folderName !== current.folderName) {
+      await this.#fs.move(this.#baseDir(current), path.join(this.#root, folderName))
+    }
+
+    const updated: KnowledgeBase = { ...current, name, folderName, updatedAt: this.#now() }
     this.#knowledgeBases.set(id, updated)
-    // Citations carry the base name, so a rename has to be reflected in the
-    // contexts already in the index or old passages would cite the old name.
+    // Citations carry the base name, so a rename has to reach the contexts
+    // already in the index or old passages would cite the old name.
     for (const [chunkId, context] of this.#chunks) {
       if (context.kbId === id) this.#chunks.set(chunkId, { ...context, kbName: name })
     }
@@ -251,8 +267,7 @@ export class KnowbaseService {
 
   /** Update a knowledge base's description. */
   async updateDescription(id: string, rawDescription: string): Promise<KnowledgeBase> {
-    const current = this.#requireLiveKnowledgeBase(id)
-
+    const current = this.#requireKnowledgeBase(id)
     const updated: KnowledgeBase = {
       ...current,
       description: rawDescription.trim(),
@@ -264,63 +279,22 @@ export class KnowbaseService {
   }
 
   /**
-   * Move a knowledge base to the recycle bin.
+   * Delete a knowledge base by moving its folder into the recycle folder.
    *
-   * Soft delete: the record and every material inside it are kept, the base
-   * disappears from lists and from the `all` scope, and its materials leave
-   * the index so nothing inside it is retrievable. `restoreKnowledgeBase`
-   * undoes all of it; only {@link purgeKnowledgeBase} destroys data.
+   * Nothing is destroyed: the folder keeps its name and content, and the user
+   * can drag it back out of `_回收站`. The record is dropped, because the base
+   * is no longer on disk — a record without a folder would be resurrected as an
+   * empty base by the next sync, which is not what deleting it meant.
    */
   async deleteKnowledgeBase(id: string): Promise<boolean> {
     const current = this.#knowledgeBases.get(id)
-    if (current === undefined || current.deletedAt !== undefined) return false
+    if (current === undefined) return false
 
-    this.#unindexKnowledgeBase(id)
-    const updated: KnowledgeBase = { ...current, deletedAt: this.#now() }
-    this.#knowledgeBases.set(id, updated)
-    await this.#store.saveKnowledgeBase(updated)
-    return true
-  }
+    this.#unindexBase(id)
+    const target = await this.#freeRecycleName(current.folderName)
+    await this.#fs.move(this.#baseDir(current), target)
 
-  /**
-   * Take a soft-deleted knowledge base back out of the recycle bin.
-   *
-   * The base's materials were left untouched by the delete, so re-indexing the
-   * live ones restores exactly what was searchable before. `@returns false`
-   * when the id is unknown or the base is not in the bin.
-   */
-  async restoreKnowledgeBase(id: string): Promise<boolean> {
-    const current = this.#knowledgeBases.get(id)
-    if (current === undefined || current.deletedAt === undefined) return false
-
-    const updated: KnowledgeBase = { ...current, deletedAt: undefined }
-    this.#knowledgeBases.set(id, updated)
-    for (const material of this.#materials.values()) {
-      if (material.kbId === id && material.deletedAt === undefined) {
-        this.#indexMaterial(material)
-      }
-    }
-    await this.#store.saveKnowledgeBase(updated)
-    await this.#bumpRevision(updated)
-    return true
-  }
-
-  /**
-   * Destroy a soft-deleted knowledge base and every material inside it —
-   * including materials a user had separately recycled. Refuses a live base:
-   * the recycle bin is the only door to permanent deletion, so a purge can
-   * never overtake an accidental click on the ordinary delete button.
-   */
-  async purgeKnowledgeBase(id: string): Promise<boolean> {
-    const current = this.#knowledgeBases.get(id)
-    if (current === undefined || current.deletedAt === undefined) return false
-
-    for (const material of [...this.#materials.values()]) {
-      if (material.kbId !== id) continue
-      this.#unindexMaterial(material)
-      this.#materials.delete(material.id)
-      await this.#store.deleteMaterial(material.id)
-    }
+    this.#materials.delete(id)
     this.#knowledgeBases.delete(id)
     await this.#store.deleteKnowledgeBase(id)
     return true
@@ -328,203 +302,114 @@ export class KnowbaseService {
 
   // ----------------------------------------------------------------- materials
 
-  /**
-   * Live materials, optionally limited to one knowledge base.
-   *
-   * Soft-deleted materials are hidden here — they surface through
-   * {@link listDeletedMaterials} instead — and so are the materials of a
-   * soft-deleted base, which follow their base in the recycle bin rather than
-   * being listed separately.
-   */
+  /** Live materials of one base, ordered by name; every base's when omitted. */
   listMaterials(kbId?: string): readonly Material[] {
-    const all = [...this.#materials.values()].filter(
-      material => material.deletedAt === undefined,
-    )
-    const scoped = kbId === undefined ? all : all.filter(material => material.kbId === kbId)
-    return scoped.sort((left, right) => right.updatedAt - left.updatedAt)
+    const bases = kbId === undefined ? [...this.#materials.values()] : [this.#materials.get(kbId)]
+    const all: Material[] = []
+    for (const files of bases) {
+      if (files === undefined) continue
+      all.push(...files.values())
+    }
+    return all.sort((left, right) => compareText(left.fileName, right.fileName))
   }
 
-  /** Soft-deleted materials, most recently deleted first. */
-  listDeletedMaterials(): readonly Material[] {
-    return [...this.#materials.values()]
-      .filter(material => material.deletedAt !== undefined)
-      .sort((left, right) => (right.deletedAt ?? 0) - (left.deletedAt ?? 0))
+  /** Look one up inside its base. */
+  getMaterial(kbId: string, id: string): Material | undefined {
+    return this.#materials.get(kbId)?.get(id)
   }
 
-  /** Look one up by id. */
-  getMaterial(id: string): Material | undefined {
-    return this.#materials.get(id)
+  /** Resolve a material's absolute path. */
+  materialPath(kbId: string, id: string): string | undefined {
+    const base = this.#knowledgeBases.get(kbId)
+    if (base === undefined) return undefined
+    return path.join(this.#root, base.folderName, ...id.split('/'))
   }
 
   /**
-   * Add typed or pasted text as a new material.
+   * Read one file's bytes, or `undefined` when it is gone or too large.
    *
-   * Refuses content that already exists in the same base unless
-   * `allowDuplicate` is set. The check is per base, not global: the same
-   * paragraph legitimately belongs in two different bases, and blocking that
-   * would make the plugin wrong about the user's own filing.
+   * The size check runs against the scan's figure before a read is attempted,
+   * so a preview request for a 2 GB file costs a map lookup rather than a
+   * memory event.
    */
-  async addText(
+  async readMaterialBytes(
     kbId: string,
-    title: string,
-    text: string,
-    options: AddTextOptions = {},
-  ): Promise<Material> {
-    const knowledgeBase = this.#requireLiveKnowledgeBase(kbId)
-
-    const chunks = chunkText(text, this.#chunkOptions)
-    if (chunks.length === 0) throw new KnowbaseError('invalid-name', '内容为空，没有可入库的文字。')
-
-    const contentHash = contentFingerprint(text)
-    if (options.allowDuplicate !== true) {
-      const existing = this.#findDuplicateByHash(kbId, contentHash)
-      if (existing !== undefined) {
-        throw new KnowbaseError(
-          'duplicate-material',
-          `该知识库中已有内容相同的资料「${existing.title}」。如果确实要再存一份，请选择「仍然添加」。`,
-        )
-      }
-    }
-
-    const timestamp = this.#now()
-    const restore = options.restore ?? {}
-    const material: Material = {
-      id: restore.id !== undefined && restore.id !== '' && !this.#materials.has(restore.id)
-        ? restore.id
-        : newId('mat'),
-      kbId,
-      title: normalizeName(title) || '未命名资料',
-      source: 'text',
-      createdAt: restore.createdAt ?? timestamp,
-      updatedAt: restore.updatedAt ?? timestamp,
-      revision: restore.revision ?? 1,
-      text,
-      contentHash,
-      chunks,
-    }
-    this.#materials.set(material.id, material)
-    this.#indexMaterial(material)
-    await this.#store.saveMaterial(material)
-    await this.#bumpRevision(knowledgeBase)
-    return material
+    id: string,
+    maxBytes: number,
+  ): Promise<Uint8Array | undefined> {
+    const material = this.#materials.get(kbId)?.get(id)
+    if (material === undefined || material.bytes > maxBytes) return undefined
+    const target = this.materialPath(kbId, id)
+    if (target === undefined) return undefined
+    return this.#fs.readBytes(target).catch(() => undefined)
   }
 
   /**
-   * The live material in `kbId` whose content matches `text`, if any.
+   * Write files into a base and re-scan it.
    *
-   * The UI calls this before adding so it can show the warning inline and offer
-   * 「仍然添加」, instead of making the user read an error message and guess at
-   * the remedy.
+   * A same-named file becomes 「名字 (2).ext」 rather than replacing what is
+   * there, unless the caller asked to overwrite: two different files called
+   * 「说明书.pdf」 in one base is ordinary, and silently losing one of them is
+   * the one outcome nobody would accept.
+   *
+   * @returns every file the call created, as the scan sees them.
    */
-  findDuplicateMaterial(kbId: string, text: string): Material | undefined {
-    return this.#findDuplicateByHash(kbId, contentFingerprint(text))
-  }
+  async addFiles(
+    kbId: string,
+    files: readonly IncomingFile[],
+    options: AddFilesOptions = {},
+  ): Promise<readonly Material[]> {
+    const base = this.#requireKnowledgeBase(kbId)
+    if (files.length === 0) return []
 
-  /** Replace a material's text and re-index it. */
-  async updateMaterialText(id: string, text: string): Promise<Material> {
-    const current = this.#materials.get(id)
-    if (current === undefined) throw new KnowbaseError('not-found', '资料不存在。')
-    // A recycled material must be restored before it can be edited: the editor
-    // is a live-content surface, and editing inside the bin would silently
-    // change what a later restore brings back.
-    if (current.deletedAt !== undefined) {
-      throw new KnowbaseError('not-found', '资料在回收站中，恢复后才能编辑。')
+    const taken = new Set((await this.#fs.listDir(this.#baseDir(base))).map(entry => entry.name))
+    const created: string[] = []
+
+    for (const file of files) {
+      const wanted = sanitizeSegment(file.name, '未命名文件')
+      const name = options.overwrite === true ? wanted : uniqueSegment(wanted, taken)
+      taken.add(name)
+      await this.#fs.writeFile(path.join(this.#baseDir(base), name), file.data)
+      created.push(name)
     }
 
-    const chunks = chunkText(text, this.#chunkOptions)
-    if (chunks.length === 0) throw new KnowbaseError('invalid-name', '内容为空，没有可入库的文字。')
-
-    // Unindex first: `add` on the index would replace, but the context map is
-    // keyed by chunk id and the new chunks have fresh ids, so the old contexts
-    // would linger and keep the deleted text retrievable.
-    this.#unindexMaterial(current)
-
-    const updated: Material = {
-      ...current,
-      text,
-      // Re-hashed on every save: an edit that happens to reproduce another
-      // material's text leaves the fingerprint correct for the next add.
-      // Duplicates created *by* an edit are not blocked — refusing a save would
-      // discard the user's work, and the plan's rule is to prevent duplicate
-      // ingest, not to police editing.
-      contentHash: contentFingerprint(text),
-      chunks,
-      revision: current.revision + 1,
-      updatedAt: this.#now(),
-    }
-    this.#materials.set(id, updated)
-    this.#indexMaterial(updated)
-    await this.#store.saveMaterial(updated)
-
-    const knowledgeBase = this.#knowledgeBases.get(updated.kbId)
-    if (knowledgeBase !== undefined) await this.#bumpRevision(knowledgeBase)
-    return updated
+    const materials = await this.#scanBase(base)
+    await this.#bumpRevision(base)
+    const wanted = new Set(created)
+    return materials.filter(material => wanted.has(material.fileName))
   }
 
   /**
-   * Move a material to the recycle bin.
+   * Delete one file by moving it into the recycle folder.
    *
-   * Soft delete: the record is kept with a marker, the material leaves the
-   * index and every list, and {@link restoreMaterial} brings it back exactly
-   * as it was. Nothing is destroyed here — that is {@link purgeMaterial}'s
-   * job, and it only accepts what is already in the bin.
+   * Read-only for the record, exactly like deleting a base: the file is not
+   * removed from the disk at all, and the user can drag it back.
    */
-  async deleteMaterial(id: string): Promise<boolean> {
-    const material = this.#materials.get(id)
-    if (material === undefined || material.deletedAt !== undefined) return false
+  async deleteMaterial(kbId: string, id: string): Promise<boolean> {
+    const base = this.#requireKnowledgeBase(kbId)
+    const material = this.#materials.get(kbId)?.get(id)
+    if (material === undefined) return false
 
-    this.#unindexMaterial(material)
-    const updated: Material = { ...material, deletedAt: this.#now() }
-    this.#materials.set(id, updated)
-    await this.#store.saveMaterial(updated)
+    const source = path.join(this.#baseDir(base), ...id.split('/'))
+    const target = await this.#freeRecycleName(path.basename(id))
+    await this.#fs.move(source, target)
 
-    const knowledgeBase = this.#knowledgeBases.get(updated.kbId)
-    if (knowledgeBase !== undefined) await this.#bumpRevision(knowledgeBase)
+    await this.#scanBase(base)
+    await this.#bumpRevision(base)
     return true
   }
 
-  /**
-   * Take a soft-deleted material out of the recycle bin.
-   *
-   * A material whose base is also in the bin brings the base back with it —
-   * otherwise the restored material would exist but be visible nowhere, which
-   * reads as a lost restore.
-   */
-  async restoreMaterial(id: string): Promise<boolean> {
-    const material = this.#materials.get(id)
-    if (material === undefined || material.deletedAt === undefined) return false
-
-    const base = this.#knowledgeBases.get(material.kbId)
-    if (base !== undefined && base.deletedAt !== undefined) {
-      await this.restoreKnowledgeBase(base.id)
+  /** Re-read a base from the disk, or every base when `kbId` is omitted. */
+  async rescan(kbId?: string): Promise<void> {
+    await this.#fs.ensureDir(this.#root)
+    await this.#fs.ensureDir(recycleDir(this.#root))
+    const bases = kbId === undefined ? [...this.#knowledgeBases.values()] : [this.#requireKnowledgeBase(kbId)]
+    if (kbId === undefined) await this.#syncFromDisk()
+    for (const base of bases) {
+      const live = this.#knowledgeBases.get(base.id)
+      if (live === undefined) continue
+      await this.#scanBase(live)
     }
-
-    const updated: Material = { ...material, deletedAt: undefined }
-    this.#materials.set(id, updated)
-    this.#indexMaterial(updated)
-    await this.#store.saveMaterial(updated)
-
-    const liveBase = this.#knowledgeBases.get(updated.kbId)
-    if (liveBase !== undefined) await this.#bumpRevision(liveBase)
-    return true
-  }
-
-  /**
-   * Destroy a soft-deleted material for good. Refuses a live material: the
-   * recycle bin is the only door to permanent deletion, so a purge can never
-   * overtake an accidental click on the ordinary delete button.
-   */
-  async purgeMaterial(id: string): Promise<boolean> {
-    const material = this.#materials.get(id)
-    if (material === undefined || material.deletedAt === undefined) return false
-
-    this.#unindexMaterial(material)
-    this.#materials.delete(id)
-    await this.#store.deleteMaterial(id)
-
-    const knowledgeBase = this.#knowledgeBases.get(material.kbId)
-    if (knowledgeBase !== undefined) await this.#bumpRevision(knowledgeBase)
-    return true
   }
 
   // ---------------------------------------------------------------- retrieval
@@ -534,32 +419,24 @@ export class KnowbaseService {
    *
    * Returns an outcome rather than a bare list because the caller has to tell
    * "nothing matched" apart from "nothing was searched" and "the index is not
-   * ready" — the plan requires those to be distinguishable in the UI and to the
-   * model, and collapsing them into an empty array loses that.
+   * ready" — those are different sentences to a user, and collapsing them into
+   * an empty array loses the distinction.
    *
-   * `no_selection` is deliberately excluded from the return type: this method is
-   * handed ids and either finds bases behind them or does not. Whether anything
-   * was ticked is decided by `resolveScope` one layer up, before there is a call
-   * to make, so a caller cannot write a branch for a state the service can never
-   * be in.
+   * `no_selection` is deliberately excluded: this method is handed ids and
+   * either finds bases behind them or does not. Whether anything was ticked is
+   * decided by `resolveScope` one layer up, before there is a call to make.
    */
-  retrieve(
-    query: string,
-    kbIds: readonly string[],
-    options: RetrieveOptions = {},
-  ): ServiceOutcome {
+  retrieve(query: string, kbIds: readonly string[], options: RetrieveOptions = {}): ServiceOutcome {
     const scope = kbIds.filter(id => this.#knowledgeBases.has(id))
     if (scope.length === 0) return { kind: 'empty_scope' }
     if (this.#index.size === 0) return { kind: 'not_ready' }
 
     const allowed = new Set(scope)
 
-    // Emptiness has to be judged against the SELECTION, not the whole index. A
-    // brand-new knowledge base inside a populated install would otherwise be
-    // searched, find nothing, and report `no_match` — telling the user their
-    // question is unrelated to material that does not exist yet. The two states
-    // need different answers: "nothing matched" invites a rephrase, "nothing
-    // here" invites adding material.
+    // Emptiness is judged against the SELECTION, not the whole index: a
+    // brand-new base inside a populated install would otherwise be searched,
+    // find nothing, and report `no_match` — telling the user their question is
+    // unrelated to material that does not exist yet.
     if (!this.#hasIndexedChunks(allowed)) return { kind: 'not_ready' }
 
     const hits = this.#index.search(query, {
@@ -582,6 +459,7 @@ export class KnowbaseService {
         text: context.text,
         kbId: context.kbId,
         materialId: context.materialId,
+        filePath: context.filePath,
         ordinal: context.ordinal,
         score: hit.score,
         coverage: hit.coverage,
@@ -591,127 +469,225 @@ export class KnowbaseService {
     return passages.length === 0 ? { kind: 'no_match' } : { kind: 'hits', passages }
   }
 
-  // -------------------------------------------------------------------- backup
-
-  /**
-   * Everything the user currently has, as a portable document.
-   *
-   * Live records only — see `backup.ts` for why the recycle bin stays out — and
-   * source text rather than chunks, so the file does not bake in a chunking
-   * decision that a later version would make differently.
-   */
-  exportBackup(exportedAt: number): BackupDocument {
-    return buildBackupDocument({
-      exportedAt,
-      generator: PACKAGE_NAME,
-      bases: this.listKnowledgeBases().map(base => ({
-        id: base.id,
-        name: base.name,
-        description: base.description,
-        createdAt: base.createdAt,
-        updatedAt: base.updatedAt,
-        materials: this.listMaterials(base.id).map(material => ({
-          id: material.id,
-          title: material.title,
-          text: materialText(material),
-          createdAt: material.createdAt,
-          updatedAt: material.updatedAt,
-          revision: material.revision,
-        })),
-      })),
-    })
-  }
-
-  /**
-   * Write a parsed backup into this profile, without destroying anything.
-   *
-   * Each base goes through the ordinary create path and each material through
-   * the ordinary add path, so a restored library is indexed, validated and
-   * persisted exactly like one the user typed — no second code path to keep in
-   * sync. `allowDuplicate` is set because the file is the source of truth about
-   * its own contents: a backup that legitimately held two identical materials
-   * must restore as two, not as one plus a silent drop.
-   */
-  async importBackup(document: BackupDocument): Promise<ImportSummary> {
-    const plan = planImport(
-      document,
-      {
-        baseIds: [...this.#knowledgeBases.keys()],
-        // Recycled bases count as occupying their name: restoring one would
-        // otherwise collide with the import.
-        baseNames: [...this.#knowledgeBases.values()].map(base => base.name),
-      },
-      newId,
-    )
-
-    const baseNames: string[] = []
-    let materials = 0
-
-    for (const planned of plan.bases) {
-      const base = await this.createKnowledgeBase(planned.name, planned.description, {
-        id: planned.id,
-        createdAt: planned.createdAt,
-        updatedAt: planned.updatedAt,
-      })
-      baseNames.push(base.name)
-
-      for (const material of planned.materials) {
-        await this.addText(base.id, material.title, material.text, {
-          allowDuplicate: true,
-          restore: {
-            id: material.id,
-            createdAt: material.createdAt,
-            updatedAt: material.updatedAt,
-            revision: material.revision,
-          },
-        })
-        materials += 1
-      }
-    }
-
-    return {
-      bases: plan.bases.length,
-      materials,
-      skippedMaterials: plan.skippedMaterials,
-      reallocatedBases: plan.reallocatedBases,
-      baseNames,
-    }
-  }
-
   // ------------------------------------------------------------------ internals
 
-  /**
-   * The live material in `kbId` carrying this fingerprint.
-   *
-   * Records written before fingerprints existed have none stored, so theirs is
-   * computed on demand rather than the record being treated as absent from the
-   * check — otherwise every material predating this feature would be silently
-   * exempt from duplicate detection.
-   */
-  #findDuplicateByHash(kbId: string, contentHash: string): Material | undefined {
-    for (const material of this.#materials.values()) {
-      if (material.kbId !== kbId) continue
-      if (material.deletedAt !== undefined) continue
-      const candidate = material.contentHash ?? contentFingerprint(materialText(material))
-      if (candidate === contentHash) return material
+  /** Absolute path of one base's folder. */
+  #baseDir(base: Pick<KnowledgeBase, 'folderName'>): string {
+    return path.join(this.#root, base.folderName)
+  }
+
+  /** The live base an operation acts on. */
+  #requireKnowledgeBase(id: string): KnowledgeBase {
+    const current = this.#knowledgeBases.get(id)
+    if (current === undefined) throw new KnowbaseError('not-found', '知识库不存在。')
+    return current
+  }
+
+  /** Read the stored records into memory, dropping legacy soft-deleted ones. */
+  #loadRecords(): void {
+    for (const stored of this.#store.loadKnowledgeBases()) {
+      if (stored.deletedAt !== undefined) {
+        // The pre-vault build had already deleted this base; its folder was
+        // never created, so there is nothing to adopt and nothing to keep.
+        void this.#store.deleteKnowledgeBase(stored.id)
+        continue
+      }
+      this.#knowledgeBases.set(stored.id, {
+        id: stored.id,
+        name: stored.name,
+        description: stored.description,
+        folderName: stored.folderName ?? vaultFolderName(stored.name, stored.id),
+        createdAt: stored.createdAt,
+        updatedAt: stored.updatedAt,
+        indexRevision: stored.indexRevision,
+      })
+      this.#materials.set(stored.id, new Map())
     }
-    return undefined
   }
 
   /**
-   * The knowledge base an operation acts on, requiring the LIVE record.
+   * Give every record a folder, writing the name back when it had none.
    *
-   * A soft-deleted base is hidden from every list and from name lookup, but
-   * its id still resolves here — which is exactly why write paths go through
-   * this guard: without it, a stale client could add or rename inside a base
-   * the user believes is deleted.
+   * A record from the text era carries no `folderName`; computing one here is
+   * what turns it into a folder, and saving it is what stops the computation
+   * from being redone — and possibly redone differently — on the next start.
    */
-  #requireLiveKnowledgeBase(id: string): KnowledgeBase {
-    const current = this.#knowledgeBases.get(id)
-    if (current === undefined || current.deletedAt !== undefined) {
-      throw new KnowbaseError('not-found', '知识库不存在。')
+  async #ensureFolders(): Promise<void> {
+    for (const base of [...this.#knowledgeBases.values()]) {
+      const stored = this.#store.loadKnowledgeBases().find(record => record.id === base.id)
+      await this.#fs.ensureDir(this.#baseDir(base))
+      if (stored?.folderName === undefined) await this.#store.saveKnowledgeBase(base)
     }
-    return current
+  }
+
+  /**
+   * Write every surviving legacy text material out as a `.txt` file.
+   *
+   * Naturally idempotent: the record is deleted once its file exists, so a
+   * restart finds nothing left to migrate and a base the user deleted stops
+   * being resurrected. An existing file of the same name is never overwritten —
+   * user content outranks a migration's convenience.
+   */
+  async #migrateLegacy(): Promise<number> {
+    let written = 0
+    for (const material of this.#store.loadLegacyMaterials()) {
+      const base = this.#knowledgeBases.get(material.kbId)
+      if (base === undefined || material.deletedAt !== undefined) {
+        await this.#store.deleteLegacyMaterial(material.id)
+        continue
+      }
+      const stem = sanitizeSegment(stripTextExtension(material.title), '资料')
+      const taken = new Set((await this.#fs.listDir(this.#baseDir(base))).map(entry => entry.name))
+      const name = uniqueSegment(`${stem}.txt`, taken)
+      await this.#fs.writeFile(path.join(this.#baseDir(base), name), legacyMaterialText(material))
+      await this.#store.deleteLegacyMaterial(material.id)
+      written += 1
+    }
+    return written
+  }
+
+  /**
+   * Reconcile records with the folders actually present.
+   *
+   * The folder is authoritative, keyed by the id in its name: a base the user
+   * moved in from elsewhere is adopted, a folder the user renamed is followed
+   * (its new display name adopted with it), and a record whose folder is gone is
+   * dropped. Matching on the id rather than the whole name is what keeps an
+   * external rename from looking like a deletion plus a new base.
+   */
+  async #syncFromDisk(): Promise<void> {
+    const entries = await this.#fs.listDir(this.#root)
+    const present = new Map<string, string>()
+    for (const entry of entries) {
+      if (entry.kind !== 'directory' || isRecycleName(entry.name)) continue
+      const parsed = parseVaultFolderName(entry.name)
+      if (parsed === undefined) continue
+      present.set(parsed.id, entry.name)
+    }
+
+    for (const [id, folderName] of present) {
+      const existing = this.#knowledgeBases.get(id)
+      if (existing === undefined) {
+        const timestamp = this.#now()
+        const adopted: KnowledgeBase = {
+          id,
+          name: parseVaultFolderName(folderName)?.name ?? '知识库',
+          description: '',
+          folderName,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          indexRevision: 0,
+        }
+        this.#knowledgeBases.set(id, adopted)
+        this.#materials.set(id, new Map())
+        await this.#store.saveKnowledgeBase(adopted)
+        continue
+      }
+      if (existing.folderName === folderName) continue
+      // The folder moved or was renamed outside the app: the disk wins, because
+      // that is the name the user can see.
+      const renamed: KnowledgeBase = {
+        ...existing,
+        folderName,
+        name: parseVaultFolderName(folderName)?.name ?? existing.name,
+        updatedAt: this.#now(),
+      }
+      this.#knowledgeBases.set(id, renamed)
+      for (const [chunkId, context] of this.#chunks) {
+        if (context.kbId === id) this.#chunks.set(chunkId, { ...context, kbName: renamed.name })
+      }
+      await this.#store.saveKnowledgeBase(renamed)
+    }
+
+    for (const id of [...this.#knowledgeBases.keys()]) {
+      if (present.has(id)) continue
+      this.#unindexBase(id)
+      this.#materials.delete(id)
+      this.#knowledgeBases.delete(id)
+      await this.#store.deleteKnowledgeBase(id)
+    }
+  }
+
+  /** Re-read one base's folder and rebuild its contribution to the index. */
+  async #scanBase(base: KnowledgeBase): Promise<readonly Material[]> {
+    const previous = this.#materials.get(base.id)
+    if (previous !== undefined) {
+      for (const material of previous.values()) this.#unindexMaterial(material)
+    }
+
+    const found = new Map<string, Material>()
+    const baseDir = this.#baseDir(base)
+    for (const entry of await this.#walk(baseDir, baseDir, 0)) {
+      const material = await this.#readMaterial(base, entry)
+      found.set(material.id, material)
+      this.#indexMaterial(material, base.name)
+    }
+
+    this.#materials.set(base.id, found)
+    return [...found.values()]
+  }
+
+  /** Everything a scan needs about one file. */
+  #readMaterial(
+    base: KnowledgeBase,
+    entry: { relative: string; absolute: string; size: number; mtimeMs: number },
+  ): Promise<Material> {
+    const extension = extensionOf(entry.relative)
+    const base_ = {
+      id: entry.relative,
+      kbId: base.id,
+      fileName: entry.relative,
+      title: entry.relative,
+      bytes: entry.size,
+      extension,
+      mtimeMs: entry.mtimeMs,
+      indexed: isIndexable(entry.relative),
+    }
+    if (!base_.indexed || entry.size > MAX_INDEX_BYTES) {
+      return Promise.resolve({ ...base_, chunks: [] })
+    }
+    return this.#fs
+      .readText(entry.absolute)
+      .then(text => ({
+        ...base_,
+        extractedText: text,
+        chunks: chunkText(text, this.#chunkOptions),
+      }))
+      .catch(() => ({ ...base_, chunks: [] }))
+  }
+
+  /** Every file under a directory, depth-first, as vault-relative paths. */
+  async #walk(
+    baseDir: string,
+    dir: string,
+    depth: number,
+  ): Promise<{ relative: string; absolute: string; size: number; mtimeMs: number }[]> {
+    if (depth > MAX_SCAN_DEPTH) return []
+    const result: { relative: string; absolute: string; size: number; mtimeMs: number }[] = []
+    for (const entry of await this.#fs.listDir(dir)) {
+      // Dot-entries are the user's own bookkeeping — editor swap files, `.DS_Store`
+      // — not knowledge, and listing them would put noise in the file manager.
+      if (entry.name.startsWith('.')) continue
+      const absolute = path.join(dir, entry.name)
+      if (entry.kind === 'directory') {
+        result.push(...(await this.#walk(baseDir, absolute, depth + 1)))
+        continue
+      }
+      if (entry.kind !== 'file') continue
+      result.push({
+        relative: path.relative(baseDir, absolute).split(path.sep).join('/'),
+        absolute,
+        size: entry.size,
+        mtimeMs: entry.mtimeMs,
+      })
+    }
+    return result
+  }
+
+  /** A free name in the recycle folder for one entry. */
+  async #freeRecycleName(entryName: string): Promise<string> {
+    const taken = new Set((await this.#fs.listDir(recycleDir(this.#root))).map(entry => entry.name))
+    return recycleTarget(this.#root, entryName, taken)
   }
 
   /** Whether any indexed chunk belongs to one of the allowed knowledge bases. */
@@ -723,24 +699,25 @@ export class KnowbaseService {
   }
 
   /** Remove every material of one knowledge base from the index. */
-  #unindexKnowledgeBase(id: string): void {
-    for (const material of this.#materials.values()) {
-      if (material.kbId === id) this.#unindexMaterial(material)
-    }
+  #unindexBase(id: string): void {
+    const files = this.#materials.get(id)
+    if (files === undefined) return
+    for (const material of files.values()) this.#unindexMaterial(material)
   }
 
-  #indexMaterial(material: Material): void {
-    const kbName = this.#knowledgeBases.get(material.kbId)?.name ?? '未知知识库'
+  #indexMaterial(material: Material, kbName: string): void {
+    if (material.chunks.length === 0) return
+    const base = this.#knowledgeBases.get(material.kbId)
     for (const chunk of material.chunks) {
       // The title is indexed with the chunk even though the citation shows the
-      // chunk text alone. A material called 「刘一江的电话」 whose body is just
-      // a number is unfindable otherwise: the words a person naturally searches
-      // for live in the title, and a title that is not searchable is a material
-      // that does not exist as far as retrieval is concerned.
+      // chunk text alone. A file called 「刘一江的电话.txt」 whose body is just a
+      // number is unfindable otherwise: the words a person naturally searches
+      // for live in the name, and a name that is not searchable is a file that
+      // does not exist as far as retrieval is concerned.
       //
       // The knowledge base name is deliberately NOT indexed: it labels a
-      // container, so including it would make every chunk in a base match a
-      // query for that base's name.
+      // container, so including it would make every chunk match a query for the
+      // base's own name.
       this.#index.add(chunk.id, `${material.title}\n${chunk.text}`)
       this.#chunks.set(chunk.id, {
         kbId: material.kbId,
@@ -748,6 +725,10 @@ export class KnowbaseService {
         ordinal: chunk.ordinal,
         kbName,
         materialTitle: material.title,
+        filePath:
+          base === undefined
+            ? ''
+            : path.join(this.#root, base.folderName, ...material.fileName.split('/')),
         headingPath: chunk.headingPath,
         locator: chunk.locator,
         text: chunk.text,
@@ -762,10 +743,10 @@ export class KnowbaseService {
     }
   }
 
-  async #bumpRevision(knowledgeBase: KnowledgeBase): Promise<void> {
+  async #bumpRevision(base: KnowledgeBase): Promise<void> {
     const updated: KnowledgeBase = {
-      ...knowledgeBase,
-      indexRevision: knowledgeBase.indexRevision + 1,
+      ...base,
+      indexRevision: base.indexRevision + 1,
       updatedAt: this.#now(),
     }
     this.#knowledgeBases.set(updated.id, updated)
@@ -773,32 +754,50 @@ export class KnowbaseService {
   }
 }
 
+/** Drop a `.txt`/`.md` suffix a legacy title may already carry. */
+function stripTextExtension(title: string): string {
+  return title.replace(/\.(txt|md|markdown|text)$/i, '')
+}
+
 /** In-memory store. Used by tests and as a reference implementation. */
 export class MemoryStore implements KnowbaseStore {
-  readonly #knowledgeBases = new Map<string, KnowledgeBase>()
-  readonly #materials = new Map<string, Material>()
+  readonly #knowledgeBases = new Map<string, StoredKnowledgeBase>()
+  readonly #legacy = new Map<string, LegacyMaterial>()
 
-  loadKnowledgeBases(): readonly KnowledgeBase[] {
+  loadKnowledgeBases(): readonly StoredKnowledgeBase[] {
     return [...this.#knowledgeBases.values()]
   }
 
-  loadMaterials(): readonly Material[] {
-    return [...this.#materials.values()]
-  }
-
   async saveKnowledgeBase(knowledgeBase: KnowledgeBase): Promise<void> {
-    this.#knowledgeBases.set(knowledgeBase.id, knowledgeBase)
+    this.#knowledgeBases.set(knowledgeBase.id, { ...knowledgeBase })
   }
 
   async deleteKnowledgeBase(id: string): Promise<boolean> {
     return this.#knowledgeBases.delete(id)
   }
 
-  async saveMaterial(material: Material): Promise<void> {
-    this.#materials.set(material.id, material)
+  /**
+   * Seed one record exactly as the storage layer would have read it.
+   *
+   * Used by the tests that stand in for an install written by an older build: a
+   * record from the text era carries no `folderName`, and one the old build had
+   * already deleted carries `deletedAt`. Neither can be expressed as a
+   * {@link KnowledgeBase}, which is the whole point of the two shapes.
+   */
+  seedKnowledgeBase(record: StoredKnowledgeBase): void {
+    this.#knowledgeBases.set(record.id, { ...record })
   }
 
-  async deleteMaterial(id: string): Promise<boolean> {
-    return this.#materials.delete(id)
+  /** Seed one text-era material; used by the migration tests. */
+  seedLegacyMaterial(material: LegacyMaterial): void {
+    this.#legacy.set(material.id, material)
+  }
+
+  loadLegacyMaterials(): readonly LegacyMaterial[] {
+    return [...this.#legacy.values()]
+  }
+
+  async deleteLegacyMaterial(id: string): Promise<boolean> {
+    return this.#legacy.delete(id)
   }
 }

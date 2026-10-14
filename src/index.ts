@@ -24,12 +24,15 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { homedir } from 'node:os'
 import { installCommands } from './commands.ts'
 import { resolveScope, SessionSelectionRegistry } from './core/session-scope.ts'
 import { KnowbaseService } from './core/service.ts'
+import { resolveVaultRoot } from './core/vault.ts'
 import { installPreStep, queryFrom } from './pre-step.ts'
 import { KnowbaseRemote } from './remote.ts'
 import { openSessionScopeStore, openStorageDomainStore, type OpenedSessionStore } from './store.ts'
+import { createNodeVaultFs } from './vault-fs.ts'
 
 export const name = 'knowbase'
 
@@ -100,8 +103,20 @@ export function apply(ctx: Context): void {
           return
         }
 
-        const ready = new KnowbaseService(opened.store)
-        await ready.initialize()
+        // The vault root is resolved before the service is constructed, because
+        // the path is a constructor argument: `DSH_KNOWBASE_ROOT` overrides it
+        // (the override an isolated run must set so a probe never writes the real
+        // `~/.dsh`), `$DSH_HOME/knowbase` is the real location, and `~/.dsh` is
+        // where an unconfigured host already keeps its own data.
+        const vaultRoot = resolveVaultRoot({ env: process.env, homedir: homedir() })
+        console.info(`[knowbase] 知识库根目录：${vaultRoot}`)
+
+        const ready = new KnowbaseService(
+          opened.store,
+          createNodeVaultFs(vaultRoot),
+          vaultRoot,
+        )
+        const summary = await ready.initialize()
         service = ready
         await selection.useStore(openedScopes.store)
 
@@ -119,7 +134,8 @@ export function apply(ctx: Context): void {
         const bases = ready.listKnowledgeBases()
         const materials = ready.listMaterials()
         console.info(
-          `[knowbase] 已加载 ${bases.length} 个知识库、${materials.length} 份资料`,
+          `[knowbase] 已加载 ${bases.length} 个知识库、${materials.length} 份资料` +
+            (summary.migrated === 0 ? '' : `，其中迁移了 ${summary.migrated} 份文本资料`),
         )
       } catch (error) {
         console.error('[knowbase] 知识库存储初始化失败：', error)
