@@ -23,13 +23,15 @@ import path from 'node:path'
 import type { RetrievedPassage, ServiceOutcome } from '../pre-step.ts'
 import type { VaultFileSystem } from '../vault-fs.ts'
 import { Bm25Index } from './bm25.ts'
-import { chunkText, type ChunkOptions } from './chunk.ts'
+import { chunkPages, chunkText, type ChunkOptions } from './chunk.ts'
+import { MAX_PDF_PAGES, PdfError, extractPdfPages } from './pdf.ts'
 import {
   extensionOf,
   isIndexable,
   legacyMaterialText,
   newId,
   normalizeName,
+  type ChunkRecord,
   type KnowledgeBase,
   type LegacyMaterial,
   type Material,
@@ -100,6 +102,24 @@ export interface AddFilesOptions {
   readonly overwrite?: boolean
 }
 
+/** One file as a scan found it: where it is, how big, when it changed. */
+interface ScanEntry {
+  /** Path relative to its base folder, `/`-separated; also the material's id. */
+  readonly relative: string
+  readonly absolute: string
+  readonly size: number
+  readonly mtimeMs: number
+}
+
+/**
+ * What a scan knows about a material before it has read a byte of it.
+ *
+ * Keeping this separate from {@link Material} is what lets the three extraction
+ * paths — nothing, plain text, PDF — differ in exactly one place instead of
+ * three copies of the same six fields.
+ */
+type MaterialShell = Omit<Material, 'indexed' | 'note' | 'chunks' | 'extractedText'>
+
 /** A file arriving from outside the plugin. */
 export interface IncomingFile {
   /** The name the uploader had for it; sanitised and de-duplicated on the way in. */
@@ -116,13 +136,23 @@ export interface KnowbaseServiceOptions {
 }
 
 /**
- * Largest file the plugin will read to build the index.
+ * Largest plain-text file the plugin will read.
  *
  * A knowledge base is for documents, not for disk images: past this size the
  * file is still stored and listed, it just contributes no chunks. The bound
  * exists so one stray 500 MB file cannot turn a scan into a memory event.
  */
-const MAX_INDEX_BYTES = 2 * 1024 * 1024
+const MAX_TEXT_BYTES = 2 * 1024 * 1024
+
+/**
+ * Largest PDF the plugin will parse.
+ *
+ * Looser than {@link MAX_TEXT_BYTES} because the units differ: the plan's §1.1
+ * bounds a *file* at 20 MB while a 2 MB bound exists to keep megabytes of prose
+ * out of memory. Twenty megabytes of PDF is roughly the hundred-page cap below
+ * — the two limits have to agree or one of them decides nothing.
+ */
+const MAX_PDF_BYTES = 20 * 1024 * 1024
 
 /** How deep a scan walks into sub-folders of a base. */
 const MAX_SCAN_DEPTH = 8
@@ -628,42 +658,96 @@ export class KnowbaseService {
   }
 
   /** Everything a scan needs about one file. */
-  #readMaterial(
+  async #readMaterial(
     base: KnowledgeBase,
-    entry: { relative: string; absolute: string; size: number; mtimeMs: number },
+    entry: ScanEntry,
   ): Promise<Material> {
-    const extension = extensionOf(entry.relative)
-    const base_ = {
+    const shell: MaterialShell = {
       id: entry.relative,
       kbId: base.id,
       fileName: entry.relative,
       title: entry.relative,
       bytes: entry.size,
-      extension,
+      extension: extensionOf(entry.relative),
       mtimeMs: entry.mtimeMs,
-      indexed: isIndexable(entry.relative),
     }
-    if (!base_.indexed || entry.size > MAX_INDEX_BYTES) {
-      return Promise.resolve({ ...base_, chunks: [] })
+
+    if (!isIndexable(entry.relative)) {
+      // Stored and listed, never searched. No note: the format list is what
+      // tells the user the plugin does not read this kind of file.
+      return this.#silent(shell, '')
     }
-    return this.#fs
-      .readText(entry.absolute)
-      .then(text => ({
-        ...base_,
-        extractedText: text,
-        chunks: chunkText(text, this.#chunkOptions),
-      }))
-      .catch(() => ({ ...base_, chunks: [] }))
+    if (shell.extension === 'pdf') return await this.#readPdf(shell, entry)
+    return await this.#readText(shell, entry)
+  }
+
+  /** Read a plain-text file into the index. */
+  async #readText(shell: MaterialShell, entry: ScanEntry): Promise<Material> {
+    if (entry.size > MAX_TEXT_BYTES) {
+      return this.#silent(shell, `文件超过 ${formatMb(MAX_TEXT_BYTES)}，未解析。`)
+    }
+    try {
+      const text = await this.#fs.readText(entry.absolute)
+      return this.#publish(shell, text, chunkText(text, this.#chunkOptions))
+    } catch {
+      return this.#silent(shell, '文件无法读取，可能已被其他程序占用或删除。')
+    }
+  }
+
+  /**
+   * Read a PDF's text layer into the index.
+   *
+   * Every way this can come up empty gets its own sentence: an encrypted file,
+   * a scan with no text layer, a file past a bound. They are different problems
+   * with different fixes — remove the password, convert the page to an image,
+   * or split the document — so the panel is told which one it is instead of
+   * reporting all three as "暂不可检索".
+   */
+  async #readPdf(shell: MaterialShell, entry: ScanEntry): Promise<Material> {
+    if (entry.size > MAX_PDF_BYTES) {
+      return this.#silent(shell, `文件超过 ${formatMb(MAX_PDF_BYTES)}，未解析。请拆分后再导入。`)
+    }
+
+    let bytes: Uint8Array
+    try {
+      bytes = await this.#fs.readBytes(entry.absolute)
+    } catch {
+      return this.#silent(shell, '文件无法读取，可能已被其他程序占用或删除。')
+    }
+
+    try {
+      const pages = await extractPdfPages(bytes, { maxPages: MAX_PDF_PAGES })
+      const chunks = chunkPages(pages, this.#chunkOptions)
+      if (chunks.length === 0) {
+        return this.#silent(
+          shell,
+          `PDF 里没有可提取的文字（共 ${pages.length} 页，可能是扫描件）。` +
+            '把需要的页面转成图片再导入即可；本版不做整本扫描件 OCR。',
+        )
+      }
+      // Pages are joined with a blank line rather than with page markers: the
+      // reader highlights a passage by its character range in this text, and a
+      // marker would sit inside the ranges the index was built from.
+      return this.#publish(shell, pages.join('\n\n'), chunks)
+    } catch (error) {
+      return this.#silent(shell, pdfNoteOf(error))
+    }
+  }
+
+  /** A file that is listed but contributes nothing to the index. */
+  #silent(shell: MaterialShell, note: string): Material {
+    return { ...shell, indexed: false, note, chunks: [] }
+  }
+
+  /** A file the index can search, carrying the text the reader shows. */
+  #publish(shell: MaterialShell, extractedText: string, chunks: readonly ChunkRecord[]): Material {
+    return { ...shell, indexed: true, extractedText, chunks, note: '' }
   }
 
   /** Every file under a directory, depth-first, as vault-relative paths. */
-  async #walk(
-    baseDir: string,
-    dir: string,
-    depth: number,
-  ): Promise<{ relative: string; absolute: string; size: number; mtimeMs: number }[]> {
+  async #walk(baseDir: string, dir: string, depth: number): Promise<ScanEntry[]> {
     if (depth > MAX_SCAN_DEPTH) return []
-    const result: { relative: string; absolute: string; size: number; mtimeMs: number }[] = []
+    const result: ScanEntry[] = []
     for (const entry of await this.#fs.listDir(dir)) {
       // Dot-entries are the user's own bookkeeping — editor swap files, `.DS_Store`
       // — not knowledge, and listing them would put noise in the file manager.
@@ -752,6 +836,28 @@ export class KnowbaseService {
     this.#knowledgeBases.set(updated.id, updated)
     await this.#store.saveKnowledgeBase(updated)
   }
+}
+
+/** One sentence for the user, from the PDF extractor's failure code. */
+function pdfNoteOf(error: unknown): string {
+  if (!(error instanceof PdfError)) return 'PDF 解析失败，未能提取文字。'
+  switch (error.code) {
+    case 'encrypted':
+      return 'PDF 已加密，先去掉密码再导入。'
+    case 'unsupported':
+      return '这不是可解析的 PDF，可能已损坏或并非 PDF。'
+    case 'too-many-pages':
+      return error.message
+    case 'cancelled':
+      return 'PDF 解析已取消。'
+    default:
+      return 'PDF 解析失败，未能提取文字。'
+  }
+}
+
+/** A byte bound as whole megabytes, for a sentence a user reads. */
+function formatMb(bytes: number): string {
+  return `${Math.round(bytes / 1024 / 1024)} MB`
 }
 
 /** Drop a `.txt`/`.md` suffix a legacy title may already carry. */

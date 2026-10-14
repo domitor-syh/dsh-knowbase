@@ -22,6 +22,7 @@ import type { LegacyMaterial } from '../src/core/model.ts'
 import { RECYCLE_DIR_NAME } from '../src/core/vault.ts'
 import { createMemoryVaultFs } from '../src/vault-fs.ts'
 import type { VaultFileSystem } from '../src/vault-fs.ts'
+import { buildPdf } from './fixtures/pdf.ts'
 
 /** The vault root every fixture in this file reads and writes. */
 const ROOT = path.resolve('C:/vault')
@@ -246,6 +247,43 @@ describe('KnowbaseService — materials', () => {
     await service.addFiles(kbId, [file('说明.md', '# 说明\n\n端口号是 8080。')])
     expect(service.getMaterial(kbId, '说明.md')!.indexed).toBe(true)
     expect(service.retrieve('8080', [kbId]).kind).toBe('hits')
+  })
+
+  it('reads a PDF text layer and cites the page a passage came from', async () => {
+    // A PDF's locator is a page, not a line. Extraction happens in a worker, so
+    // this also covers the scan waiting for it rather than racing it.
+    await service.addFiles(kbId, [
+      { name: '手册.pdf', data: buildPdf(['Port 8080 default', 'Change it in the config file']) },
+    ])
+
+    const material = service.getMaterial(kbId, '手册.pdf')!
+    expect(material.indexed).toBe(true)
+    expect(material.note).toBe('')
+    expect(material.chunks.map(chunk => chunk.locator)).toEqual(['第 1 页', '第 2 页'])
+
+    const outcome = service.retrieve('config', [kbId])
+    if (outcome.kind !== 'hits') throw new Error(`expected hits, got ${outcome.kind}`)
+    expect(outcome.passages[0]!.locator).toBe('第 2 页')
+  })
+
+  it('explains a .pdf that is not a PDF instead of reporting it as unreadable', async () => {
+    // The extension is a claim. When the claim is false the user needs to hear
+    // which file it was and why, not a blanket 暂不可检索.
+    await service.addFiles(kbId, [file('扫描件.pdf', 'this is not a pdf')])
+
+    const material = service.getMaterial(kbId, '扫描件.pdf')!
+    expect(material.indexed).toBe(false)
+    expect(material.chunks).toEqual([])
+    expect(material.note).not.toBe('')
+  })
+
+  it('says why a page with no text layer yielded nothing', async () => {
+    await service.addFiles(kbId, [{ name: '扫描件.pdf', data: buildPdf(['', '']) }])
+
+    const material = service.getMaterial(kbId, '扫描件.pdf')!
+    expect(material.indexed).toBe(false)
+    expect(material.note).toContain('没有可提取的文字')
+    expect(service.retrieve('任何内容', [kbId]).kind).toBe('not_ready')
   })
 
   it('finds a file the user dropped into the folder themselves', async () => {

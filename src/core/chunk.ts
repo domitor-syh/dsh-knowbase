@@ -90,6 +90,40 @@ function splitOversized(lines: readonly string[], maxChars: number): string[][] 
 }
 
 /**
+ * Split page texts into chunks, naming the page each chunk came from.
+ *
+ * Page boundaries are the one structural cue a PDF has that a `.md` does not,
+ * and they are the only locator a reader of print can act on: "第 12-24 行" of
+ * an extracted PDF is an artefact of extraction order, while 第 7 页 is where
+ * the user will actually look. So the page number leads and the line span
+ * follows only when the page split into more than one chunk.
+ *
+ * Chunking stays per page rather than over the concatenation, because a chunk
+ * spanning two pages would have to cite one of them and the other would be
+ * silently wrong.
+ *
+ * @param pages - page texts in document order, as {@link extractPdfPages} returns them.
+ * @param options - budget overrides, applied to each page independently.
+ * @returns chunks in document order, renumbered across the whole document.
+ */
+export function chunkPages(pages: readonly string[], options: ChunkOptions = {}): Chunk[] {
+  const chunks: Chunk[] = []
+  pages.forEach((page, index) => {
+    const pageNumber = index + 1
+    const pageChunks = chunkText(page, options)
+    for (const chunk of pageChunks) {
+      chunks.push({
+        ...chunk,
+        ordinal: chunks.length,
+        locator:
+          pageChunks.length === 1 ? `第 ${pageNumber} 页` : `第 ${pageNumber} 页 · ${chunk.locator}`,
+      })
+    }
+  })
+  return chunks
+}
+
+/**
  * Split text into chunks.
  *
  * @param text - the material's extracted text.

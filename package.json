@@ -98,6 +98,7 @@
   ],
   "dependencies": {
     "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
+    "pdfjs-dist": "^6.4.299",
     "zod": "^4.6.5"
   }
 }

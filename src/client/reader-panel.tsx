@@ -55,6 +55,8 @@ export interface LoadedMaterial {
   readonly text: string
   /** The indexed chunks, in order. */
   readonly chunks: readonly PassageView[]
+  /** Why there is no text to show, in one sentence; `''` when there is none. */
+  readonly note: string
 }
 
 /** True when the load found nothing — a deleted file reads as empty too. */
@@ -110,7 +112,7 @@ async function fetchMaterial(kbId: string, materialId: string): Promise<LoadedMa
   if (detail === null) {
     // A file that is gone reads as an empty load; the view says so instead of
     // throwing, because a citation to a deleted file is ordinary, not a bug.
-    return { title: '', fileName: materialId, extension: '', text: '', chunks: [] }
+    return { title: '', fileName: materialId, extension: '', text: '', chunks: [], note: '' }
   }
   return {
     title: detail.title,
@@ -118,6 +120,7 @@ async function fetchMaterial(kbId: string, materialId: string): Promise<LoadedMa
     extension: detail.extension,
     text: detail.text,
     chunks: detail.chunks,
+    note: detail.note,
   }
 }
 
@@ -338,8 +341,10 @@ export function ReaderView(props: {
       <div>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{heading}</div>
         <Notice>
-          这个文件（{material.extension === '' ? '未知格式' : `.${material.extension}`}）暂时无法在应用内预览，
-          插件也还不能从它里面提取可检索的文字。文件本身已保存在知识库文件夹里，可以用系统自带的方式打开。
+          {material.note === ''
+            ? `这个文件（${material.extension === '' ? '未知格式' : `.${material.extension}`}）暂时无法在应用内预览，` +
+              '插件也还不能从它里面提取可检索的文字。文件本身已保存在知识库文件夹里，可以用系统自带的方式打开。'
+            : material.note}
         </Notice>
       </div>
     )

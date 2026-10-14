@@ -58,12 +58,22 @@ export interface Material {
   /** Lower-case extension without the dot; `''` when the file has none. */
   readonly extension: string
   readonly mtimeMs: number
-  /** Files the plugin knows it can index; the rest are stored and listed but not searched. */
+  /** Files the plugin extracted searchable text from; the rest are stored and listed. */
   readonly indexed: boolean
   /** Extracted text for an indexable file; `undefined` for everything else. */
   readonly extractedText?: string
   /** Derived from {@link extractedText}; empty for a file that is not indexed. */
   readonly chunks: readonly ChunkRecord[]
+  /**
+   * Why this file holds no searchable text, in one sentence, when it should
+   * have. `''` when there is nothing to explain.
+   *
+   * A file the plugin never claimed to read (a `.zip`) needs no note: the
+   * format list already says so. This is for the files it *does* claim to read
+   * and could not — an encrypted PDF, a scan with no text layer, a file past
+   * the size bound — where "暂不可检索" alone would leave the user guessing.
+   */
+  readonly note: string
 }
 
 /** A chunk as persisted in the index. Structurally the chunker's output. */
@@ -78,12 +88,21 @@ export interface ChunkRecord {
 /**
  * Extensions the plugin extracts text from today.
  *
- * Plain text only. PDF and image OCR need new dependencies and their own
- * extraction step; until then those files are stored, listed and readable, and
- * the UI says plainly that they are not searchable — which is better than
- * silently indexing a PDF's bytes as if they were words.
+ * Plain text and the PDF text layer. A `.pdf` counts as indexable because the
+ * plugin *can* read it — a PDF whose extraction fails or whose pages hold only
+ * a scan comes back with `indexed: false` and a {@link Material.note} saying
+ * why, which is the honest form of "listed but not searchable".
+ *
+ * Image OCR is deliberately absent until it lands: claiming a format the plugin
+ * cannot yet read would index a photo's bytes as if they were words.
  */
-export const INDEXABLE_EXTENSIONS: ReadonlySet<string> = new Set(['txt', 'md', 'markdown', 'text'])
+export const INDEXABLE_EXTENSIONS: ReadonlySet<string> = new Set([
+  'txt',
+  'md',
+  'markdown',
+  'text',
+  'pdf',
+])
 
 /** Generate an identity for a new entity. */
 export function newId(prefix: string): string {

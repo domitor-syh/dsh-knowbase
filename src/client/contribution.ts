@@ -53,6 +53,8 @@ const materialSchema = z.object({
   extension: z.string(),
   indexed: z.boolean(),
   mtimeMs: z.number(),
+  // Always present, `''` when there is nothing to explain — see `Material.note`.
+  note: z.string(),
 })
 
 const passageSchema = z.object({

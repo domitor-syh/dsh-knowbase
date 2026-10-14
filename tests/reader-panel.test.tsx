@@ -50,11 +50,17 @@ const LOADED: LoadedMaterial = {
   extension: 'txt',
   text: TEXT,
   chunks: CHUNKS,
+  note: '',
 }
 
-/** A material with no body, as a file the plugin cannot read arrives. */
-function withoutText(extension: string, title = '端口说明.txt'): LoadedMaterial {
-  return { title, fileName: title, extension, text: '', chunks: [] }
+/**
+ * A material with no body, as a file the plugin cannot read arrives.
+ *
+ * `note` is what the Host says about *why* there is no text; it stays `''` here
+ * because the panel's generic sentence is what these cases exercise.
+ */
+function withoutText(extension: string, title = '端口说明.txt', note = ''): LoadedMaterial {
+  return { title, fileName: title, extension, text: '', chunks: [], note }
 }
 
 /** Render one element and return its HTML. */
@@ -107,13 +113,13 @@ describe('isEmptyMaterial', () => {
   it('is true exactly when a load found nothing at all', () => {
     // This is the payload a deleted file produces: no title, no name, no text,
     // no chunks. A title means the file exists, whatever its body says.
-    expect(isEmptyMaterial({ title: '', fileName: '', extension: '', text: '', chunks: [] })).toBe(
-      true,
-    )
+    expect(
+      isEmptyMaterial({ title: '', fileName: '', extension: '', text: '', chunks: [], note: '' }),
+    ).toBe(true)
     expect(isEmptyMaterial(withoutText('txt', ''))).toBe(true)
-    expect(isEmptyMaterial({ title: 't', fileName: 't', extension: '', text: '', chunks: [] })).toBe(
-      false,
-    )
+    expect(
+      isEmptyMaterial({ title: 't', fileName: 't', extension: '', text: '', chunks: [], note: '' }),
+    ).toBe(false)
     expect(isEmptyMaterial(LOADED)).toBe(false)
   })
 })
@@ -268,6 +274,7 @@ describe('loadMaterial', () => {
       indexed: true,
       text: TEXT,
       chunks: CHUNKS,
+      note: '',
       ...overrides,
     }
   }
@@ -294,6 +301,7 @@ describe('loadMaterial', () => {
       extension: 'txt',
       text: TEXT,
       chunks: CHUNKS,
+      note: '',
     })
   })
 

@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { chunkText } from '../src/core/chunk.ts'
+import { chunkPages, chunkText } from '../src/core/chunk.ts'
 
 describe('chunkText — structure', () => {
   it('returns nothing for empty or whitespace-only input', () => {
@@ -79,6 +79,37 @@ describe('chunkText — budget', () => {
   it('treats maxChars below targetChars as the target, not as a contradiction', () => {
     const chunks = chunkText('甲。\n\n乙。', { targetChars: 100, maxChars: 10 })
     expect(chunks.length).toBeGreaterThan(0)
+  })
+})
+
+describe('chunkPages — a page is the locator a PDF reader can act on', () => {
+  it('names the page when a page fits in one chunk', () => {
+    const chunks = chunkPages(['第一页的内容。', '第二页的内容。'])
+
+    expect(chunks.map(chunk => chunk.locator)).toEqual(['第 1 页', '第 2 页'])
+    expect(chunks.map(chunk => chunk.text)).toEqual(['第一页的内容。', '第二页的内容。'])
+  })
+
+  it('keeps the page number when a page splits, and adds the line span', () => {
+    const long = Array.from({ length: 30 }, (_, index) => `第${index}行。`).join('\n')
+    const chunks = chunkPages([long], { targetChars: 40, maxChars: 60 })
+
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const chunk of chunks) expect(chunk.locator.startsWith('第 1 页 · ')).toBe(true)
+  })
+
+  it('numbers chunks across the document, not within each page', () => {
+    // Ordinals address passages in the reader and in citations, so a second
+    // page restarting at 0 would make two passages share one address.
+    const long = Array.from({ length: 30 }, (_, index) => `第${index}行。`).join('\n')
+    const chunks = chunkPages([long, long], { targetChars: 40, maxChars: 60 })
+
+    expect(chunks.map(chunk => chunk.ordinal)).toEqual(chunks.map((_, index) => index))
+    expect(new Set(chunks.map(chunk => chunk.id)).size).toBe(chunks.length)
+  })
+
+  it('produces nothing at all for a document with no text', () => {
+    expect(chunkPages(['', '   '])).toEqual([])
   })
 })
 

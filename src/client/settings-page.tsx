@@ -109,7 +109,7 @@ function Report(props: { report: SearchReportView; scopeNote: string }): React.R
     const text: Record<string, string> = {
       no_match: '未命中：所选知识库中没有相关片段。换个说法或换关键词可能命中。',
       empty_scope: '所选知识库不存在或为空。',
-      not_ready: '所选知识库里还没有可检索的文件（目前只支持 .txt / .md 等纯文本）。',
+      not_ready: '所选知识库里还没有可检索的文件（目前支持 .txt / .md 等纯文本和文本型 PDF）。',
       error: `检索失败：${report.reason}`,
     }
     return (
@@ -710,6 +710,9 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                           {formatBytes(material.bytes)}
                           {material.indexed ? ' · 可检索' : ' · 暂不可检索'}
                         </div>
+                        {material.note === '' ? null : (
+                          <div style={{ fontSize: 11, color: COLORS.muted }}>{material.note}</div>
+                        )}
                       </div>
                       <ConfirmButton
                         label="删除"
@@ -728,7 +731,8 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                   ))
                 )}
                 <p style={{ color: COLORS.muted, fontSize: 11, margin: '8px 2px 0' }}>
-                  目前只有纯文本文件（.txt / .md 等）会被检索；图片和 PDF 会上传保存，但暂时还不会从中提取文字。
+                  目前会被检索的是纯文本（.txt / .md 等）和文本型 PDF（保留页码）。
+                  图片会上传保存，OCR 提取文字还没做；扫描件 PDF 没有文字层，需要先把页面转成图片。
                 </p>
               </div>
 

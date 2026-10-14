@@ -75,6 +75,8 @@ export interface MaterialView {
   /** Whether the plugin extracted searchable text from it. */
   readonly indexed: boolean
   readonly mtimeMs: number
+  /** Why there is no searchable text, when there should be; `''` otherwise. */
+  readonly note: string
 }
 
 /** One file with its extracted text, for the reading pane. */
@@ -89,6 +91,8 @@ export interface MaterialDetailView {
   /** Extracted text, `''` for a file the plugin cannot read. */
   readonly text: string
   readonly chunks: readonly PassageView[]
+  /** Why there is no searchable text, when there should be; `''` otherwise. */
+  readonly note: string
 }
 
 /** One retrievable passage, for the reading pane's locator. */
@@ -258,6 +262,7 @@ export class KnowbaseRemote extends TypertRemoteService {
         extension: material.extension,
         indexed: material.indexed,
         mtimeMs: material.mtimeMs,
+        note: material.note,
       }))
   }
 
@@ -306,6 +311,7 @@ export class KnowbaseRemote extends TypertRemoteService {
       extension: material.extension,
       indexed: material.indexed,
       text: material.extractedText ?? '',
+      note: material.note,
       chunks: material.chunks.map(chunk => ({
         ordinal: chunk.ordinal,
         headingPath: chunk.headingPath,
