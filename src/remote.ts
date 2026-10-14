@@ -29,6 +29,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import type { OcrResourceManager, OcrResourceStatus } from './core/ocr-resources.ts'
 import type { SessionSelectionRegistry } from './core/session-scope.ts'
 import type { KnowbaseService } from './core/service.ts'
 import { installRemoteMarkers } from './remote-methods.ts'
@@ -141,6 +142,44 @@ export interface UploadedFileView {
   readonly base64: string
 }
 
+/** One OCR language pack, as the settings page shows it. */
+export interface OcrPackView {
+  readonly lang: string
+  readonly fileName: string
+  /** Where the pack is fetched from; shown so the source is not a secret. */
+  readonly url: string
+  /** Approximate `.gz` size, so an absent pack still has a size to quote. */
+  readonly gzipBytes: number
+  readonly present: boolean
+  /** Size on disk once it is here; `0` otherwise. */
+  readonly bytes: number
+}
+
+/** What the language packs look like right now. Detecting only — it fetches nothing. */
+export interface OcrStatusView {
+  /** True when every pack is on disk, i.e. images can be read offline. */
+  readonly ready: boolean
+  /** The cache directory, so the user can look at it. */
+  readonly dir: string
+  readonly packs: readonly OcrPackView[]
+  readonly downloadedBytes: number
+  /** `.gz` bytes still to fetch; `0` when {@link ready}. */
+  readonly fetchBytes: number
+  readonly missing: readonly string[]
+}
+
+/** A download of the language packs: running, or the last one that ended. */
+export interface OcrDownloadStateView {
+  /** `idle` | `running` | `done` | `cancelled` | `failed`. */
+  readonly state: string
+  readonly downloadedBytes: number
+  readonly totalBytes: number
+  /** Pack being fetched right now; `''` when none is. */
+  readonly lang: string
+  /** One sentence for the user; `''` while running and nothing has gone wrong. */
+  readonly message: string
+}
+
 /** What one upload did. */
 export interface UploadResultView {
   readonly added: number
@@ -152,6 +191,8 @@ export interface UploadResultView {
 interface Dependencies {
   readonly service: KnowbaseService
   readonly selection: SessionSelectionRegistry
+  /** The language-pack download, held between calls — see `./core/ocr-resources.ts`. */
+  readonly ocr: OcrResourceManager
 }
 
 /** See the module note: instance state is not reachable from a Remote call. */
@@ -173,6 +214,25 @@ function readScope(agentId: string): SessionScopeView {
     enabled: current.enabled,
     all: current.scope === 'all',
     kbIds: current.scope === 'all' ? [] : [...current.scope],
+  }
+}
+
+/** Project the language-pack status into the shape the page reads. */
+function ocrStatusView(status: OcrResourceStatus): OcrStatusView {
+  return {
+    ready: status.ready,
+    dir: status.dir,
+    packs: status.packs.map(pack => ({
+      lang: pack.lang,
+      fileName: pack.fileName,
+      url: pack.url,
+      gzipBytes: pack.gzipBytes,
+      present: pack.present,
+      bytes: pack.bytes,
+    })),
+    downloadedBytes: status.downloadedBytes,
+    fetchBytes: status.fetchBytes,
+    missing: status.missing,
   }
 }
 
@@ -202,9 +262,14 @@ function baseView(service: KnowbaseService, id: string): KnowledgeBaseView | und
  * catches.
  */
 export class KnowbaseRemote extends TypertRemoteService {
-  constructor(ctx: Context, service: KnowbaseService, selection: SessionSelectionRegistry) {
+  constructor(
+    ctx: Context,
+    service: KnowbaseService,
+    selection: SessionSelectionRegistry,
+    ocr: OcrResourceManager,
+  ) {
     super(ctx, SERVICE_KEY)
-    DEPENDENCIES.set(SERVICE_KEY, { service, selection })
+    DEPENDENCIES.set(SERVICE_KEY, { service, selection, ocr })
   }
 
   /** Every knowledge base, ordered by name. */
@@ -352,6 +417,39 @@ export class KnowbaseRemote extends TypertRemoteService {
   /** The vault root, so the page can show where the user's files actually live. */
   async getVaultRoot(): Promise<string> {
     return deps().service.root
+  }
+
+  /**
+   * Report the OCR language packs without touching the network.
+   *
+   * This is the 「检测」 half, and it is a separate method on purpose: the button
+   * that asks "do I have what I need?" must not be able to start a download, so
+   * the check is a method that cannot do anything else (plan §11, `HANDOFF.md`
+   * §16 ⑦).
+   */
+  async getOcrStatus(): Promise<OcrStatusView> {
+    return ocrStatusView(await deps().ocr.status())
+  }
+
+  /**
+   * Start fetching the missing language packs, and return at once.
+   *
+   * Returning at once is what lets the page draw a progress bar: it polls
+   * {@link getOcrDownload} while the download runs here, rather than holding one
+   * call open for thirty seconds with nothing to show.
+   */
+  async startOcrDownload(): Promise<OcrDownloadStateView> {
+    return deps().ocr.start()
+  }
+
+  /** Stop the running download. Everything it had written is removed. */
+  async cancelOcrDownload(): Promise<OcrDownloadStateView> {
+    return deps().ocr.cancel()
+  }
+
+  /** Where the download is, for the page to poll. */
+  async getOcrDownload(): Promise<OcrDownloadStateView> {
+    return deps().ocr.view()
   }
 
   /**

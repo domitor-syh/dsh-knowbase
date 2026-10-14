@@ -88,13 +88,20 @@ export interface ChunkRecord {
 /**
  * Extensions the plugin extracts text from today.
  *
- * Plain text and the PDF text layer. A `.pdf` counts as indexable because the
- * plugin *can* read it — a PDF whose extraction fails or whose pages hold only
- * a scan comes back with `indexed: false` and a {@link Material.note} saying
- * why, which is the honest form of "listed but not searchable".
+ * Plain text, the PDF text layer, and PNG/JPG photographs.
  *
- * Image OCR is deliberately absent until it lands: claiming a format the plugin
- * cannot yet read would index a photo's bytes as if they were words.
+ * A `.pdf` counts as indexable because the plugin *can* read it — a PDF whose
+ * extraction fails or whose pages hold only a scan comes back with
+ * `indexed: false` and a {@link Material.note} saying why, which is the honest
+ * form of "listed but not searchable". Images are the same deal: the text comes
+ * from the local OCR engine (`./ocr.ts`), and when the language packs have not
+ * been downloaded yet the file carries a note pointing at the settings page
+ * rather than being skipped without a word.
+ *
+ * The image formats are the two the OCR engine decodes (and the two a phone or
+ * a screenshot produces). A `.gif`/`.webp`/`.bmp`/`.svg` is stored and shown in
+ * the reader but not read: claiming a format tesseract cannot decode would put
+ * "no text found" notes on files the plugin never had a way to read.
  */
 export const INDEXABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   'txt',
@@ -102,7 +109,13 @@ export const INDEXABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   'markdown',
   'text',
   'pdf',
+  'png',
+  'jpg',
+  'jpeg',
 ])
+
+/** Extensions that carry text the OCR engine can extract. */
+export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set(['png', 'jpg', 'jpeg'])
 
 /** Generate an identity for a new entity. */
 export function newId(prefix: string): string {

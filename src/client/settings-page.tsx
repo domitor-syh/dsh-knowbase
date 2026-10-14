@@ -24,6 +24,7 @@
 import * as React from 'react'
 import type { KnowledgeBaseView, MaterialView, SearchReportView } from '../remote.ts'
 import { knowbaseApi, knowbaseChannelError } from './api.ts'
+import { OcrHint, OcrSection, useOcrController } from './ocr-panel.tsx'
 
 const COLORS = {
   border: '#dce3ed',
@@ -43,6 +44,21 @@ const COLORS = {
  * — the Host's own check would only run after the bytes had already crossed.
  */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+/**
+ * Extensions the Host runs OCR on.
+ *
+ * Mirrored from the core's own list for the same reason as
+ * `MAX_UPLOAD_BYTES`: the page needs the answer before making any call, to
+ * decide whether the upload it just made warrants the pack hint.
+ */
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg'])
+
+/** A file name's extension, lower-cased and without the dot; `''` when none. */
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.')
+  return dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
+}
 
 const panel: React.CSSProperties = {
   border: `1px solid ${COLORS.border}`,
@@ -238,6 +254,14 @@ export function KnowbaseSettingsPage(): React.ReactElement {
 
   const uploadInput = React.useRef<HTMLInputElement | null>(null)
 
+  // The OCR state lives at page level rather than inside the block, because the
+  // same controls appear twice: once in the always-visible section and once,
+  // when it matters, under the file list (see `./ocr-panel.tsx`).
+  const ocr = useOcrController()
+  // Set when an image was uploaded while the packs were missing. The hint
+  // withdraws itself once a download makes `ocr.status.ready` true.
+  const [ocrHint, setOcrHint] = React.useState(false)
+
   /** Run one Host call with shared busy/error handling. */
   const run = React.useCallback(async (action: () => Promise<string>): Promise<void> => {
     const current = knowbaseApi()
@@ -299,13 +323,20 @@ export function KnowbaseSettingsPage(): React.ReactElement {
         const result = await current.addFiles(kbId, accepted)
         setMaterials(await current.listMaterials(kbId))
         await refreshBases()
+        if (accepted.some(file => IMAGE_EXTENSIONS.has(extensionOf(file.name)))) {
+          // Asked here, at the moment the user is looking at the file they just
+          // added, which is the only moment the question "can this screenshot
+          // be searched?" is actually being asked. `refresh` is a read — two
+          // `stat` calls — and never a download.
+          setOcrHint((await ocr.refresh())?.ready !== true)
+        }
         const parts = [`已加入 ${result.added} 个文件`]
         if (result.rejected.length > 0) parts.push(`${result.rejected.length} 个被拒绝`)
         for (const file of tooBig) parts.push(`「${file}」太大，未上传`)
         return `${parts.join('，')}。`
       })
     },
-    [refreshBases, run, selectedId],
+    [ocr.refresh, refreshBases, run, selectedId],
   )
 
   // The channel mounts asynchronously, so the first render has no API yet. The
@@ -327,6 +358,12 @@ export function KnowbaseSettingsPage(): React.ReactElement {
         setSelectedId(existing =>
           list.some(item => item.id === existing) ? existing : (list[0]?.id ?? ''),
         )
+        // Read the OCR packs in the same pass. Without this the block sits on
+        // 「正在读取本地语言包状态…」 with its button disabled until someone
+        // presses 检测, which reads as a broken panel rather than an unread one.
+        // It is a read — two `stat` calls — and the download still only ever
+        // starts from the button that says it does.
+        void ocr.refresh()
       } catch (failure) {
         if (!cancelled) setError(messageOf(failure))
       }
@@ -348,7 +385,7 @@ export function KnowbaseSettingsPage(): React.ReactElement {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [])
+  }, [ocr.refresh])
 
   React.useEffect(() => {
     let cancelled = false
@@ -426,6 +463,10 @@ export function KnowbaseSettingsPage(): React.ReactElement {
         每个知识库就是一个文件夹，里面的文件和图片都存在你的电脑上。检索在本机执行（中文 n-gram + BM25），
         未使用语义向量。
       </p>
+
+      {/* Packs are per installation, not per base, so this belongs to the page
+          rather than to the detail pane below. */}
+      <OcrSection controller={ocr} disabled={busy} />
 
       {error !== '' && (
         <div
@@ -730,9 +771,12 @@ export function KnowbaseSettingsPage(): React.ReactElement {
                     </div>
                   ))
                 )}
+                {ocrHint && ocr.status?.ready !== true && (
+                  <OcrHint controller={ocr} disabled={busy} />
+                )}
                 <p style={{ color: COLORS.muted, fontSize: 11, margin: '8px 2px 0' }}>
-                  目前会被检索的是纯文本（.txt / .md 等）和文本型 PDF（保留页码）。
-                  图片会上传保存，OCR 提取文字还没做；扫描件 PDF 没有文字层，需要先把页面转成图片。
+                  会被检索的是纯文本（.txt / .md 等）、文本型 PDF（保留页码）和 PNG/JPG 图片
+                  （本机 OCR，需要先在设置里下载语言包）。扫描件 PDF 没有文字层，需要先把页面转成图片。
                 </p>
               </div>
 

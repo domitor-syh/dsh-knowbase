@@ -26,6 +26,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { homedir } from 'node:os'
 import { installCommands } from './commands.ts'
+import { createOcrEngine } from './core/ocr.ts'
+import { OcrResourceManager, ocrCacheDir } from './core/ocr-resources.ts'
 import { resolveScope, SessionSelectionRegistry } from './core/session-scope.ts'
 import { KnowbaseService } from './core/service.ts'
 import { resolveVaultRoot } from './core/vault.ts'
@@ -111,11 +113,15 @@ export function apply(ctx: Context): void {
         const vaultRoot = resolveVaultRoot({ env: process.env, homedir: homedir() })
         console.info(`[knowbase] 知识库根目录：${vaultRoot}`)
 
-        const ready = new KnowbaseService(
-          opened.store,
-          createNodeVaultFs(vaultRoot),
-          vaultRoot,
-        )
+        // The OCR engine reads the language packs out of the vault's own cache
+        // directory; the resource manager writes them there, on the user's click
+        // and never on its own (see `./core/ocr-resources.ts`).
+        const ocrCache = ocrCacheDir(vaultRoot)
+        const vault = createNodeVaultFs(vaultRoot)
+
+        const ready = new KnowbaseService(opened.store, vault, vaultRoot, {
+          ocr: createOcrEngine({ cacheDir: ocrCache }),
+        })
         const summary = await ready.initialize()
         service = ready
         await selection.useStore(openedScopes.store)
@@ -124,7 +130,12 @@ export function apply(ctx: Context): void {
         // reach the Host at all. It is created only once storage is open, so a
         // call that arrives earlier fails loudly instead of reading a service
         // that has nothing behind it.
-        new KnowbaseRemote(ctx, ready, selection)
+        new KnowbaseRemote(
+          ctx,
+          ready,
+          selection,
+          new OcrResourceManager({ fs: vault, root: vaultRoot }),
+        )
 
         ctx.effect(() => () => {
           void opened.close()

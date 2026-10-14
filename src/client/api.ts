@@ -18,6 +18,8 @@ import type {
   KnowledgeBaseView,
   MaterialDetailView,
   MaterialView,
+  OcrDownloadStateView,
+  OcrStatusView,
   SearchReportView,
   SessionScopeView,
   UploadResultView,
@@ -62,6 +64,15 @@ export interface KnowbaseApi {
   rescan(kbId: string): Promise<boolean>
   getVaultRoot(): Promise<string>
 
+  /** The OCR language packs on disk. Read-only: it never starts a download. */
+  getOcrStatus(): Promise<OcrStatusView>
+  /** Kick off the download of whatever is missing; returns at once. */
+  startOcrDownload(): Promise<OcrDownloadStateView>
+  /** Stop it; the files this download wrote are removed. */
+  cancelOcrDownload(): Promise<OcrDownloadStateView>
+  /** Where the download is, for a progress bar to poll. */
+  getOcrDownload(): Promise<OcrDownloadStateView>
+
   testSearch(query: string, kbIds: readonly string[]): Promise<SearchReportView>
 
   getSessionScope(agentId: string): Promise<SessionScopeView>
@@ -105,6 +116,10 @@ interface KnowbaseWire {
   deleteMaterial: (kbId: string, id: string) => Promise<RemoteResult<boolean>>
   rescan: (kbId: string) => Promise<RemoteResult<boolean>>
   getVaultRoot: () => Promise<RemoteResult<string>>
+  getOcrStatus: () => Promise<RemoteResult<OcrStatusView>>
+  startOcrDownload: () => Promise<RemoteResult<OcrDownloadStateView>>
+  cancelOcrDownload: () => Promise<RemoteResult<OcrDownloadStateView>>
+  getOcrDownload: () => Promise<RemoteResult<OcrDownloadStateView>>
   testSearch: (query: string, kbIds: readonly string[]) => Promise<RemoteResult<SearchReportView>>
   getSessionScope: (agentId: string) => Promise<RemoteResult<SessionScopeView>>
   setSessionScope: (
@@ -195,6 +210,10 @@ export function createKnowbaseApi(ctx: Context): KnowbaseApi {
     deleteMaterial: (kbId, id) => unwrap(wire.deleteMaterial(kbId, id)),
     rescan: kbId => unwrap(wire.rescan(kbId)),
     getVaultRoot: () => unwrap(wire.getVaultRoot()),
+    getOcrStatus: () => unwrap(wire.getOcrStatus()),
+    startOcrDownload: () => unwrap(wire.startOcrDownload()),
+    cancelOcrDownload: () => unwrap(wire.cancelOcrDownload()),
+    getOcrDownload: () => unwrap(wire.getOcrDownload()),
     testSearch: (query, kbIds) => unwrap(wire.testSearch(query, kbIds)),
     getSessionScope: agentId => unwrap(wire.getSessionScope(agentId)),
     setSessionScope: (agentId, enabled, all, kbIds) =>

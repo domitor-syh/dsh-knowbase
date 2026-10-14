@@ -24,9 +24,11 @@ import type { RetrievedPassage, ServiceOutcome } from '../pre-step.ts'
 import type { VaultFileSystem } from '../vault-fs.ts'
 import { Bm25Index } from './bm25.ts'
 import { chunkPages, chunkText, type ChunkOptions } from './chunk.ts'
+import { OcrError, type OcrEngine } from './ocr.ts'
 import { MAX_PDF_PAGES, PdfError, extractPdfPages } from './pdf.ts'
 import {
   extensionOf,
+  IMAGE_EXTENSIONS,
   isIndexable,
   legacyMaterialText,
   newId,
@@ -133,6 +135,15 @@ export interface KnowbaseServiceOptions {
   readonly now?: () => number
   /** Chunking budget. */
   readonly chunk?: ChunkOptions
+  /**
+   * The local OCR engine, when the host wired one.
+   *
+   * Optional because "there is no engine" is a state the domain has to describe
+   * anyway — the packs not being downloaded is the same sentence, and a service
+   * with no engine at all (a unit test, a host that never wired OCR) should not
+   * be a special case that crashes on a photograph.
+   */
+  readonly ocr?: OcrEngine
 }
 
 /**
@@ -154,6 +165,26 @@ const MAX_TEXT_BYTES = 2 * 1024 * 1024
  */
 const MAX_PDF_BYTES = 20 * 1024 * 1024
 
+/**
+ * Largest image the OCR engine will read.
+ *
+ * The same bound as a PDF, for a different reason: twenty megabytes is a
+ * twelve-megapixel photograph or a full-page scan, and past it the recognizer is
+ * holding a bitmap it was never going to finish inside its wall-clock bound
+ * anyway.
+ */
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
+/**
+ * What an image says when the OCR language packs are not downloaded.
+ *
+ * One sentence for two causes — no engine wired, and the engine's own
+ * `resources-missing` — because from the user's seat they are the same
+ * situation, and two wordings for it would read as two different problems.
+ */
+const OCR_PACKS_HINT =
+  '图片文字识别需要 OCR 语言包（约 4.5 MB）：到设置页「图片文字识别」里点「下载语言包」，下载后重扫即可检索。'
+
 /** How deep a scan walks into sub-folders of a base. */
 const MAX_SCAN_DEPTH = 8
 
@@ -164,6 +195,7 @@ export class KnowbaseService {
   readonly #root: string
   readonly #now: () => number
   readonly #chunkOptions: ChunkOptions
+  readonly #ocr: OcrEngine | undefined
   readonly #index = new Bm25Index()
   readonly #chunks = new Map<string, ChunkContext>()
   readonly #knowledgeBases = new Map<string, KnowledgeBase>()
@@ -180,6 +212,7 @@ export class KnowbaseService {
     this.#root = root
     this.#now = options.now ?? (() => Date.now())
     this.#chunkOptions = options.chunk ?? {}
+    this.#ocr = options.ocr
   }
 
   /** The vault root this service reads and writes. */
@@ -678,6 +711,7 @@ export class KnowbaseService {
       return this.#silent(shell, '')
     }
     if (shell.extension === 'pdf') return await this.#readPdf(shell, entry)
+    if (IMAGE_EXTENSIONS.has(shell.extension)) return await this.#readImage(shell, entry)
     return await this.#readText(shell, entry)
   }
 
@@ -731,6 +765,39 @@ export class KnowbaseService {
       return this.#publish(shell, pages.join('\n\n'), chunks)
     } catch (error) {
       return this.#silent(shell, pdfNoteOf(error))
+    }
+  }
+
+  /**
+   * Read an image's text with the local OCR engine.
+   *
+   * Nothing here touches the network. When the language packs are absent the
+   * engine answers `resources-missing` and the file carries the sentence that
+   * says where to get them (`./ocr.ts` checks the packs before loading WASM, and
+   * its `langPath` is a path that deliberately does not exist) — a photograph
+   * must not turn a rescan into a download.
+   */
+  async #readImage(shell: MaterialShell, entry: ScanEntry): Promise<Material> {
+    if (entry.size > MAX_IMAGE_BYTES) {
+      return this.#silent(shell, `文件超过 ${formatMb(MAX_IMAGE_BYTES)}，未识别。`)
+    }
+    if (this.#ocr === undefined) return this.#silent(shell, OCR_PACKS_HINT)
+
+    let bytes: Uint8Array
+    try {
+      bytes = await this.#fs.readBytes(entry.absolute)
+    } catch {
+      return this.#silent(shell, '文件无法读取，可能已被其他程序占用或删除。')
+    }
+
+    try {
+      const text = await this.#ocr.recognize(bytes)
+      // An image with no words in it is a fact about the file, not a failure:
+      // a photo of a chair is not a broken document.
+      if (text.trim() === '') return this.#silent(shell, '图片里没有识别出文字。')
+      return this.#publish(shell, text, chunkText(text, this.#chunkOptions))
+    } catch (error) {
+      return this.#silent(shell, ocrNoteOf(error))
     }
   }
 
@@ -852,6 +919,19 @@ function pdfNoteOf(error: unknown): string {
       return 'PDF 解析已取消。'
     default:
       return 'PDF 解析失败，未能提取文字。'
+  }
+}
+
+/** One sentence for the user, from the OCR engine's failure code. */
+function ocrNoteOf(error: unknown): string {
+  if (!(error instanceof OcrError)) return '图片文字识别失败，未能提取文字。'
+  switch (error.code) {
+    case 'resources-missing':
+      return OCR_PACKS_HINT
+    case 'cancelled':
+      return '图片文字识别已取消。'
+    default:
+      return '图片文字识别失败，未能提取文字。'
   }
 }
 

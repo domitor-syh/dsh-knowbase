@@ -106,6 +106,35 @@ const uploadResultSchema = z.object({
   rejected: z.array(z.object({ name: z.string(), reason: z.string() })),
 })
 
+// The OCR language packs. `state` is a `string`, not an enum, for the same
+// reason as the search outcome: a client that rejected a state it had not heard
+// of would turn a future Host state into a client-side crash.
+const ocrPackSchema = z.object({
+  lang: z.string(),
+  fileName: z.string(),
+  url: z.string(),
+  gzipBytes: z.number(),
+  present: z.boolean(),
+  bytes: z.number(),
+})
+
+const ocrStatusSchema = z.object({
+  ready: z.boolean(),
+  dir: z.string(),
+  packs: z.array(ocrPackSchema),
+  downloadedBytes: z.number(),
+  fetchBytes: z.number(),
+  missing: z.array(z.string()),
+})
+
+const ocrDownloadSchema = z.object({
+  state: z.string(),
+  downloadedBytes: z.number(),
+  totalBytes: z.number(),
+  lang: z.string(),
+  message: z.string(),
+})
+
 const string = z.string()
 const strings = z.array(z.string())
 const boolean = z.boolean()
@@ -201,6 +230,10 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
     result: boolean,
   },
   getVaultRoot: { parameters: [], result: string },
+  getOcrStatus: { parameters: [], result: ocrStatusSchema },
+  startOcrDownload: { parameters: [], result: ocrDownloadSchema },
+  cancelOcrDownload: { parameters: [], result: ocrDownloadSchema },
+  getOcrDownload: { parameters: [], result: ocrDownloadSchema },
   testSearch: {
     parameters: [
       { name: 'query', schema: string },
@@ -275,6 +308,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     deleteMaterial: (kbId: string, id: string) => Promise<unknown>
     rescan: (kbId: string) => Promise<unknown>
     getVaultRoot: () => Promise<unknown>
+    getOcrStatus: () => Promise<unknown>
+    startOcrDownload: () => Promise<unknown>
+    cancelOcrDownload: () => Promise<unknown>
+    getOcrDownload: () => Promise<unknown>
     testSearch: (query: string, kbIds: readonly string[]) => Promise<unknown>
     getSessionScope: (agentId: string) => Promise<unknown>
     setSessionScope: (

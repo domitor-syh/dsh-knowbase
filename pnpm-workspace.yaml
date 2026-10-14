@@ -16,3 +16,7 @@ allowBuilds:
   protobufjs: false
   # Used by vitest through vite; its install step resolves the platform binary.
   esbuild: true
+  # OCR engine. Its `postinstall` is `opencollective-postinstall || true`, i.e. a
+  # donation banner with no build step, so there is nothing to run — but pnpm 11
+  # still requires an explicit decision here or the install fails outright.
+  tesseract.js: false

@@ -11,11 +11,17 @@
  *   registered factory must produce the same exports, and must NOT have inlined
  *   `react` or any `@deepseek-ai/*` module (a second React copy in the bundle is
  *   the exact failure the host's single-React rule exists to prevent).
+ * - OCR engine: `lib/ocr-runtime.cjs` plus `lib/ocr-worker.cjs` must be
+ *   self-contained — an engine that still resolved from npm would reintroduce
+ *   the install failure these bundles exist to remove — and the three
+ *   `tesseract-core` wasm payloads must sit beside them, because that is where
+ *   the loaders look for them.
  *
  * Run after `pnpm build`.
  */
 
 import { createRequire } from 'node:module'
+import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -146,6 +152,65 @@ check(
   unexpected.length === 0,
   `unexpected: ${unexpected.join(', ')}`,
 )
+
+// -------------------------------------------------------------- OCR engine
+
+console.log('ocr engine (lib/ocr-runtime.cjs, lib/ocr-worker.cjs)')
+
+/** Size of a file in `lib/`, or 0 when it is not there. */
+const sizeOf = name => {
+  const file = resolve(root, 'lib', name)
+  return existsSync(file) ? statSync(file).size : 0
+}
+
+const RUNTIME = 'ocr-runtime.cjs'
+const WORKER = 'ocr-worker.cjs'
+// The three variants `tesseract.js-core` picks between at runtime, by whatever
+// the CPU supports. All three ship; the loader asks for exactly one.
+const CORE_WASM = ['tesseract-core.wasm', 'tesseract-core-simd.wasm', 'tesseract-core-relaxedsimd.wasm']
+
+for (const name of [RUNTIME, WORKER]) {
+  check(`lib/${name} is emitted`, sizeOf(name) > 0, 'missing or empty')
+}
+
+for (const name of CORE_WASM) {
+  // Under a megabyte means a truncated copy, and the only symptom would be a
+  // loader error at the first recognition the user ever runs.
+  check(`lib/${name} is staged beside them`, sizeOf(name) > 1024 * 1024, `${sizeOf(name)} bytes`)
+}
+
+const licence = 'THIRD-PARTY-LICENSE-tesseract.txt'
+check(`lib/${licence} ships with the inlined engine`, sizeOf(licence) > 0, 'missing or empty')
+
+// The engine must be *inlined*. A surviving `require('tesseract.js')` would mean
+// the profile still has to resolve it out of node_modules, which is the install
+// failure these bundles exist to remove.
+for (const name of [RUNTIME, WORKER]) {
+  const source = await readFile(resolve(root, 'lib', name), 'utf8')
+  check(
+    `lib/${name} resolves nothing from npm`,
+    !/require\(\s*["']tesseract\.js[^"']*["']\s*\)/.test(source),
+  )
+}
+
+// ...while node's own builtins must NOT be inlined: the worker lives in a
+// `worker_threads` thread and a bundled copy of that module cannot work.
+const workerSource = await readFile(resolve(root, 'lib', WORKER), 'utf8')
+check(
+  `lib/${WORKER} keeps worker_threads external`,
+  /require\(\s*["'](node:)?worker_threads["']\s*\)/.test(workerSource),
+)
+
+// The host `import()`s this file as a file URL; a CJS module reached that way
+// arrives as a namespace whose `default` holds the exports. This checks the
+// same shape through plain `require`, which needs no loader involved.
+try {
+  const runtime = createRequire(resolve(root, 'package.json'))(resolve(root, 'lib', RUNTIME))
+  const api = typeof runtime?.createWorker === 'function' ? runtime : runtime?.default
+  check(`lib/${RUNTIME} exposes createWorker`, typeof api?.createWorker === 'function')
+} catch (error) {
+  check(`lib/${RUNTIME} loads as CommonJS`, false, String(error))
+}
 
 // -------------------------------------------------------------------- result
 
