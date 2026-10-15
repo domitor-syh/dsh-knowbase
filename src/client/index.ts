@@ -1,9 +1,10 @@
 /**
  * dsh-knowbase — browser half.
  *
- * Mounts the Remote contribution, then registers the settings section. The
- * section is the plugin's primary surface: `/kb` exists only because the Host
- * half had to be provable before any of this could be built.
+ * Mounts the Remote contribution, then registers the plugin's seats: the
+ * knowledge base page (a sidebar row plus the centre panel it opens), the
+ * composer control and the per-answer source button. `/kb` exists only because
+ * the Host half had to be provable before any of this could be built.
  *
  * The bundle is emitted as a lazy-CJS factory registered on
  * `window.__ModuleLoader__` (see `tsdown.config.ts`); `react` and
@@ -21,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import {
   createKnowbaseApi,
   knowbaseApi,
@@ -31,8 +33,8 @@ import {
 import { KnowbaseSourceAction } from './citation-button.tsx'
 import { ComposerKnowbaseToggle } from './composer-toggle.tsx'
 import { TYPERT_REMOTE } from './contribution.ts'
+import { KnowbasePanel, KnowbasePanelIcon, PANEL_ID } from './panel.tsx'
 import { installReader } from './reader.ts'
-import { KnowbaseSettingsPage } from './settings-page.tsx'
 
 export const name = 'knowbase'
 
@@ -93,15 +95,19 @@ export function apply(ctx: Context): void {
       console.error('[knowbase] remote channel failed to mount:', error)
     })
 
-  ctx.slots.inject('settings.section', () =>
+  // The knowledge base page. Two seats, one id: the sidebar row the user clicks
+  // and the centre panel it opens. The host wires the row's click straight to
+  // `layout.selectPanel(id)`, so the panel must exist under the same key or the
+  // click throws — the pair is not optional, which is why both registrations
+  // sit here together rather than in separate places.
+  ctx.slots.inject('main', () =>
+    ctx.slots.register({ name: 'main', key: PANEL_ID }, KnowbasePanel),
+  )
+
+  ctx.slots.inject('sidebar.panellist', () =>
     ctx.slots.register(
-      {
-        name: 'settings.section',
-        id: 'knowbase',
-        order: 50,
-        label: () => '知识库',
-      },
-      KnowbaseSettingsPage,
+      { name: 'sidebar.panellist', id: PANEL_ID, order: 50, label: () => '知识库' },
+      KnowbasePanelIcon,
     ),
   )
 

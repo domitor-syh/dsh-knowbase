@@ -1,5 +1,9 @@
 /**
- * The 知识库 settings page.
+ * The knowledge base page.
+ *
+ * Rendered in the host's centre column by `./panel.tsx`; the module was called
+ * `settings-page` while the page lived in the settings shell, and the seat is
+ * the only thing that changed.
  *
  * Layout follows the plan: a knowledge base list on the left, the selected
  * base's files and tools on the right. Everything talks to the Host through
@@ -18,7 +22,7 @@
  * The 「重扫」 button is what makes the user's own explorer a supported way in:
  * drop a document into the base's folder, press it, and the file appears.
  *
- * @module @domitor-syh/dsh-knowbase/client/settings-page
+ * @module @domitor-syh/dsh-knowbase/client/knowbase-page
  */
 
 import * as React from 'react'
@@ -229,8 +233,8 @@ function ConfirmButton(props: {
   )
 }
 
-/** The settings page. */
-export function KnowbaseSettingsPage(): React.ReactElement {
+/** The knowledge base page body. */
+export function KnowbasePage(): React.ReactElement {
   const [bases, setBases] = React.useState<readonly KnowledgeBaseView[]>([])
   const [selectedId, setSelectedId] = React.useState<string>('')
   const [materials, setMaterials] = React.useState<readonly MaterialView[]>([])
