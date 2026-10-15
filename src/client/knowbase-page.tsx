@@ -780,7 +780,7 @@ export function KnowbasePage(): React.ReactElement {
                 )}
                 <p style={{ color: COLORS.muted, fontSize: 11, margin: '8px 2px 0' }}>
                   会被检索的是纯文本（.txt / .md 等）、文本型 PDF（保留页码）和 PNG/JPG 图片
-                  （本机 OCR，需要先在设置里下载语言包）。扫描件 PDF 没有文字层，需要先把页面转成图片。
+                  （本机 OCR，需要先在上方「图片文字识别」里下载语言包）。扫描件 PDF 没有文字层，需要先把页面转成图片。
                 </p>
               </div>
 

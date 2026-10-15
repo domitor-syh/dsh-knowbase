@@ -382,7 +382,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
 
             {bases.length === 0 && (
               <p style={{ color: COLORS.muted, fontSize: 11, margin: '6px 2px 0' }}>
-                还没有知识库。先在「设置 → 知识库」里新建一个。
+                还没有知识库。点左侧栏的「知识库」图标去新建一个。
               </p>
             )}
             {scope !== undefined && scope.enabled && !scope.all && scope.kbIds.length === 0 && (
