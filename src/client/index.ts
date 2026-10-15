@@ -35,6 +35,7 @@ import { ComposerKnowbaseToggle } from './composer-toggle.tsx'
 import { TYPERT_REMOTE } from './contribution.ts'
 import { KnowbasePanel, KnowbasePanelIcon, PANEL_ID } from './panel.tsx'
 import { installReader } from './reader.ts'
+import { installTheme } from './theme.ts'
 
 export const name = 'knowbase'
 
@@ -50,6 +51,12 @@ export const inject = ['slots', 'locale', 'remote']
 
 export function apply(ctx: Context): void {
   console.info('[knowbase] client half loaded')
+
+  // Follow the host's colour scheme before anything paints. Acquired through the
+  // dynamic `ctx.inject` rather than the static list above on purpose: a host
+  // without a `theme` service must leave the plugin on its light palette, not
+  // park the whole client half waiting for a service that will never arrive.
+  installTheme(ctx)
 
   // The material reader: a tab type in the host's right column, so a citation
   // opens the source beside the answer instead of in a modal over it.

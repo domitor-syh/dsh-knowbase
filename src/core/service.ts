@@ -183,7 +183,7 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024
  * situation, and two wordings for it would read as two different problems.
  */
 const OCR_PACKS_HINT =
-  '图片文字识别需要 OCR 语言包（约 4.5 MB）：到设置页「图片文字识别」里点「下载语言包」，下载后重扫即可检索。'
+  '图片文字识别需要 OCR 语言包（约 4.5 MB）：在上方「图片文字识别」里点「下载语言包」，下载后重扫即可检索。'
 
 /** How deep a scan walks into sub-folders of a base. */
 const MAX_SCAN_DEPTH = 8
