@@ -46,6 +46,14 @@ export interface Palette {
   /** The pill when nothing is selected: quieter than the accent, still legible. */
   readonly idleText: string
   readonly idleBorder: string
+  /** The pill's hover/press fills — the host's own interaction washes. */
+  readonly interactiveHover: string
+  readonly interactiveActive: string
+  /** The enabled pill's hover: the accent wash, deepened. */
+  readonly accentWashHover: string
+  /** The idle pill's hover: the border firms up and the label comes forward. */
+  readonly idleBorderHover: string
+  readonly idleTextHover: string
 }
 
 /**
@@ -54,6 +62,10 @@ export interface Palette {
  * Sampled from the mockups' pixels — the panel is `#24262c`, the hairline that
  * serves as both panel border and section divider is `#34373e`, the search
  * field is `#2a2d33`, the off switch is `#131315` inside a `#2e3336` outline.
+ *
+ * The interaction washes are the host's own `--dsw-alias-interactive-bg-*`
+ * tokens rather than values of my own: hovering the pill should look like
+ * hovering anything else in the app, and only the host knows what that is.
  */
 const DARK: Palette = {
   accent: '#4285f4',
@@ -72,6 +84,11 @@ const DARK: Palette = {
   shadow: '0 10px 28px rgba(0, 0, 0, 0.55)',
   idleText: '#9aa1ab',
   idleBorder: '#35383f',
+  interactiveHover: 'var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.08))',
+  interactiveActive: 'var(--dsw-alias-interactive-bg-active, rgba(255, 255, 255, 0.14))',
+  accentWashHover: 'rgba(66, 133, 244, 0.18)',
+  idleBorderHover: 'var(--dsw-alias-border-l3, rgba(255, 255, 255, 0.16))',
+  idleTextHover: 'var(--dsw-alias-label-secondary, #cfd3d6)',
 }
 
 /**
@@ -80,6 +97,14 @@ const DARK: Palette = {
  * The fallbacks matter because a `var()` that resolves to nothing makes the
  * property invalid rather than inherited, so a host that ships without these
  * tokens would paint a transparent panel instead of a white one.
+ *
+ * The off switch is the one place the hand-off cannot be copied literally. Its
+ * dark reading is *recessed*: an interior darker than the panel, a hairline
+ * lighter than the panel, a thumb the colour of that hairline. On white there is
+ * nothing lighter than the panel to draw the frame with, so the translation
+ * inverts — a near-white interior, a mid-grey frame, a solid grey thumb — which
+ * is what keeps the state reading as the hand-off's 「粗线条框 + 小圆球」 rather
+ * than as the filled light-grey pill it used to be.
  */
 const LIGHT: Palette = {
   accent: '#4285f4',
@@ -91,13 +116,18 @@ const LIGHT: Palette = {
   fieldBorder: 'var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))',
   text: 'var(--dsw-alias-label-primary, #0f1115)',
   muted: 'var(--dsw-alias-label-tertiary, #979da6)',
-  trackOff: 'var(--dsw-static-neutral-bluish-100, #ebeef2)',
-  trackOffBorder: 'var(--dsw-alias-border-l3, rgba(0, 0, 0, 0.12))',
+  trackOff: 'var(--dsw-static-neutral-bluish-50, #f9fafb)',
+  trackOffBorder: 'var(--dsw-static-neutral-bluish-300, #cfd3d6)',
   knobOn: '#ffffff',
-  knobOff: '#ffffff',
+  knobOff: 'var(--dsw-static-neutral-bluish-400, #adb2b8)',
   shadow: '0 10px 28px rgba(15, 23, 42, 0.16)',
   idleText: 'var(--dsw-alias-label-tertiary, #979da6)',
   idleBorder: 'var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))',
+  interactiveHover: 'var(--dsw-alias-interactive-bg-hover, rgba(38, 49, 72, 0.06))',
+  interactiveActive: 'var(--dsw-alias-interactive-bg-active, rgba(38, 49, 72, 0.10))',
+  accentWashHover: 'rgba(66, 133, 244, 0.16)',
+  idleBorderHover: 'var(--dsw-alias-border-l3, rgba(0, 0, 0, 0.12))',
+  idleTextHover: 'var(--dsw-alias-label-secondary, #61666b)',
 }
 
 const PALETTES: Record<ColorScheme, Palette> = { light: LIGHT, dark: DARK }

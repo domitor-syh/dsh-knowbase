@@ -119,6 +119,31 @@ function SearchGlyph(): React.ReactElement {
   )
 }
 
+/**
+ * The row's switch, drawn to the hand-off's measurements.
+ *
+ * Two mockups define the two states, and they are not the same shape scaled:
+ * *off* is a hollow frame with a small ball, *on* is the same frame filled with
+ * the accent and a ball that has grown to fill it. Measured off the mockups at
+ * the host's own switch size (36×20 — the host's design notes state it):
+ * a ~2px frame on a 46px-tall track, a 22px ball off and a 34px ball on, which
+ * lands at a 1.5px frame with a 10px and a 16px ball. The ball's inset is the
+ * same on all sides off (3.5px) and 2px from the right edge on.
+ *
+ * The knob is positioned against the *padding* box, which is what an absolutely
+ * positioned child resolves against — so every number below is the outer
+ * geometry minus the 1.5px frame.
+ */
+const TRACK_WIDTH = 36
+const TRACK_HEIGHT = 20
+const TRACK_FRAME = 1.5
+const KNOB_OFF = 10
+const KNOB_ON = 16
+/** Off: the same inset on every side, so the ball looks like it floats. */
+const KNOB_OFF_INSET = (TRACK_HEIGHT - TRACK_FRAME * 2 - KNOB_OFF) / 2
+/** On: the ball fills the frame, pinned 2px off the right edge. */
+const KNOB_ON_INSET = (TRACK_HEIGHT - TRACK_FRAME * 2 - KNOB_ON) / 2
+
 /** One base row: its name, and the switch that puts it in scope. */
 function BaseRow(props: {
   name: string
@@ -169,27 +194,31 @@ function BaseRow(props: {
       <span
         aria-hidden="true"
         style={{
-          width: 34,
-          height: 20,
-          borderRadius: 10,
+          width: TRACK_WIDTH,
+          height: TRACK_HEIGHT,
+          borderRadius: TRACK_HEIGHT / 2,
           flexShrink: 0,
           position: 'relative',
           boxSizing: 'border-box',
           background: props.checked ? palette.accent : palette.trackOff,
-          border: `1px solid ${props.checked ? palette.accent : palette.trackOffBorder}`,
+          border: `${TRACK_FRAME}px solid ${
+            props.checked ? palette.accent : palette.trackOffBorder
+          }`,
           transition: 'background 120ms, border-color 120ms',
         }}
       >
         <span
           style={{
             position: 'absolute',
-            top: 1,
-            left: props.checked ? 15 : 1,
-            width: 16,
-            height: 16,
-            borderRadius: 8,
+            top: props.checked ? KNOB_ON_INSET : KNOB_OFF_INSET,
+            left: props.checked
+              ? TRACK_WIDTH - TRACK_FRAME * 2 - KNOB_ON - 2
+              : KNOB_OFF_INSET,
+            width: props.checked ? KNOB_ON : KNOB_OFF,
+            height: props.checked ? KNOB_ON : KNOB_OFF,
+            borderRadius: '50%',
             background: props.checked ? palette.knobOn : palette.knobOff,
-            transition: 'left 120ms, background 120ms',
+            transition: 'top 120ms, left 120ms, width 120ms, height 120ms, background 120ms',
           }}
         />
       </span>
@@ -204,6 +233,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
   const [scope, setScope] = React.useState<SessionScopeView | undefined>(undefined)
   const [bases, setBases] = React.useState<readonly KnowledgeBaseView[]>([])
   const [open, setOpen] = React.useState(false)
+  const [hover, setHover] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState('')
   const [query, setQuery] = React.useState('')
@@ -353,6 +383,10 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
         aria-haspopup="true"
         aria-expanded={open}
         disabled={!ready}
+        onMouseEnter={() => {
+          if (ready) setHover(true)
+        }}
+        onMouseLeave={() => setHover(false)}
         onClick={() => {
           const next = !open
           setOpen(next)
@@ -370,10 +404,22 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
           height: 26,
           boxSizing: 'border-box',
           padding: '0 9px',
-          border: `1px solid ${on ? palette.accent : palette.idleBorder}`,
+          // Both states answer the pointer. Off gets the host's neutral
+          // interaction wash and a firmer border; on deepens its accent wash.
+          // Without this the control was the only thing in the composer that
+          // did nothing at all under the cursor.
+          border: `1px solid ${
+            on ? palette.accent : hover ? palette.idleBorderHover : palette.idleBorder
+          }`,
           borderRadius: 999,
-          background: on ? palette.accentWash : 'transparent',
-          color: on ? palette.accent : palette.idleText,
+          background: on
+            ? hover
+              ? palette.accentWashHover
+              : palette.accentWash
+            : hover
+              ? palette.interactiveHover
+              : 'transparent',
+          color: on ? palette.accent : hover ? palette.idleTextHover : palette.idleText,
           fontSize: 12,
           lineHeight: 1,
           cursor: ready ? 'pointer' : 'default',
@@ -463,15 +509,16 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
               {error !== '' && <p style={{ ...warning, color: '#e5484d' }}>{error}</p>}
             </div>
 
-            <div style={divider} />
-
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 gap: 8,
-                padding: '8px 10px',
+                // No rule above the footer: the hand-off's second hairline was
+                // dropped on review — the count and the one action read as part
+                // of the list, and the line cut the panel in two.
+                padding: '6px 10px 10px',
               }}
             >
               <span data-kb-count style={{ fontSize: 12, color: palette.muted }}>
