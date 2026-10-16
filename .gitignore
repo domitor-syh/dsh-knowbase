@@ -17,6 +17,10 @@ lib/
 # 隔离的 DSH 开发环境（DSH_HOME），用于不污染 ~/.dsh 的真机加载验证
 .dshdev/
 
+# 第二个隔离 DSH_HOME：专门用来验「全新用户首装」（空库 + 空 .ocr/ + 全新 profile）。
+# 与 .dshdev 分开是因为首装验收要的是「什么都没有」的初始态，而 .dshdev 里已经有库和语言包。
+.dshfresh/
+
 # 环境与凭据
 .env
 .env.*

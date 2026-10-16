@@ -456,6 +456,13 @@ const CSS = `
 .kb-menu-item:disabled { opacity: 0.45; cursor: not-allowed; }
 .kb-menu-item--danger { color: var(--state-error); }
 .kb-empty { margin: 16px 0 0; font-size: 13px; color: var(--brand-muted-foreground); }
+/* 空态：列表不再吸收剩余高度。
+   两个列表都是 flex:1（有内容时要撑满、内部滚动），而「还没有知识库。」/
+   「还没有文件。」这两句是列表之后的兄弟节点 —— 列表空着照样占满，于是这两句
+   被推到卡片最底部，第一眼看过去像渲染坏了。稿子没画空态（它的脚本永远有数据），
+   这是 v39 重写后才露出来的一处。:empty 在 React 渲染空数组时成立：那时 ul
+   一个子节点都没有。**往这两个 ul 里塞任何东西（骨架屏、注释节点）都会让它失效。** */
+.kb-lib-list:empty, .kb-file-list:empty { flex: 0 0 auto; }
 
 /* 字段标签 */
 .kb-field-label { font-size: 12px; font-weight: 600; color: var(--brand-muted-foreground); }
