@@ -733,3 +733,24 @@ describe('KnowbaseService — reconciling with the disk', () => {
     ])
   })
 })
+
+describe('KnowbaseService — the folder a base lives in', () => {
+  it('names the folder it owns, so the page can hand it to the desktop', async () => {
+    const { service } = await freshService()
+    const created = await service.createKnowledgeBase('产品资料')
+    expect(service.baseFolderPath(created.id)).toBe(path.join(ROOT, created.folderName))
+  })
+
+  it('follows a rename, because the folder moves with the name', async () => {
+    const { service } = await freshService()
+    const created = await service.createKnowledgeBase('产品资料')
+    await service.renameKnowledgeBase(created.id, '需求资料')
+    const renamed = service.getKnowledgeBase(created.id)
+    expect(service.baseFolderPath(created.id)).toBe(path.join(ROOT, renamed?.folderName ?? ''))
+  })
+
+  it('has no folder to offer for a base that does not exist', async () => {
+    const { service } = await freshService()
+    expect(service.baseFolderPath('missing')).toBeUndefined()
+  })
+})

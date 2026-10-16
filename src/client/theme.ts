@@ -183,6 +183,30 @@ export function usePalette(): Palette {
 }
 
 /**
+ * The scheme itself, for surfaces that carry their own tokens.
+ *
+ * The page is a stylesheet rather than a set of inline styles (see
+ * `./page-style.ts`), so what it needs from here is not a palette object but the
+ * answer to "which one", and the same subscription the palette hook uses.
+ */
+export function colorScheme(): ColorScheme {
+  return current
+}
+
+/** The scheme as a React value, re-read whenever the host switches scheme. */
+export function useColorScheme(): ColorScheme {
+  const [, bump] = React.useState(0)
+  React.useEffect(() => {
+    const listener = (): void => bump(count => count + 1)
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+    }
+  }, [])
+  return current
+}
+
+/**
  * Follow the host's colour scheme.
  *
  * `ctx.inject` parks silently when a service never appears, which is the wanted

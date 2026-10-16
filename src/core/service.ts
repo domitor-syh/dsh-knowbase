@@ -389,6 +389,18 @@ export class KnowbaseService {
   }
 
   /**
+   * The absolute path of one base's folder, or `undefined` when it is gone.
+   *
+   * Handed to the OS file manager so the user can put a file in by hand — the
+   * supported way in that 「重扫」 exists to complete.
+   */
+  baseFolderPath(kbId: string): string | undefined {
+    const base = this.#knowledgeBases.get(kbId)
+    if (base === undefined) return undefined
+    return this.#baseDir(base)
+  }
+
+  /**
    * Read one file's bytes, or `undefined` when it is gone or too large.
    *
    * The size check runs against the scan's figure before a read is attempted,

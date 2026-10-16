@@ -34,6 +34,7 @@ import { KnowbaseSourceAction } from './citation-button.tsx'
 import { ComposerKnowbaseToggle } from './composer-toggle.tsx'
 import { TYPERT_REMOTE } from './contribution.ts'
 import { KnowbasePanel, KnowbasePanelIcon, PANEL_ID } from './panel.tsx'
+import { installPageStyle } from './page-style.ts'
 import { installReader } from './reader.ts'
 import { installTheme } from './theme.ts'
 
@@ -57,6 +58,11 @@ export function apply(ctx: Context): void {
   // without a `theme` service must leave the plugin on its light palette, not
   // park the whole client half waiting for a service that will never arrive.
   installTheme(ctx)
+
+  // The page's stylesheet, injected once. In `apply` rather than from the page
+  // component so the rules are in place before the first paint: a page that
+  // renders unstyled for one frame and then jumps reads as a host bug.
+  installPageStyle()
 
   // The material reader: a tab type in the host's right column, so a citation
   // opens the source beside the answer instead of in a modal over it.

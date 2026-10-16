@@ -1,5 +1,5 @@
 /**
- * The OCR language-pack controls.
+ * The OCR language-pack controls, in the hand-off's shape.
  *
  * ## Two jobs, two buttons
  *
@@ -12,11 +12,20 @@
  *
  * ## Why the page owns the state
  *
- * The same controls appear twice — in the OCR block and, when an image is
+ * The same controls appear twice — in the OCR card and, when an image is
  * uploaded without the packs, next to the file it concerns. Both are driven by
  * one {@link OcrController} the page holds, so the two places cannot show two
  * different states of the same download (which is exactly what two independent
  * pollers would do).
+ *
+ * ## The two sets of hooks
+ *
+ * The hand-off names the card's controls `data-kb-ocr-*` and the file block's
+ * `data-kb-files-*`, and that split is kept: one button answering both selectors
+ * would make every assertion about "the download button" ambiguous. The result
+ * message is `data-kb-ocr-hint` on the card, which is where the hand-off puts
+ * it — the sentence beside the file list is a different element
+ * (`data-kb-files-hint`) doing a different job.
  *
  * @module @domitor-syh/dsh-knowbase/client/ocr-panel
  */
@@ -24,15 +33,7 @@
 import * as React from 'react'
 import type { OcrDownloadStateView, OcrStatusView } from '../remote.ts'
 import { knowbaseApi } from './api.ts'
-
-const COLORS = {
-  border: '#dce3ed',
-  muted: '#526176',
-  accent: '#185fa5',
-  surface: '#fff',
-  subtle: '#f6f8fb',
-  warn: '#8a6100',
-} as const
+import { Icon, type IconName } from './icons.tsx'
 
 /**
  * How often the page asks where the download is.
@@ -43,24 +44,7 @@ const COLORS = {
  */
 const POLL_MS = 400
 
-const button: React.CSSProperties = {
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 6,
-  background: COLORS.surface,
-  padding: '4px 10px',
-  fontSize: 13,
-  cursor: 'pointer',
-}
-
-/** The emphasised choice, matching the settings page's own active style. */
-const primaryButton: React.CSSProperties = {
-  ...button,
-  borderColor: COLORS.accent,
-  color: COLORS.accent,
-  fontWeight: 600,
-}
-
-/** Human-readable byte size, matching the settings page. */
+/** Human-readable byte size. */
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -179,89 +163,120 @@ export function useOcrController(): OcrController {
   return { status, download, error, running, refresh, start, cancel }
 }
 
+/** Which copy of the shared controls this is, and therefore which hooks it carries. */
+type ControlsScope = 'ocr' | 'files'
+
 /** The progress bar, drawn only while there is something to watch. */
-function Progress(props: { download: OcrDownloadStateView }): React.ReactElement {
-  const { download } = props
+function Progress(props: {
+  download: OcrDownloadStateView
+  scope: ControlsScope
+}): React.ReactElement {
+  const { download, scope } = props
   const percent =
     download.totalBytes > 0
       ? Math.min(100, Math.round((download.downloadedBytes / download.totalBytes) * 100))
       : 0
   return (
-    <div data-kb-ocr-progress={download.state} style={{ marginTop: 8 }}>
-      <div
-        style={{
-          height: 6,
-          borderRadius: 3,
-          background: '#e8eef6',
-          overflow: 'hidden',
-        }}
-      >
-        <div style={{ height: '100%', width: `${percent}%`, background: COLORS.accent }} />
+    <div
+      className="kb-progress"
+      {...(scope === 'ocr'
+        ? { 'data-kb-ocr-progress': download.state }
+        : { 'data-kb-files-progress': download.state })}
+    >
+      <div className="kb-progress-track">
+        <div className="kb-progress-fill" style={{ width: `${percent}%` }} />
       </div>
-      <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 4 }}>
+      <p className="kb-progress-text">
         {formatBytes(download.downloadedBytes)} / {formatBytes(download.totalBytes)}（{percent}%）
         {download.lang === '' ? '' : ` · 正在下载 ${download.lang}`}
-      </div>
+      </p>
     </div>
   )
 }
 
-/** The buttons and progress: the two controls both places share. */
+/** The buttons and progress: the controls both places share. */
 function Controls(props: {
   controller: OcrController
   disabled: boolean
+  scope: ControlsScope
 }): React.ReactElement {
-  const { controller, disabled } = props
+  const { controller, disabled, scope } = props
   const ready = controller.status?.ready === true
   const running = controller.running
+  const state = ready ? 'present' : 'missing'
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-      <button
-        type="button"
-        data-kb-ocr-detect
-        style={button}
-        disabled={disabled || running}
-        onClick={() => void controller.refresh()}
-      >
-        检测
-      </button>
-      {running ? (
+    <>
+      <div className="kb-btn-row">
         <button
           type="button"
-          data-kb-ocr-cancel
-          style={button}
-          disabled={disabled}
-          onClick={() => void controller.cancel()}
+          className="kb-btn"
+          {...{ [`data-kb-${scope}-detect`]: '' }}
+          disabled={disabled || running}
+          onClick={() => void controller.refresh()}
         >
-          取消下载
+          <Icon name="refresh" />
+          检测
         </button>
-      ) : (
+        {/* Hidden rather than unmounted while a download runs — the hand-off's own
+            state machine, and it keeps the row from reflowing mid-download. */}
         <button
           type="button"
-          data-kb-ocr-download={ready ? 'present' : 'missing'}
-          style={primaryButton}
+          className="kb-btn kb-btn--primary"
+          {...{ [`data-kb-${scope}-download`]: state }}
+          hidden={running}
           disabled={disabled || ready || controller.status === undefined}
           onClick={() => void controller.start()}
         >
+          <Icon name="download" />
           {ready ? '语言包已就绪' : '下载语言包'}
         </button>
+        <button
+          type="button"
+          className="kb-btn kb-btn--danger"
+          {...{ [`data-kb-${scope}-cancel`]: '' }}
+          hidden={!running}
+          disabled={disabled}
+          onClick={() => void controller.cancel()}
+        >
+          <Icon name="x" />
+          取消下载
+        </button>
+      </div>
+      {running && controller.download !== undefined && (
+        <Progress download={controller.download} scope={scope} />
       )}
-    </span>
+    </>
   )
 }
 
-/** One line describing what the last check found. */
-function statusLine(status: OcrStatusView | undefined): string {
-  if (status === undefined) return '正在读取本地语言包状态…'
-  if (status.ready) {
-    return `语言包已就绪（${status.packs.map(pack => `${pack.lang} ${formatBytes(pack.bytes)}`).join(' · ')}），图片可以离线识别。`
+/** The status line, as the three states the hand-off draws. */
+function statusLine(status: OcrStatusView | undefined): {
+  state: 'reading' | 'ready' | 'missing'
+  icon: IconName
+  text: string
+} {
+  if (status === undefined) {
+    return { state: 'reading', icon: 'loader', text: '正在读取本地语言包状态…' }
   }
-  return `缺少 ${status.missing.join('、')} 语言包，需要下载约 ${formatBytes(status.fetchBytes)}。`
+  if (status.ready) {
+    return {
+      state: 'ready',
+      icon: 'check-circle',
+      text: `语言包已就绪（${status.packs
+        .map(pack => `${pack.lang} ${formatBytes(pack.bytes)}`)
+        .join(' · ')}），图片可以离线识别。`,
+    }
+  }
+  return {
+    state: 'missing',
+    icon: 'alert-triangle',
+    text: `缺少 ${status.missing.join('、')} 语言包，需要下载约 ${formatBytes(status.fetchBytes)}。`,
+  }
 }
 
 /**
- * The OCR block on the settings page.
+ * The OCR card.
  *
  * The sentence about where recognition happens is not decoration: the plan's
  * rule is that image text is recognized locally and the plugin never sends a
@@ -273,39 +288,47 @@ export function OcrSection(props: {
   disabled: boolean
 }): React.ReactElement {
   const { controller, disabled } = props
+  const line = statusLine(controller.status)
+  const download = controller.download
+  const result = controller.error !== '' ? controller.error : (download?.message ?? '')
+  const tone =
+    controller.error !== '' || download?.state === 'failed'
+      ? 'warn'
+      : download?.state === 'done'
+        ? 'ok'
+        : ''
+
   return (
-    <div data-kb-ocr-section style={{ padding: 10, marginBottom: 12, border: `1px solid ${COLORS.border}`, borderRadius: 8, background: COLORS.surface }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 12, color: COLORS.muted }}>图片文字识别（OCR）</span>
-        <Controls controller={controller} disabled={disabled} />
-      </div>
-      <p data-kb-ocr-status={controller.status?.ready === true ? 'ready' : 'missing'} style={{ fontSize: 12, margin: 0, color: COLORS.muted }}>
-        {statusLine(controller.status)}
+    <section className="kb-card" data-kb-ocr-section aria-labelledby="kb-ocr-title">
+      <h2 className="kb-card-title" id="kb-ocr-title">
+        图片文字识别（OCR）
+      </h2>
+      <p
+        className={`kb-status kb-status--${line.state}`}
+        data-kb-ocr-status={line.state === 'ready' ? 'ready' : 'missing'}
+      >
+        <Icon name={line.icon} />
+        <span>{line.text}</span>
       </p>
+      <div className="kb-ocr-actions">
+        <Controls controller={controller} disabled={disabled} scope="ocr" />
+      </div>
+      {result !== '' && (
+        <p className={`kb-msg${tone === '' ? '' : ` kb-msg--${tone}`}`} data-kb-ocr-hint>
+          <Icon name={tone === 'ok' ? 'check' : tone === 'warn' ? 'alert-triangle' : 'info'} />
+          <span>{result}</span>
+        </p>
+      )}
       {controller.status !== undefined && (
-        <p style={{ fontSize: 11, color: COLORS.muted, margin: '4px 0 0', wordBreak: 'break-all' }}>
-          语言包目录：{controller.status.dir}
+        <p className="kb-ocr-dir">语言包目录：{controller.status.dir}</p>
+      )}
+      {controller.status?.ready === true && (
+        <p className="kb-ocr-privacy">
+          <Icon name="lock" />
+          <span>识别在你的电脑上完成，图片不会被上传；语言包只在点「下载语言包」时从 CDN 取一次。</span>
         </p>
       )}
-      {controller.status !== undefined && controller.status.ready && (
-        <p style={{ fontSize: 11, color: COLORS.muted, margin: '4px 0 0' }}>
-          识别在你的电脑上完成，图片不会被上传；语言包只在点「下载语言包」时从 CDN 取一次。
-        </p>
-      )}
-      {controller.download !== undefined && controller.download.state !== 'idle' && (
-        <div style={{ marginTop: 6 }}>
-          {controller.error === '' && controller.download.message !== '' && (
-            <p style={{ fontSize: 12, margin: 0, color: controller.download.state === 'failed' ? COLORS.warn : COLORS.muted }}>
-              {controller.download.message}
-            </p>
-          )}
-          {controller.running && <Progress download={controller.download} />}
-        </div>
-      )}
-      {controller.error !== '' && (
-        <p style={{ fontSize: 12, margin: '6px 0 0', color: COLORS.warn }}>{controller.error}</p>
-      )}
-    </div>
+    </section>
   )
 }
 
@@ -322,32 +345,15 @@ export function OcrHint(props: {
   disabled: boolean
 }): React.ReactElement {
   const { controller, disabled } = props
+  const message = controller.download?.message ?? ''
   return (
-    <div
-      data-kb-ocr-hint
-      style={{
-        border: `1px solid ${COLORS.border}`,
-        borderRadius: 6,
-        background: COLORS.subtle,
-        padding: '8px 10px',
-        marginTop: 8,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <span style={{ fontSize: 12, color: COLORS.muted }}>
-          刚上传的图片要等 OCR 语言包就绪后才能检索；下载完点上面的「重扫」就会入库
-          （约 4.5 MB，在你本机识别，图片不会上传）。
-        </span>
-        <Controls controller={controller} disabled={disabled} />
-      </div>
-      {controller.download !== undefined && (controller.running || controller.download.message !== '') && (
-        <div style={{ marginTop: 4 }}>
-          {controller.download.message !== '' && (
-            <p style={{ fontSize: 11, margin: 0, color: COLORS.muted }}>{controller.download.message}</p>
-          )}
-          {controller.running && <Progress download={controller.download} />}
-        </div>
-      )}
+    <div className="kb-inline-hint" data-kb-files-hint>
+      <p>
+        刚上传的图片要等 OCR 语言包就绪后才能检索；下载完点上面的「重扫」就会入库
+        （约 4.5 MB，在你本机识别，图片不会上传）。
+      </p>
+      <Controls controller={controller} disabled={disabled} scope="files" />
+      {message !== '' && controller.running !== true && <p>{message}</p>}
     </div>
   )
 }

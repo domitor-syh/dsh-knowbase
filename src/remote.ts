@@ -32,6 +32,7 @@ import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { OcrResourceManager, OcrResourceStatus } from './core/ocr-resources.ts'
 import type { SessionSelectionRegistry } from './core/session-scope.ts'
 import type { KnowbaseService } from './core/service.ts'
+import { revealFolder, shellInfo } from './core/shell.ts'
 import { installRemoteMarkers } from './remote-methods.ts'
 
 /** Cordis service key, wire namespace, and registry key. */
@@ -185,6 +186,22 @@ export interface UploadResultView {
   readonly added: number
   /** Files that were refused, by name, with the reason. */
   readonly rejected: readonly { readonly name: string; readonly reason: string }[]
+}
+
+/** Which file manager this desktop has, and whether a folder can be opened in it. */
+export interface ShellInfoView {
+  readonly fileManager: string
+  readonly canReveal: boolean
+}
+
+/** What happened when the page asked the desktop to show a base's folder. */
+export interface RevealResultView {
+  /** True when the opener was started; not proof that a window appeared. */
+  readonly ok: boolean
+  /** The folder that was handed over; `''` when the base no longer exists. */
+  readonly path: string
+  readonly fileManager: string
+  readonly message: string
 }
 
 /** What the service methods need from the plugin. */
@@ -417,6 +434,35 @@ export class KnowbaseRemote extends TypertRemoteService {
   /** The vault root, so the page can show where the user's files actually live. */
   async getVaultRoot(): Promise<string> {
     return deps().service.root
+  }
+
+  /**
+   * What this desktop calls its file manager, and whether it can be asked to
+   * open a folder.
+   *
+   * Read before the first reveal so the menu item can be worded for the machine
+   * the user is on (「从文件资源管理器打开」 / 「在访达中显示」) and hidden where
+   * there is no desktop to open it on — the same two facts the host's own
+   * `nativeFileManager()` / `canOpenNativePath()` exist to supply.
+   */
+  async getShellInfo(): Promise<ShellInfoView> {
+    return shellInfo()
+  }
+
+  /**
+   * Open one base's folder in the OS file manager.
+   *
+   * A file dropped in by hand is a supported way to add material, so this is the
+   * action that makes that route usable rather than theoretical. It never
+   * throws: a machine with no opener reports the failure as a result, because
+   * the page still has the path and can offer it.
+   */
+  async revealBaseFolder(kbId: string): Promise<RevealResultView> {
+    const path = deps().service.baseFolderPath(kbId)
+    if (path === undefined) {
+      return { ok: false, path: '', fileManager: '', message: '知识库不存在。' }
+    }
+    return revealFolder(path)
   }
 
   /**

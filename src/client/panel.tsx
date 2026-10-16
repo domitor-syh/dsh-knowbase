@@ -73,18 +73,15 @@ export function KnowbasePanelIcon(props: { size: number }): React.ReactElement {
  *
  * The frame gives this column a definite height, so the scroll container is
  * ours: the page must not grow the frame, it must scroll inside it. The width
- * cap keeps the two-column layout from stretching the detail pane across an
- * ultrawide window.
+ * cap and the centring belong to the page itself (`#kb-settings-page` carries
+ * the hand-off's `max-width: 1320px`), so this wrapper adds nothing but the
+ * height and the overflow — a second cap here would silently squeeze the
+ * two-column layout the hand-off draws.
  */
 export function KnowbasePanel(): React.ReactElement {
   return (
-    <div
-      data-kb-panel-page
-      style={{ height: '100%', minHeight: 0, overflowY: 'auto' }}
-    >
-      <div style={{ maxWidth: 1080, margin: '0 auto' }}>
-        <KnowbasePage />
-      </div>
+    <div data-kb-panel-page style={{ height: '100%', minHeight: 0, overflowY: 'auto' }}>
+      <KnowbasePage />
     </div>
   )
 }

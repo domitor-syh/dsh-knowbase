@@ -20,8 +20,10 @@ import type {
   MaterialView,
   OcrDownloadStateView,
   OcrStatusView,
+  RevealResultView,
   SearchReportView,
   SessionScopeView,
+  ShellInfoView,
   UploadResultView,
 } from '../remote.ts'
 
@@ -63,6 +65,11 @@ export interface KnowbaseApi {
   /** `kbId` of `''` rescans every base. */
   rescan(kbId: string): Promise<boolean>
   getVaultRoot(): Promise<string>
+
+  /** Which file manager this desktop has, so the page can word its menu. */
+  getShellInfo(): Promise<ShellInfoView>
+  /** Hand one base's folder to that file manager. Never throws. */
+  revealBaseFolder(kbId: string): Promise<RevealResultView>
 
   /** The OCR language packs on disk. Read-only: it never starts a download. */
   getOcrStatus(): Promise<OcrStatusView>
@@ -116,6 +123,8 @@ interface KnowbaseWire {
   deleteMaterial: (kbId: string, id: string) => Promise<RemoteResult<boolean>>
   rescan: (kbId: string) => Promise<RemoteResult<boolean>>
   getVaultRoot: () => Promise<RemoteResult<string>>
+  getShellInfo: () => Promise<RemoteResult<ShellInfoView>>
+  revealBaseFolder: (kbId: string) => Promise<RemoteResult<RevealResultView>>
   getOcrStatus: () => Promise<RemoteResult<OcrStatusView>>
   startOcrDownload: () => Promise<RemoteResult<OcrDownloadStateView>>
   cancelOcrDownload: () => Promise<RemoteResult<OcrDownloadStateView>>
@@ -210,6 +219,8 @@ export function createKnowbaseApi(ctx: Context): KnowbaseApi {
     deleteMaterial: (kbId, id) => unwrap(wire.deleteMaterial(kbId, id)),
     rescan: kbId => unwrap(wire.rescan(kbId)),
     getVaultRoot: () => unwrap(wire.getVaultRoot()),
+    getShellInfo: () => unwrap(wire.getShellInfo()),
+    revealBaseFolder: kbId => unwrap(wire.revealBaseFolder(kbId)),
     getOcrStatus: () => unwrap(wire.getOcrStatus()),
     startOcrDownload: () => unwrap(wire.startOcrDownload()),
     cancelOcrDownload: () => unwrap(wire.cancelOcrDownload()),

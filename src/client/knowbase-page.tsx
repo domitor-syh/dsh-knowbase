@@ -5,11 +5,6 @@
  * `settings-page` while the page lived in the settings shell, and the seat is
  * the only thing that changed.
  *
- * Layout follows the plan: a knowledge base list on the left, the selected
- * base's files and tools on the right. Everything talks to the Host through
- * `./api.ts`, so this file contains no transport, no parsing and no knowledge of
- * how a call travels.
- *
  * ## What this page is
  *
  * A file manager over a folder. A base IS a directory in the vault, and every
@@ -19,26 +14,41 @@
  * moved into the vault's `_回收站` folder, which is a plain folder the user can
  * drag things back out of.
  *
- * The 「重扫」 button is what makes the user's own explorer a supported way in:
- * drop a document into the base's folder, press it, and the file appears.
+ * The 「重扫」 button, and the row menu's 「从文件资源管理器打开」, are what make
+ * the user's own explorer a supported way in: drop a document into the base's
+ * folder, press it, and the file appears.
+ *
+ * ## Shape
+ *
+ * The hand-off's layout, top to bottom: a title, a two-card grid (OCR packs,
+ * retrieval test), one sliding notice, then two columns — the base list on the
+ * left, the selected base's files on the right. Everything destructive goes
+ * through one centred modal rather than the inline two-step confirm this page
+ * used to carry, because there are now four of them (add, rename, delete base,
+ * delete file) and four different inline confirmations is four different
+ * behaviours to learn.
+ *
+ * Styling is a stylesheet (`./page-style.ts`), not inline objects: the hand-off
+ * states hover, focus, disabled and reduced-motion behaviour, and a page this
+ * size is exactly the case where a stylesheet is the smaller artefact.
+ *
+ * ## The hooks
+ *
+ * `data-kb-*` attributes are the page's test surface (`scripts/probe-*.mjs`).
+ * They are on the element that owns the behaviour, never on a wrapper, and no
+ * hook name appears twice — a selector that matches two elements makes every
+ * assertion written against it ambiguous.
  *
  * @module @domitor-syh/dsh-knowbase/client/knowbase-page
  */
 
 import * as React from 'react'
-import type { KnowledgeBaseView, MaterialView, SearchReportView } from '../remote.ts'
+import type { KnowledgeBaseView, MaterialView, SearchReportView, ShellInfoView } from '../remote.ts'
 import { knowbaseApi, knowbaseChannelError } from './api.ts'
+import { Icon } from './icons.tsx'
 import { OcrHint, OcrSection, useOcrController } from './ocr-panel.tsx'
-
-const COLORS = {
-  border: '#dce3ed',
-  muted: '#526176',
-  accent: '#185fa5',
-  danger: '#b3261e',
-  surface: '#fff',
-  subtle: '#f6f8fb',
-  warn: '#8a6100',
-} as const
+import { pageTokens } from './page-style.ts'
+import { useColorScheme } from './theme.ts'
 
 /**
  * Largest file the browser may push through the Remote channel.
@@ -64,38 +74,6 @@ function extensionOf(name: string): string {
   return dot === -1 ? '' : name.slice(dot + 1).toLowerCase()
 }
 
-const panel: React.CSSProperties = {
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 8,
-  background: COLORS.surface,
-}
-
-const button: React.CSSProperties = {
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 6,
-  background: COLORS.surface,
-  padding: '4px 10px',
-  fontSize: 13,
-  cursor: 'pointer',
-}
-
-/** The chosen option in a two-way picker, e.g. the retrieval-test scope. */
-const activeButton: React.CSSProperties = {
-  ...button,
-  borderColor: COLORS.accent,
-  color: COLORS.accent,
-  fontWeight: 600,
-}
-
-const input: React.CSSProperties = {
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 6,
-  padding: '6px 8px',
-  fontSize: 13,
-  width: '100%',
-  boxSizing: 'border-box',
-}
-
 /** Report a failure without letting it escape into React's error path. */
 function messageOf(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -110,6 +88,178 @@ function formatBytes(bytes: number): string {
 }
 
 /**
+ * What one Host call left behind for the user to read.
+ *
+ * The hand-off draws one alert in two tones — a failure is the same strip with
+ * a triangle and the error colour — so an action reports which tone its
+ * sentence deserves rather than the page guessing from the text. A mixed upload
+ * is the case that needs it: files went in *and* files were refused, and the
+ * hand-off colours that as a failure.
+ */
+interface Outcome {
+  readonly text: string
+  readonly kind: 'notice' | 'error'
+}
+
+/** A sentence that reports success. */
+function note(text: string): Outcome {
+  return { text, kind: 'notice' }
+}
+
+/** A sentence that reports something the user should look at. */
+function problem(text: string): Outcome {
+  return { text, kind: 'error' }
+}
+
+/** One step that must ask before it acts. */
+type Dialog =
+  | { readonly kind: 'new' }
+  | { readonly kind: 'rename'; readonly id: string }
+  | { readonly kind: 'deleteBase'; readonly id: string }
+  | { readonly kind: 'deleteFile'; readonly id: string }
+
+/**
+ * The one notice strip.
+ *
+ * Always mounted, `hidden` when there is nothing to say: the hand-off's slide-in
+ * needs the element to exist one frame before the class lands, and a live region
+ * that is created at the same moment as its text is not announced by every
+ * screen reader. The double `requestAnimationFrame` is the standard way to get a
+ * transition to run on an element that was hidden a moment ago.
+ */
+function Alert(props: { text: string; kind: 'notice' | 'error' }): React.ReactElement {
+  const [shown, setShown] = React.useState(false)
+  const { text, kind } = props
+
+  React.useEffect(() => {
+    setShown(false)
+    if (text === '') return
+    let inner = 0
+    const outer = window.requestAnimationFrame(() => {
+      inner = window.requestAnimationFrame(() => setShown(true))
+    })
+    return () => {
+      window.cancelAnimationFrame(outer)
+      window.cancelAnimationFrame(inner)
+    }
+  }, [text, kind])
+
+  return (
+    <div
+      className={`kb-alert kb-alert--${kind}${shown ? ' is-in' : ''}`}
+      data-kb-alert
+      role="status"
+      aria-live="polite"
+      hidden={text === ''}
+    >
+      <Icon name={kind === 'error' ? 'alert-triangle' : 'check'} />
+      <span>{text}</span>
+    </div>
+  )
+}
+
+/**
+ * The centred modal every destructive step goes through.
+ *
+ * Backdrop click closes it, but only when the click is on the backdrop itself —
+ * `event.target === event.currentTarget` — because a click that started inside
+ * the panel and ended on the overlay (a drag across the title, a text selection
+ * released outside) must not discard what the user typed.
+ */
+function Modal(props: {
+  title: string
+  confirmText: string
+  danger?: boolean
+  confirmDisabled?: boolean
+  onConfirm: () => void
+  onClose: () => void
+  children?: React.ReactNode
+}): React.ReactElement {
+  return (
+    <div
+      className="kb-modal-overlay"
+      data-kb-modal
+      onClick={event => {
+        if (event.target === event.currentTarget) props.onClose()
+      }}
+    >
+      <div className="kb-modal" role="dialog" aria-modal="true" aria-labelledby="kb-modal-title">
+        <h3 className="kb-modal-title" id="kb-modal-title" data-kb-modal-title>
+          {props.title}
+        </h3>
+        <div className="kb-modal-body" data-kb-modal-body>
+          {props.children}
+        </div>
+        <div className="kb-modal-actions">
+          <button type="button" className="kb-btn" data-kb-modal-cancel onClick={props.onClose}>
+            取消
+          </button>
+          <button
+            type="button"
+            className={`kb-btn ${props.danger === true ? 'kb-btn--danger' : 'kb-btn--primary'}`}
+            data-kb-modal-confirm
+            disabled={props.confirmDisabled === true}
+            onClick={props.onConfirm}
+          >
+            {props.confirmText}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The name field inside the add / rename dialogs.
+ *
+ * Focused and selected on mount, and Enter commits: the whole dialog exists to
+ * capture one string, so the user should be able to type it and press Enter
+ * without ever touching the mouse.
+ */
+function NameField(props: {
+  id: string
+  label: string
+  placeholder?: string
+  value: string
+  onChange: (value: string) => void
+  onEnter: () => void
+}): React.ReactElement {
+  const ref = React.useRef<HTMLInputElement | null>(null)
+
+  React.useEffect(() => {
+    const node = ref.current
+    if (node === null) return
+    node.focus()
+    node.select()
+  }, [])
+
+  return (
+    <>
+      <label className="kb-field-label" htmlFor={props.id}>
+        {props.label}
+      </label>
+      <input
+        id={props.id}
+        ref={ref}
+        type="text"
+        className="kb-input"
+        value={props.value}
+        placeholder={props.placeholder}
+        aria-label={props.label}
+        autoComplete="off"
+        onChange={event => props.onChange(event.target.value)}
+        onKeyDown={event => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            props.onEnter()
+          }
+        }}
+      />
+    </>
+  )
+}
+
+/**
  * Render a retrieval report.
  *
  * The scope note is passed in rather than derived from the report: the Host
@@ -119,23 +269,20 @@ function formatBytes(bytes: number): string {
  */
 function Report(props: { report: SearchReportView; scopeNote: string }): React.ReactElement {
   const { report, scopeNote } = props
-  const note = (
-    <p style={{ color: COLORS.muted, fontSize: 12, margin: '0 0 8px' }}>
-      检索范围：{scopeNote}
-    </p>
-  )
+  const note = <p className="kb-report-scope">{scopeNote}</p>
 
   if (report.outcome !== 'hits') {
     const text: Record<string, string> = {
       no_match: '未命中：所选知识库中没有相关片段。换个说法或换关键词可能命中。',
       empty_scope: '所选知识库不存在或为空。',
-      not_ready: '所选知识库里还没有可检索的文件（目前支持 .txt / .md 等纯文本和文本型 PDF）。',
+      not_ready:
+        '所选知识库里还没有可检索的文件（目前支持 .txt / .md 等纯文本、文本型 PDF 和 PNG/JPG 图片）。',
       error: `检索失败：${report.reason}`,
     }
     return (
-      <div data-kb-test-report>
+      <div className="kb-report" data-kb-test-report>
         {note}
-        <p style={{ color: COLORS.muted, fontSize: 13, margin: 0 }}>
+        <p className="kb-report-summary">
           {text[report.outcome] ?? report.outcome}（{report.elapsedMs} ms）
         </p>
       </div>
@@ -143,98 +290,37 @@ function Report(props: { report: SearchReportView; scopeNote: string }): React.R
   }
 
   return (
-    <div data-kb-test-report>
+    <div className="kb-report" data-kb-test-report>
       {note}
-      <p style={{ color: COLORS.muted, fontSize: 12, margin: '0 0 8px' }}>
+      <p className="kb-report-summary">
         命中 {report.passages.length} 个片段，用时 {report.elapsedMs} ms
       </p>
       {report.passages.map((passage, index) => (
-        <div
-          key={`${passage.materialTitle}-${passage.locator}-${index}`}
-          style={{ ...panel, padding: 10, marginBottom: 8, background: COLORS.subtle }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'baseline',
-              justifyContent: 'space-between',
-              gap: 8,
-              marginBottom: 4,
-            }}
-          >
-            <div style={{ fontSize: 12, color: COLORS.accent }}>
-              [{index + 1}] {passage.kbName} / {passage.materialTitle} · {passage.locator}
-            </div>
-            <div style={{ fontSize: 11, color: COLORS.muted, whiteSpace: 'nowrap' }}>
+        <div key={`${passage.materialTitle}-${passage.locator}-${index}`} className="kb-hit">
+          <div className="kb-hit-head">
+            <span className="kb-hit-src">
+              {index + 1}. {passage.kbName} / {passage.materialTitle} · {passage.locator}
+            </span>
+            <span className="kb-hit-score">
               score {passage.score.toFixed(2)} · 覆盖 {Math.round(passage.coverage * 100)}%
-            </div>
+            </span>
           </div>
-          <div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{passage.text}</div>
+          <p className="kb-hit-body" data-kb-report-passage>
+            {passage.text}
+          </p>
         </div>
       ))}
-      <p style={{ color: COLORS.muted, fontSize: 11, margin: '0 2px' }}>
+      <p className="kb-report-foot">
         score 只在同一次提问内可比；覆盖偏低说明命中的查询词少，片段可能只是碰巧重叠。
       </p>
     </div>
   )
 }
 
-/**
- * A destructive action that asks once.
- *
- * The first click arms the row; the second commits and anything else disarms it.
- * Rendered inline rather than as a modal because it is one row, and because a
- * page should not grow a dialog stack before it grows a design system.
- */
-function ConfirmButton(props: {
-  label: string
-  confirmLabel: string
-  disabled?: boolean
-  onConfirm: () => void
-}): React.ReactElement {
-  const [armed, setArmed] = React.useState(false)
-
-  React.useEffect(() => {
-    if (!armed) return
-    const timer = window.setTimeout(() => setArmed(false), 4000)
-    return () => window.clearTimeout(timer)
-  }, [armed])
-
-  if (!armed) {
-    return (
-      <button
-        type="button"
-        style={{ ...button, color: COLORS.danger }}
-        disabled={props.disabled}
-        onClick={() => setArmed(true)}
-      >
-        {props.label}
-      </button>
-    )
-  }
-
-  return (
-    <span style={{ display: 'inline-flex', gap: 4 }}>
-      <button
-        type="button"
-        style={{ ...button, borderColor: COLORS.danger, color: COLORS.danger }}
-        disabled={props.disabled}
-        onClick={() => {
-          setArmed(false)
-          props.onConfirm()
-        }}
-      >
-        {props.confirmLabel}
-      </button>
-      <button type="button" style={button} onClick={() => setArmed(false)}>
-        取消
-      </button>
-    </span>
-  )
-}
-
 /** The knowledge base page body. */
 export function KnowbasePage(): React.ReactElement {
+  const scheme = useColorScheme()
+
   const [bases, setBases] = React.useState<readonly KnowledgeBaseView[]>([])
   const [selectedId, setSelectedId] = React.useState<string>('')
   const [materials, setMaterials] = React.useState<readonly MaterialView[]>([])
@@ -243,40 +329,44 @@ export function KnowbasePage(): React.ReactElement {
   const [notice, setNotice] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [vaultRoot, setVaultRoot] = React.useState('')
+  const [shell, setShell] = React.useState<ShellInfoView | undefined>(undefined)
 
-  const [newBaseName, setNewBaseName] = React.useState('')
   const [query, setQuery] = React.useState('')
   // Retrieval test scope. The chat seam searches a set of bases, so a panel
   // fixed to one base cannot answer "what would be sent?" for a multi-base
   // session — the question the panel exists to answer.
   const [testAll, setTestAll] = React.useState(false)
 
-  // Base info editing.
-  const [editingInfo, setEditingInfo] = React.useState(false)
-  const [editName, setEditName] = React.useState('')
-  const [editDescription, setEditDescription] = React.useState('')
+  const [dialog, setDialog] = React.useState<Dialog | undefined>(undefined)
+  const [draftName, setDraftName] = React.useState('')
+  /** The base whose row menu is open; `''` when none is. */
+  const [menuFor, setMenuFor] = React.useState('')
 
   const uploadInput = React.useRef<HTMLInputElement | null>(null)
 
   // The OCR state lives at page level rather than inside the block, because the
-  // same controls appear twice: once in the always-visible section and once,
-  // when it matters, under the file list (see `./ocr-panel.tsx`).
+  // same controls appear twice: once in the always-visible card and once, when
+  // it matters, under the file list (see `./ocr-panel.tsx`).
   const ocr = useOcrController()
   // Set when an image was uploaded while the packs were missing. The hint
   // withdraws itself once a download makes `ocr.status.ready` true.
   const [ocrHint, setOcrHint] = React.useState(false)
 
-  /** Run one Host call with shared busy/error handling. */
-  const run = React.useCallback(async (action: () => Promise<string>): Promise<void> => {
+  /** Run one Host call with shared busy handling; the sentence it returns is the alert. */
+  const run = React.useCallback(async (action: () => Promise<Outcome>): Promise<void> => {
     const current = knowbaseApi()
     if (current === undefined) {
+      setNotice('')
       setError('知识库通道尚未就绪，请稍候重试。')
       return
     }
     setBusy(true)
     setError('')
+    setNotice('')
     try {
-      setNotice(await action())
+      const outcome = await action()
+      if (outcome.kind === 'error') setError(outcome.text)
+      else setNotice(outcome.text)
     } catch (failure) {
       setError(messageOf(failure))
     } finally {
@@ -307,6 +397,7 @@ export function KnowbasePage(): React.ReactElement {
       if (kbId === '') return
       const current = knowbaseApi()
       if (current === undefined) {
+        setNotice('')
         setError('知识库通道尚未就绪，请稍候重试。')
         return
       }
@@ -322,7 +413,9 @@ export function KnowbasePage(): React.ReactElement {
 
       await run(async () => {
         if (accepted.length === 0) {
-          return `有 ${tooBig.length} 个文件过大（超过 ${formatBytes(MAX_UPLOAD_BYTES)}），请把它们直接放进知识库文件夹。`
+          throw new Error(
+            `有 ${tooBig.length} 个文件过大（超过 ${formatBytes(MAX_UPLOAD_BYTES)}），请把它们直接放进知识库文件夹。`,
+          )
         }
         const result = await current.addFiles(kbId, accepted)
         setMaterials(await current.listMaterials(kbId))
@@ -337,7 +430,13 @@ export function KnowbasePage(): React.ReactElement {
         const parts = [`已加入 ${result.added} 个文件`]
         if (result.rejected.length > 0) parts.push(`${result.rejected.length} 个被拒绝`)
         for (const file of tooBig) parts.push(`「${file}」太大，未上传`)
-        return `${parts.join('，')}。`
+        const sentence = `${parts.join('，')}。`
+        // A mixed result is coloured as a failure: the hand-off's own reading is
+        // that a file the user chose did not go in, and that is worth looking at
+        // even though the rest succeeded.
+        return tooBig.length > 0 || result.rejected.length > 0
+          ? problem(sentence)
+          : note(sentence)
       })
     },
     [ocr.refresh, refreshBases, run, selectedId],
@@ -352,17 +451,19 @@ export function KnowbasePage(): React.ReactElement {
       const current = knowbaseApi()
       if (current === undefined) return
       try {
-        const [list, root] = await Promise.all([
+        const [list, root, shellInfo] = await Promise.all([
           current.listKnowledgeBases(),
           current.getVaultRoot(),
+          current.getShellInfo(),
         ])
         if (cancelled) return
         setBases(list)
         setVaultRoot(root)
+        setShell(shellInfo)
         setSelectedId(existing =>
           list.some(item => item.id === existing) ? existing : (list[0]?.id ?? ''),
         )
-        // Read the OCR packs in the same pass. Without this the block sits on
+        // Read the OCR packs in the same pass. Without this the card sits on
         // 「正在读取本地语言包状态…」 with its button disabled until someone
         // presses 检测, which reads as a broken panel rather than an unread one.
         // It is a read — two `stat` calls — and the download still only ever
@@ -411,8 +512,42 @@ export function KnowbasePage(): React.ReactElement {
     }
   }, [selectedId, bases])
 
+  // Closing the row menu. Both listeners are installed only while one is open,
+  // so a page with no menu pays nothing for them.
+  React.useEffect(() => {
+    if (menuFor === '') return
+    const onDown = (event: MouseEvent): void => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      // The trigger's own click toggles; a click inside the menu is the menu's.
+      if (target.closest('[data-kb-menu]') !== null) return
+      if (target.closest('[data-kb-lib-more]') !== null) return
+      setMenuFor('')
+    }
+    document.addEventListener('click', onDown)
+    return () => document.removeEventListener('click', onDown)
+  }, [menuFor])
+
+  React.useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      if (dialog !== undefined) {
+        event.preventDefault()
+        setDialog(undefined)
+        return
+      }
+      if (menuFor !== '') {
+        event.preventDefault()
+        setMenuFor('')
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [dialog, menuFor])
+
   const selected = bases.find(item => item.id === selectedId)
-  const folderPath = selected === undefined || vaultRoot === '' ? '' : `${vaultRoot}\\${selected.folderName}`
+  const folderPath =
+    selected === undefined || vaultRoot === '' ? '' : `${vaultRoot}\\${selected.folderName}`
 
   /** Which bases the retrieval test searches, and what to call that set. */
   const testBases = testAll
@@ -421,23 +556,24 @@ export function KnowbasePage(): React.ReactElement {
       ? []
       : [selected.id]
   const testScopeNote = testAll
-    ? `全部 ${bases.length} 个知识库，共 ${bases.reduce((sum, item) => sum + item.indexedCount, 0)} 个可检索文件`
-    : `「${selected?.name ?? ''}」，共 ${selected?.indexedCount ?? 0} 个可检索文件`
+    ? `检索范围：全部 ${bases.length} 个知识库，共 ${bases.reduce((sum, item) => sum + item.indexedCount, 0)} 个可检索文件`
+    : `检索范围：「${selected?.name ?? ''}」，共 ${selected?.indexedCount ?? 0} 个可检索文件`
 
   /** Run the retrieval test over the chosen scope, without calling the model. */
   const submitTest = (): void => {
     if (busy || query.trim() === '' || testBases.length === 0) return
     void run(async () => {
       setReport(await knowbaseApi()!.testSearch(query, testBases))
-      return ''
+      return note('')
     })
   }
 
   /** Switch the selected base and close the retrieval report. */
   const selectBase = (id: string): void => {
+    if (busy || id === selectedId) return
     setSelectedId(id)
     setReport(undefined)
-    setEditingInfo(false)
+    setMenuFor('')
   }
 
   /** Re-read one base — or every base — from the disk. */
@@ -446,406 +582,462 @@ export function KnowbasePage(): React.ReactElement {
       const current = knowbaseApi()!
       await current.rescan(kbId)
       await refreshBases()
-      if (kbId === '' || kbId === selectedId) setMaterials(await current.listMaterials(kbId === '' ? selectedId : kbId))
-      return kbId === '' ? '已重新扫描全部知识库。' : '已重新扫描该知识库。'
+      if (kbId === '' || kbId === selectedId) {
+        setMaterials(await current.listMaterials(kbId === '' ? selectedId : kbId))
+      }
+      return note(kbId === '' ? '已重新扫描全部知识库。' : '已重新扫描该知识库。')
     })
   }
 
-  /** Copy the base's folder path, so the user can paste it into Explorer. */
-  const copyFolderPath = (): void => {
-    if (folderPath === '') return
-    void navigator.clipboard
-      .writeText(folderPath)
-      .then(() => setNotice(`已复制文件夹路径：${folderPath}`))
-      .catch(() => setError('复制失败，请手动选中路径文本复制。'))
+  /** Hand one base's folder to the desktop's file manager. */
+  const reveal = (kbId: string): void => {
+    setMenuFor('')
+    void run(async () => {
+      const result = await knowbaseApi()!.revealBaseFolder(kbId)
+      if (!result.ok) throw new Error(result.message)
+      return note(`已在${result.fileManager}中打开：${result.path}`)
+    })
   }
 
+  /** Open the add / rename dialog, resetting the field it carries. */
+  const openDialog = (next: Dialog, initial: string): void => {
+    setMenuFor('')
+    setDraftName(initial)
+    setDialog(next)
+  }
+
+  /**
+   * Commit whatever the open dialog asked about.
+   *
+   * The dialog closes before the call rather than after: a failure has to be
+   * readable, and the notice strip sits under the overlay, so a modal left open
+   * on an error would hide the very sentence explaining it.
+   */
+  const confirmDialog = (): void => {
+    const open = dialog
+    if (open === undefined || busy) return
+    const name = draftName.trim()
+
+    if (open.kind === 'new') {
+      if (name === '') return
+      setDialog(undefined)
+      void run(async () => {
+        const created = await knowbaseApi()!.createKnowledgeBase(name, '')
+        await refreshBases()
+        setSelectedId(created.id)
+        setReport(undefined)
+        return note(`已创建「${created.name}」，文件夹：${created.folderName}。`)
+      })
+      return
+    }
+
+    if (open.kind === 'rename') {
+      const target = bases.find(item => item.id === open.id)
+      if (target === undefined || name === '') return
+      setDialog(undefined)
+      if (name === target.name) return
+      void run(async () => {
+        await knowbaseApi()!.renameKnowledgeBase(open.id, name)
+        await refreshBases()
+        setReport(undefined)
+        return note('已保存（文件夹也一起改名了）。')
+      })
+      return
+    }
+
+    if (open.kind === 'deleteBase') {
+      const target = bases.find(item => item.id === open.id)
+      if (target === undefined) return
+      setDialog(undefined)
+      void run(async () => {
+        await knowbaseApi()!.deleteKnowledgeBase(open.id)
+        await refreshBases()
+        setReport(undefined)
+        return note(
+          `已把「${target.name}」的文件夹移入 _回收站（没有销毁，需要时可在资源管理器里拖回来）。`,
+        )
+      })
+      return
+    }
+
+    const kbId = selectedId
+    const target = materials.find(item => item.id === open.id)
+    if (target === undefined || kbId === '') return
+    setDialog(undefined)
+    void run(async () => {
+      const current = knowbaseApi()!
+      await current.deleteMaterial(kbId, target.id)
+      setMaterials(await current.listMaterials(kbId))
+      await refreshBases()
+      return note(`已把「${target.fileName}」移入 _回收站。`)
+    })
+  }
+
+  const dialogConfirmDisabled = (): boolean => {
+    if (busy) return true
+    if (dialog === undefined) return true
+    if (dialog.kind === 'new' || dialog.kind === 'rename') return draftName.trim() === ''
+    return false
+  }
+
+  const alertText = error !== '' ? error : notice
+
   return (
-    <div style={{ padding: 16, fontSize: 14 }}>
-      <h2 style={{ margin: '0 0 4px', fontSize: 18 }}>知识库</h2>
-      <p style={{ margin: '0 0 16px', color: COLORS.muted, fontSize: 12 }}>
-        每个知识库就是一个文件夹，里面的文件和图片都存在你的电脑上。检索在本机执行（中文 n-gram + BM25），
-        未使用语义向量。
-      </p>
+    <div
+      id="kb-settings-page"
+      data-kb-page
+      data-kb-vault-root={vaultRoot}
+      data-kb-folder-path={folderPath}
+      style={pageTokens(scheme)}
+    >
+      <header className="kb-head">
+        <h1 className="kb-head-title">知识库</h1>
+      </header>
 
-      {/* Packs are per installation, not per base, so this belongs to the page
-          rather than to the detail pane below. */}
-      <OcrSection controller={ocr} disabled={busy} />
+      <div className="kb-top-grid">
+        {/* Packs are per installation, not per base, so this belongs to the page
+            rather than to the detail pane below. */}
+        <OcrSection controller={ocr} disabled={busy} />
 
-      {error !== '' && (
-        <div
-          style={{
-            ...panel,
-            borderColor: COLORS.danger,
-            color: COLORS.danger,
-            padding: '8px 10px',
-            marginBottom: 12,
-            fontSize: 13,
-          }}
-        >
-          {error}
-        </div>
-      )}
-      {notice !== '' && (
-        <div
-          style={{ ...panel, padding: '8px 10px', marginBottom: 12, fontSize: 13, color: COLORS.muted }}
-        >
-          {notice}
-        </div>
-      )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0, 1fr)', gap: 16 }}>
-        {/* ------------------------------------------------- knowledge bases */}
-        <div>
-          <div style={{ ...panel, padding: 8 }}>
-            {bases.length === 0 && (
-              <p style={{ color: COLORS.muted, fontSize: 12, margin: '4px 2px' }}>还没有知识库。</p>
-            )}
-            {bases.map(item => {
-              const active = item.id === selectedId
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => selectBase(item.id)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    textAlign: 'left',
-                    border: 'none',
-                    borderRadius: 6,
-                    padding: '6px 8px',
-                    marginBottom: 2,
-                    fontSize: 13,
-                    cursor: 'pointer',
-                    background: active ? '#e8f0fa' : 'transparent',
-                    color: active ? COLORS.accent : 'inherit',
-                  }}
-                >
-                  <div style={{ fontWeight: active ? 600 : 400 }}>{item.name}</div>
-                  <div style={{ fontSize: 11, color: COLORS.muted }}>
-                    {item.materialCount} 个文件 / {item.indexedCount} 可检索
-                  </div>
-                </button>
-              )
-            })}
+        <section className="kb-card" data-kb-retrieval-test aria-label="检索测试">
+          <div className="kb-block-head">
+            <h2 className="kb-card-title">检索测试（不调用模型）</h2>
+            <div className="kb-scope-group" role="group" aria-label="检索范围">
+              <button
+                type="button"
+                className="kb-scope"
+                data-kb-test-scope="base"
+                aria-pressed={testAll ? 'false' : 'true'}
+                disabled={busy || selected === undefined}
+                onClick={() => {
+                  setTestAll(false)
+                  setReport(undefined)
+                }}
+              >
+                当前库
+              </button>
+              <button
+                type="button"
+                className="kb-scope"
+                data-kb-test-scope="all"
+                aria-pressed={testAll ? 'true' : 'false'}
+                disabled={busy || bases.length === 0}
+                onClick={() => {
+                  setTestAll(true)
+                  setReport(undefined)
+                }}
+              >
+                全部知识库（{bases.length}）
+              </button>
+            </div>
           </div>
-
-          <div style={{ marginTop: 10 }}>
+          <div className="kb-search-row">
             <input
-              style={{ ...input, marginBottom: 6 }}
-              placeholder="新知识库名称"
-              value={newBaseName}
-              onChange={event => setNewBaseName(event.target.value)}
+              type="text"
+              className="kb-input"
+              id="kb-test-input"
+              placeholder="输入一个问题"
+              autoComplete="off"
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  submitTest()
+                }
+              }}
             />
             <button
               type="button"
-              style={{ ...button, width: '100%' }}
-              disabled={busy || newBaseName.trim() === ''}
-              onClick={() =>
-                void run(async () => {
-                  const created = await knowbaseApi()!.createKnowledgeBase(newBaseName.trim(), '')
-                  setNewBaseName('')
-                  await refreshBases()
-                  setSelectedId(created.id)
-                  return `已创建「${created.name}」，文件夹：${created.folderName}。`
-                })
-              }
+              className="kb-btn kb-btn--primary"
+              id="kb-test-btn"
+              disabled={busy || query.trim() === ''}
+              onClick={submitTest}
             >
-              新建知识库
+              <Icon name="search" />
+              检索
             </button>
           </div>
+          {report !== undefined && <Report report={report} scopeNote={testScopeNote} />}
+        </section>
+      </div>
 
-          <button
-            type="button"
-            style={{ ...button, width: '100%', marginTop: 6 }}
-            disabled={busy}
-            onClick={() => rescan('')}
-          >
-            重扫全部知识库
-          </button>
-        </div>
+      <Alert text={alertText} kind={error !== '' ? 'error' : 'notice'} />
 
-        {/* ------------------------------------------------------ detail pane */}
-        <div style={{ minWidth: 0 }}>
-          {selected === undefined ? (
-            <div style={{ ...panel, padding: 24, color: COLORS.muted, textAlign: 'center' }}>
-              左侧选择或新建一个知识库。
-            </div>
-          ) : (
-            <>
-              <div
-                style={{
-                  ...panel,
-                  padding: 10,
-                  marginBottom: 12,
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  justifyContent: 'space-between',
-                  gap: 8,
-                }}
+      <div className="kb-columns">
+        <aside className="kb-card" aria-label="知识库列表">
+          <div className="kb-left-sec">
+            <div className="kb-left-head">
+              <p className="kb-sec-label">
+                全部知识库 <span className="kb-sec-count" id="kb-lib-count">({bases.length})</span>
+              </p>
+              <button
+                type="button"
+                className="kb-icon-btn"
+                id="kb-rescan-all"
+                data-kb-rescan-all
+                aria-label="重扫全部知识库"
+                title="重扫全部知识库"
+                disabled={busy}
+                onClick={() => rescan('')}
               >
-                {editingInfo ? (
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <label style={{ display: 'block', marginBottom: 10 }}>
-                      <span style={{ display: 'block', fontSize: 12, color: COLORS.muted, marginBottom: 4 }}>
-                        名称
-                      </span>
-                      <input
-                        style={input}
-                        value={editName}
-                        onChange={event => setEditName(event.target.value)}
-                      />
-                    </label>
-                    <label style={{ display: 'block', marginBottom: 10 }}>
-                      <span style={{ display: 'block', fontSize: 12, color: COLORS.muted, marginBottom: 4 }}>
-                        描述
-                      </span>
-                      <textarea
-                        style={{ ...input, minHeight: 50, fontFamily: 'inherit' }}
-                        value={editDescription}
-                        onChange={event => setEditDescription(event.target.value)}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      style={button}
-                      disabled={busy || editName.trim() === ''}
-                      onClick={() =>
-                        void run(async () => {
-                          const current = knowbaseApi()!
-                          await current.renameKnowledgeBase(selected.id, editName.trim())
-                          await current.updateDescription(selected.id, editDescription)
-                          await refreshBases()
-                          setEditingInfo(false)
-                          return '已保存（文件夹也一起改名了）。'
-                        })
-                      }
-                    >
-                      保存
-                    </button>{' '}
-                    <button
-                      type="button"
-                      style={button}
-                      onClick={() => {
-                        setEditingInfo(false)
-                        setEditName('')
-                        setEditDescription('')
-                      }}
-                    >
-                      取消
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600 }}>{selected.name}</div>
-                      <div style={{ fontSize: 11, color: COLORS.muted }}>
-                        {selected.materialCount} 个文件 · {selected.indexedCount} 可检索 ·{' '}
-                        {formatBytes(selected.bytes)}
-                        {selected.description !== '' && ` · ${selected.description}`}
-                      </div>
-                      {folderPath !== '' && (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: COLORS.muted,
-                            marginTop: 2,
-                            wordBreak: 'break-all',
-                          }}
-                        >
-                          文件夹：{folderPath}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', gap: 4, flexShrink: 0, flexWrap: 'wrap' }}>
+                <Icon name="refresh" />
+              </button>
+              <button
+                type="button"
+                className="kb-icon-btn kb-icon-btn--add"
+                id="kb-new-toggle"
+                data-kb-new-base
+                aria-label="添加知识库"
+                title="添加知识库"
+                aria-haspopup="dialog"
+                aria-expanded={dialog?.kind === 'new' ? 'true' : 'false'}
+                disabled={busy}
+                onClick={() => openDialog({ kind: 'new' }, '')}
+              >
+                <Icon name="plus" />
+              </button>
+            </div>
+
+            <ul className="kb-lib-list" id="kb-lib-list">
+              {bases.map(item => {
+                const active = item.id === selectedId
+                const open = menuFor === item.id
+                return (
+                  <li key={item.id} data-kb-lib-row={item.id}>
+                    <div className={`kb-lib-row${active ? ' is-selected' : ''}`}>
                       <button
                         type="button"
-                        style={button}
-                        onClick={() => {
-                          setEditName(selected.name)
-                          setEditDescription(selected.description)
-                          setEditingInfo(true)
-                        }}
-                      >
-                        编辑信息
-                      </button>
-                      <button type="button" style={button} disabled={busy} onClick={copyFolderPath}>
-                        复制文件夹路径
-                      </button>
-                      <ConfirmButton
-                        label="删除知识库"
-                        confirmLabel="移入 _回收站"
+                        className="kb-lib-select"
+                        data-kb-lib-select
+                        aria-pressed={active ? 'true' : 'false'}
                         disabled={busy}
-                        onConfirm={() =>
-                          void run(async () => {
-                            const name = selected.name
-                            await knowbaseApi()!.deleteKnowledgeBase(selected.id)
-                            await refreshBases()
-                            return `已把「${name}」的文件夹移入 _回收站（没有销毁，需要时可在资源管理器里拖回来）。`
-                          })
-                        }
-                      />
+                        onClick={() => selectBase(item.id)}
+                      >
+                        <span className="kb-lib-name" data-kb-lib-name>
+                          {item.name}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="kb-lib-more"
+                        data-kb-lib-more
+                        aria-label={`「${item.name}」更多操作`}
+                        aria-haspopup="menu"
+                        aria-expanded={open ? 'true' : 'false'}
+                        disabled={busy}
+                        onClick={() => setMenuFor(open ? '' : item.id)}
+                      >
+                        <Icon name="more-horizontal" size={16} />
+                      </button>
                     </div>
-                  </>
-                )}
-              </div>
 
-              {/* files */}
-              <div style={{ ...panel, padding: 10, marginBottom: 12 }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    marginBottom: 6,
-                  }}
-                >
-                  <span style={{ fontSize: 12, color: COLORS.muted }}>
-                    文件（{materials.length}）
-                  </span>
-                  <span style={{ display: 'flex', gap: 6 }}>
+                    {open && (
+                      <div className="kb-menu" data-kb-menu role="menu">
+                        <button
+                          type="button"
+                          className="kb-menu-item"
+                          data-kb-menu-item="rename"
+                          role="menuitem"
+                          onClick={() => openDialog({ kind: 'rename', id: item.id }, item.name)}
+                        >
+                          <Icon name="pencil" />
+                          <span>重命名</span>
+                        </button>
+                        {/* Offered only where the desktop has something to open
+                            it with; the sentence that would follow a click is
+                            the file manager's own name, so it is read before
+                            the item is drawn rather than guessed at. */}
+                        {shell?.canReveal !== false && (
+                          <button
+                            type="button"
+                            className="kb-menu-item"
+                            data-kb-menu-item="reveal"
+                            role="menuitem"
+                            onClick={() => reveal(item.id)}
+                          >
+                            <Icon name="folder-open" />
+                            <span>从{shell?.fileManager ?? '文件资源管理器'}打开</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="kb-menu-item kb-menu-item--danger"
+                          data-kb-menu-item="delete"
+                          role="menuitem"
+                          onClick={() => openDialog({ kind: 'deleteBase', id: item.id }, '')}
+                        >
+                          <Icon name="trash" />
+                          <span>删除知识库</span>
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+            <p className="kb-empty" id="kb-lib-empty" hidden={bases.length > 0}>
+              还没有知识库。
+            </p>
+          </div>
+        </aside>
+
+        <div className="kb-right">
+          {selected === undefined ? (
+            <p className="kb-placeholder" id="kb-placeholder">
+              左侧选择或新建一个知识库。
+            </p>
+          ) : (
+            <div className="kb-detail" id="kb-detail">
+              <section className="kb-card" id="kb-files-block" aria-label="文件">
+                <div className="kb-block-head">
+                  <div className="kb-title-group">
+                    <h2 className="kb-card-title" id="kb-files-title" data-kb-files-title>
+                      {selected.name}的文件（{materials.length}）
+                    </h2>
+                    <span className="kb-files-size" data-kb-files-size>
+                      总大小 {formatBytes(selected.bytes)}
+                    </span>
+                  </div>
+                  <div className="kb-btn-row">
+                    <label
+                      className={`kb-btn kb-upload${busy ? ' is-disabled' : ''}`}
+                      htmlFor="kb-file-input"
+                      data-kb-upload
+                    >
+                      <Icon name="upload" />
+                      上传文件…
+                      <input
+                        id="kb-file-input"
+                        ref={uploadInput}
+                        type="file"
+                        multiple
+                        className="kb-file-input"
+                        data-kb-file-input
+                        disabled={busy}
+                        onChange={event => {
+                          const files = [...(event.target.files ?? [])]
+                          // Clear the input so picking the same file twice still
+                          // fires a change event.
+                          event.target.value = ''
+                          if (files.length > 0) void uploadFiles(files)
+                        }}
+                      />
+                    </label>
                     <button
                       type="button"
-                      style={button}
+                      className="kb-btn"
+                      id="kb-rescan-one"
+                      data-kb-rescan-one
                       disabled={busy}
-                      onClick={() => uploadInput.current?.click()}
+                      onClick={() => rescan(selected.id)}
                     >
-                      上传文件…
-                    </button>
-                    <button type="button" style={button} disabled={busy} onClick={() => rescan(selected.id)}>
+                      <Icon name="refresh" />
                       重扫
                     </button>
-                  </span>
+                  </div>
                 </div>
-                <input
-                  ref={uploadInput}
-                  type="file"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={event => {
-                    const files = [...(event.target.files ?? [])]
-                    // Clear the input so picking the same file twice still
-                    // fires a change event.
-                    event.target.value = ''
-                    if (files.length > 0) void uploadFiles(files)
-                  }}
-                />
-                {materials.length === 0 ? (
-                  <p style={{ color: COLORS.muted, fontSize: 12, margin: 0 }}>
-                    还没有文件。用「上传文件」加入，或者把文件直接放进上面那个文件夹再点「重扫」。
-                  </p>
-                ) : (
-                  materials.map(material => (
-                    <div
-                      key={material.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                        padding: '6px 0',
-                        borderTop: `1px solid ${COLORS.border}`,
-                      }}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, wordBreak: 'break-all' }}>{material.fileName}</div>
-                        <div style={{ fontSize: 11, color: COLORS.muted }}>
-                          {formatBytes(material.bytes)}
-                          {material.indexed ? ' · 可检索' : ' · 暂不可检索'}
-                        </div>
+
+                <ul className="kb-file-list" id="kb-file-list">
+                  {materials.map(material => (
+                    <li key={material.id} className="kb-file-row" data-kb-file-row={material.id}>
+                      <div className="kb-file-main">
+                        <span className="kb-file-name" data-kb-file-name>
+                          {material.fileName}
+                        </span>
                         {material.note === '' ? null : (
-                          <div style={{ fontSize: 11, color: COLORS.muted }}>{material.note}</div>
+                          <span className="kb-file-reason" data-kb-file-reason>
+                            {material.note}
+                          </span>
                         )}
                       </div>
-                      <ConfirmButton
-                        label="删除"
-                        confirmLabel="移入 _回收站"
-                        disabled={busy}
-                        onConfirm={() =>
-                          void run(async () => {
-                            await knowbaseApi()!.deleteMaterial(selected.id, material.id)
-                            setMaterials(await knowbaseApi()!.listMaterials(selected.id))
-                            await refreshBases()
-                            return `已把「${material.fileName}」移入 _回收站。`
-                          })
-                        }
-                      />
-                    </div>
-                  ))
-                )}
+                      <span className="kb-file-size" data-kb-file-size>
+                        {formatBytes(material.bytes)}
+                      </span>
+                      <div className="kb-file-actions">
+                        <button
+                          type="button"
+                          className="kb-btn kb-icon-only kb-btn--danger"
+                          data-kb-file-delete
+                          aria-label={`删除「${material.fileName}」`}
+                          title="删除"
+                          disabled={busy}
+                          onClick={() => openDialog({ kind: 'deleteFile', id: material.id }, '')}
+                        >
+                          <Icon name="trash" />
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <p className="kb-empty" id="kb-file-empty" hidden={materials.length > 0}>
+                  还没有文件。用「上传文件」加入，或者把文件直接放进上面那个文件夹再点「重扫」。
+                </p>
                 {ocrHint && ocr.status?.ready !== true && (
                   <OcrHint controller={ocr} disabled={busy} />
                 )}
-                <p style={{ color: COLORS.muted, fontSize: 11, margin: '8px 2px 0' }}>
-                  会被检索的是纯文本（.txt / .md 等）、文本型 PDF（保留页码）和 PNG/JPG 图片
-                  （本机 OCR，需要先在上方「图片文字识别」里下载语言包）。扫描件 PDF 没有文字层，需要先把页面转成图片。
-                </p>
-              </div>
-
-              {/* retrieval test */}
-              <div data-kb-retrieval-test style={{ ...panel, padding: 10, marginBottom: 12 }}>
-                <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 6 }}>
-                  检索测试（不调用模型）
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <span style={{ fontSize: 12, color: COLORS.muted }}>范围</span>
-                  <button
-                    type="button"
-                    data-kb-test-scope="base"
-                    style={testAll ? button : activeButton}
-                    disabled={busy}
-                    onClick={() => {
-                      setTestAll(false)
-                      setReport(undefined)
-                    }}
-                  >
-                    当前库
-                  </button>
-                  <button
-                    type="button"
-                    data-kb-test-scope="all"
-                    style={testAll ? activeButton : button}
-                    disabled={busy || bases.length === 0}
-                    onClick={() => {
-                      setTestAll(true)
-                      setReport(undefined)
-                    }}
-                  >
-                    全部知识库（{bases.length}）
-                  </button>
-                </div>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                  <input
-                    style={input}
-                    placeholder="输入一个问题"
-                    value={query}
-                    onChange={event => setQuery(event.target.value)}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter') submitTest()
-                    }}
-                  />
-                  <button
-                    type="button"
-                    style={button}
-                    disabled={busy || query.trim() === ''}
-                    onClick={submitTest}
-                  >
-                    检索
-                  </button>
-                </div>
-                {report !== undefined && <Report report={report} scopeNote={testScopeNote} />}
-              </div>
-
-              <p style={{ color: COLORS.muted, fontSize: 11, margin: 2 }}>
-                知识库根目录：{vaultRoot === '' ? '（读取中…）' : vaultRoot}。删除的库和文件都会移到这里面的
-                _回收站 文件夹，没有被销毁。
-              </p>
-            </>
+              </section>
+            </div>
           )}
         </div>
       </div>
+
+      {dialog !== undefined && (
+        <Modal
+          title={
+            dialog.kind === 'new'
+              ? '添加知识库'
+              : dialog.kind === 'rename'
+                ? '重命名知识库'
+                : dialog.kind === 'deleteBase'
+                  ? '删除知识库'
+                  : '删除文件'
+          }
+          confirmText={
+            dialog.kind === 'new'
+              ? '确认添加'
+              : dialog.kind === 'rename'
+                ? '确认修改'
+                : '确认删除'
+          }
+          danger={dialog.kind === 'deleteBase' || dialog.kind === 'deleteFile'}
+          confirmDisabled={dialogConfirmDisabled()}
+          onConfirm={confirmDialog}
+          onClose={() => setDialog(undefined)}
+        >
+          {dialog.kind === 'new' && (
+            <NameField
+              id="kb-new-input"
+              label="新知识库名称"
+              placeholder="新知识库名称"
+              value={draftName}
+              onChange={setDraftName}
+              onEnter={confirmDialog}
+            />
+          )}
+          {dialog.kind === 'rename' && (
+            <NameField
+              id="kb-rename-input"
+              label="知识库名称"
+              value={draftName}
+              onChange={setDraftName}
+              onEnter={confirmDialog}
+            />
+          )}
+          {dialog.kind === 'deleteBase' && (
+            <p>
+              确认删除「{bases.find(item => item.id === dialog.id)?.name ?? ''}」？删除 = 移入
+              _回收站，不销毁。
+            </p>
+          )}
+          {dialog.kind === 'deleteFile' && (
+            <p>
+              确认删除「{materials.find(item => item.id === dialog.id)?.fileName ?? ''}」？删除 =
+              移入 _回收站，不销毁。
+            </p>
+          )}
+        </Modal>
+      )}
     </div>
   )
 }

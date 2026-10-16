@@ -139,6 +139,22 @@ const string = z.string()
 const strings = z.array(z.string())
 const boolean = z.boolean()
 
+// Which file manager the desktop has, and what happened when it was asked to
+// open a folder. Both are plain records rather than a boolean result: the page
+// needs the name to word its menu, and the path so a failed hand-off can still
+// be acted on.
+const shellInfoSchema = z.object({
+  fileManager: z.string(),
+  canReveal: z.boolean(),
+})
+
+const revealResultSchema = z.object({
+  ok: z.boolean(),
+  path: z.string(),
+  fileManager: z.string(),
+  message: z.string(),
+})
+
 /** Wrap a schema as a strict boundary codec. */
 function codec(typeSymbol: string, schema: z.ZodType): TypertCodec {
   return {
@@ -230,6 +246,8 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
     result: boolean,
   },
   getVaultRoot: { parameters: [], result: string },
+  getShellInfo: { parameters: [], result: shellInfoSchema },
+  revealBaseFolder: { parameters: [{ name: 'kbId', schema: string }], result: revealResultSchema },
   getOcrStatus: { parameters: [], result: ocrStatusSchema },
   startOcrDownload: { parameters: [], result: ocrDownloadSchema },
   cancelOcrDownload: { parameters: [], result: ocrDownloadSchema },
@@ -308,6 +326,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     deleteMaterial: (kbId: string, id: string) => Promise<unknown>
     rescan: (kbId: string) => Promise<unknown>
     getVaultRoot: () => Promise<unknown>
+    getShellInfo: () => Promise<unknown>
+    revealBaseFolder: (kbId: string) => Promise<unknown>
     getOcrStatus: () => Promise<unknown>
     startOcrDownload: () => Promise<unknown>
     cancelOcrDownload: () => Promise<unknown>

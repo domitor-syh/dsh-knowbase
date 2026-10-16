@@ -54,6 +54,8 @@ export const REMOTE_METHODS = [
   'deleteMaterial',
   'rescan',
   'getVaultRoot',
+  'getShellInfo',
+  'revealBaseFolder',
   'getOcrStatus',
   'startOcrDownload',
   'cancelOcrDownload',
