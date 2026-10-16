@@ -120,29 +120,96 @@ function SearchGlyph(): React.ReactElement {
 }
 
 /**
- * The row's switch, drawn to the hand-off's measurements.
+ * The row's switch: a capsule frame whose ball is a *standard circle*, small when
+ * off and grown when on.
  *
  * Two mockups define the two states, and they are not the same shape scaled:
  * *off* is a hollow frame with a small ball, *on* is the same frame filled with
- * the accent and a ball that has grown to fill it. Measured off the mockups at
- * the host's own switch size (36×20 — the host's design notes state it):
- * a ~2px frame on a 46px-tall track, a 22px ball off and a 34px ball on, which
- * lands at a 1.5px frame with a 10px and a 16px ball. The ball's inset is the
- * same on all sides off (3.5px) and 2px from the right edge on.
+ * the accent and a ball that has grown to fill it. The mockups are the host's own
+ * switch drawn at 2× — a 73×44/46 track, a ~3px frame, a 22px ball off and a 33px
+ * ball on — so the 1× geometry is about 36×22 with an 11px / 16.5px ball. The
+ * height is the mockup's own 44/46 at 2×; a 20px track read as slightly flat,
+ * which is why it went back up to 22 (v33). The off ball is 10px rather than 11,
+ * and the on ball 18 rather than 16.5, for the reasons below.
+ *
+ * The frame is 2px, not the mockup's 1.5px, so that every number the ball depends
+ * on is a whole pixel: the inner box is 18 tall and the two insets are 4 and 0.
+ * At 1.5px the insets were 0.5px and the frame 1.5px, and the browser rounded
+ * those half pixels independently on the two edges — the ball sat about a pixel
+ * above centre on a 150%-scaled display.
+ *
+ * The off ball is 10px because of *device-pixel parity*. The gaps a ball leaves have
+ * to be an *even* number of device pixels to split in half: a 10px ball in an 18px
+ * inner box leaves 8 CSS pixels, which is 8, 12 and 16 device pixels at 100%, 150%
+ * and 200% — all even, so it centres at every zoom. At 150% that is 27 device
+ * pixels of inner box minus 15 of ball, i.e. 6/6. A gap of 6 CSS pixels instead (a
+ * 12px ball) is 9 device pixels at 150% — odd, so the browser floors it on one edge
+ * and ceils it on the other, following the element's sub-pixel phase, and one
+ * geometry rasterises as 4/5 at one moment and 5/4 at the next. That is the v31
+ * report — "the ball is off-centre until you toggle it once" — two renderings of a
+ * single layout, not a moving element. Hence any ball that only has to look centred
+ * is the inner height minus a multiple of 4: the 20-to-22 track change moved the off
+ * ball from 12 to 14 (v33), and asking for a smaller one again allows 10 and not 12
+ * (v34). Both balls obey it — the on ball is 18, whose gap is 0 device pixels, and the
+ * 16 that sits between 18 and 14 is ruled out below (v37).
+ *
+ * Both balls are also *concentric with the cap they sit in*: the inner box is 32×18
+ * with a cap radius of 9. Either ball is centred vertically — its `top` is
+ * (18 − d) / 2 — so its centre always falls on the inner box's midline, y = 9. Off,
+ * d = 10 puts the centre at (4 + 5, 9) = (9, 9), the *left* cap's own centre. On,
+ * d = 18 puts it at (14 + 9, 9) = (23, 9), the *right* cap's own centre — which is
+ * what {@link KNOB_ON_LEFT} computes, and why it is stated as a centre rather than a
+ * right-edge anchor. Parallel arcs need a shared centre, not equal radii: at 9 against
+ * the cap's 9 the ball fills the inner height, so the ring is 0 and the ball is flush.
+ *
+ * At 18 the two statements coincide, because the ball's radius (9) equals the cap's:
+ * touching the right edge *is* sharing a centre. A smaller ball would break that
+ * coincidence — anchored flush its arc would be parallel but pushed sideways, a ring
+ * thin at the nose and thick at the shoulders — which is why {@link KNOB_ON_LEFT}
+ * names the centre even though at 18 it computes the same number as the edge.
+ *
+ * The parity rule above is a *hard* constraint, not a heuristic (v37). A 16px on ball
+ * was tried in between (v36) — 18 − 16 is 2 CSS pixels, i.e. 3 device pixels, which
+ * cannot be split into two equal halves — and it is ruled out on evidence: it measured
+ * symmetric in a controlled 150% capture, yet the user still saw the ball sitting
+ * off-centre on their own display. Screenshot symmetry is not enough; the size has to
+ * be one the grid can centre at all. Both balls are therefore inner height minus a
+ * multiple of 4, and 18 is what a ball that fills the track looks like.
+ *
+ * Both halves carry {@link TRUE_ROUND}. The host sets `corner-shape:
+ * superellipse(1.5)` on the root, and `corner-shape` inherits — so every
+ * border-radius in the app, ours included, is drawn as a *squircle*. That is what
+ * made the ball read as a rounded square, and why changing the page zoom never
+ * changed its shape (a squircle is geometry, not a raster artefact — the earlier
+ * "the ball is too small / the pixels round it off" theory was wrong, see the v28
+ * note). Opting back out to `round` gives the ball a true circle and the frame a
+ * true capsule without touching any of the mockup's measurements.
  *
  * The knob is positioned against the *padding* box, which is what an absolutely
  * positioned child resolves against — so every number below is the outer
- * geometry minus the 1.5px frame.
+ * geometry minus the 2px frame.
  */
 const TRACK_WIDTH = 36
-const TRACK_HEIGHT = 20
-const TRACK_FRAME = 1.5
+const TRACK_HEIGHT = 22
+const TRACK_FRAME = 2
 const KNOB_OFF = 10
-const KNOB_ON = 16
+const KNOB_ON = 18
+/** The host's squircle corners; the switch opts back out to true round corners. */
+const TRUE_ROUND = { cornerShape: 'round' } as unknown as React.CSSProperties
 /** Off: the same inset on every side, so the ball looks like it floats. */
 const KNOB_OFF_INSET = (TRACK_HEIGHT - TRACK_FRAME * 2 - KNOB_OFF) / 2
-/** On: the ball fills the frame, pinned 2px off the right edge. */
+/** On: the same inset top and bottom, so the ring round the ball is even. */
 const KNOB_ON_INSET = (TRACK_HEIGHT - TRACK_FRAME * 2 - KNOB_ON) / 2
+/**
+ * On: centred on the right cap, so the ball's arc stays parallel to the track's.
+ *
+ * Parallel arcs need a shared *centre*, not equal radii. The cap's own centre is
+ * `inner width − inner radius` across, so putting the ball's centre there keeps the
+ * ball concentric with the cap. At 18 its radius also matches the cap's 9, so the same
+ * number is what the ball's right edge flush with the inner frame would give.
+ */
+const KNOB_ON_LEFT =
+  TRACK_WIDTH - TRACK_FRAME * 2 - (TRACK_HEIGHT - TRACK_FRAME * 2) / 2 - KNOB_ON / 2
 
 /** One base row: its name, and the switch that puts it in scope. */
 function BaseRow(props: {
@@ -194,6 +261,7 @@ function BaseRow(props: {
       <span
         aria-hidden="true"
         style={{
+          ...TRUE_ROUND,
           width: TRACK_WIDTH,
           height: TRACK_HEIGHT,
           borderRadius: TRACK_HEIGHT / 2,
@@ -209,16 +277,16 @@ function BaseRow(props: {
       >
         <span
           style={{
+            ...TRUE_ROUND,
             position: 'absolute',
             top: props.checked ? KNOB_ON_INSET : KNOB_OFF_INSET,
-            left: props.checked
-              ? TRACK_WIDTH - TRACK_FRAME * 2 - KNOB_ON - 2
-              : KNOB_OFF_INSET,
+            left: props.checked ? KNOB_ON_LEFT : KNOB_OFF_INSET,
             width: props.checked ? KNOB_ON : KNOB_OFF,
             height: props.checked ? KNOB_ON : KNOB_OFF,
             borderRadius: '50%',
             background: props.checked ? palette.knobOn : palette.knobOff,
-            transition: 'top 120ms, left 120ms, width 120ms, height 120ms, background 120ms',
+            transition:
+              'top 120ms, left 120ms, width 120ms, height 120ms, background 120ms',
           }}
         />
       </span>
@@ -355,7 +423,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
     zIndex: 80,
     width: PANEL_WIDTH,
     border: `1px solid ${palette.panelBorder}`,
-    borderRadius: 12,
+    borderRadius: 16,
     background: palette.panel,
     color: palette.text,
     boxShadow: palette.shadow,
@@ -451,7 +519,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
                     boxSizing: 'border-box',
                     padding: '0 9px 0 27px',
                     border: `1px solid ${palette.fieldBorder}`,
-                    borderRadius: 8,
+                    borderRadius: 12,
                     background: palette.field,
                     color: palette.text,
                     fontSize: 12,
