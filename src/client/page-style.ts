@@ -144,7 +144,10 @@ const TOKENS: Record<ColorScheme, Record<string, string>> = {
  * height that column has.
  */
 const CSS = `
-#kb-settings-page, #kb-settings-page * { box-sizing: border-box; }
+/* The row menu is drawn into \`document.body\` rather than into the page (see
+   \`RowMenu\`), so it is outside this subtree and has to be named separately. */
+#kb-settings-page, #kb-settings-page *,
+.kb-menu, .kb-menu * { box-sizing: border-box; }
 #kb-settings-page [hidden] { display: none !important; }
 
 #kb-settings-page {
@@ -255,7 +258,10 @@ const CSS = `
 }
 .kb-input { height: 32px; }
 .kb-textarea { min-height: 72px; padding: 8px 10px; line-height: 1.5; resize: vertical; }
-.kb-input:focus, .kb-textarea:focus { outline: 2px solid var(--brand-ring); outline-offset: 1px; border-color: var(--brand-ring); }
+/* Focus is the field's own border turning blue — not a second ring around it.
+   The 2px outline the hand-off draws reads as a box the input sits inside, and
+   two concentric blue lines is one too many for a 32px control. */
+.kb-input:focus, .kb-textarea:focus { outline: none; border-color: var(--brand-ring); }
 .kb-input::placeholder, .kb-textarea::placeholder { color: var(--brand-muted-foreground); }
 
 /* OCR 卡 */
@@ -313,7 +319,7 @@ const CSS = `
 /* 主区两栏：左列表 / 右文件（页面整体固定，仅列表内部滚动） */
 .kb-columns { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: stretch; flex: 1; min-height: 0; }
 .kb-columns > aside.kb-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding-bottom: 0; }
-#kb-lib-empty { margin-bottom: 16px; }
+#kb-lib-empty { margin-bottom: 8px; }
 .kb-right { min-width: 0; min-height: 0; }
 .kb-detail { display: flex; flex-direction: column; gap: 16px; min-width: 0; height: 100%; }
 .kb-placeholder {
@@ -327,8 +333,9 @@ const CSS = `
   border-radius: var(--brand-radius);
 }
 
-/* 左栏合一卡 */
-.kb-left-sec { position: relative; display: flex; flex-direction: column; min-height: 0; flex: 1; }
+/* 左栏合一卡。底部留白与顶部一致（列表 \`margin-top: 8px\`）：最后一行贴着卡片
+   下边缘，等于把「列表还没完」画成了一个视觉终点。 */
+.kb-left-sec { position: relative; display: flex; flex-direction: column; min-height: 0; flex: 1; padding-bottom: 8px; }
 .kb-sec-label { display: block; margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--brand-muted-foreground); }
 .kb-left-head { display: flex; align-items: center; gap: 4px; margin: 0 -16px 0; padding: 0 16px 6px; border-bottom: 1px solid var(--brand-border); }
 .kb-left-head .kb-sec-label { flex: 1; margin: 0; font-size: 13px; color: var(--brand-foreground); }
@@ -414,12 +421,11 @@ const CSS = `
 .kb-lib-more:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 1px; }
 .kb-lib-more[aria-expanded="true"] { background: var(--brand-muted); color: var(--brand-foreground); }
 
-/* 库行三点菜单 */
+/* 库行三点菜单：浮层。画进 document.body（见 RowMenu），top/right 由组件按锚点算，
+   所以这里不写定位偏移；列表是滚动容器，菜单留在里面会被裁成半条。 */
 .kb-menu {
-  position: absolute;
-  right: 4px;
-  top: calc(100% - 4px);
-  z-index: 50;
+  position: fixed;
+  z-index: 90;
   min-width: 148px;
   padding: 6px;
   background: var(--brand-popover);
@@ -475,7 +481,10 @@ const CSS = `
 }
 .kb-file-actions { display: flex; flex: none; gap: 6px; }
 .kb-upload { position: relative; cursor: pointer; }
-.kb-upload:focus-within { outline: 2px solid var(--brand-ring); outline-offset: 2px; }
+/* Keyboard focus only. \`:focus-within\` would also match the mouse: clicking the
+   label focuses the hidden input, so the ring stayed drawn until something else
+   took focus — a blue box around a button the user had already used. */
+.kb-upload:has(.kb-file-input:focus-visible) { background: var(--brand-muted); }
 .kb-upload:not(.is-disabled):hover { background: var(--brand-muted); }
 .kb-upload.is-disabled { opacity: 0.45; cursor: not-allowed; }
 .kb-file-input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; }
@@ -533,6 +542,13 @@ const CSS = `
 
 @keyframes kb-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+/* 双箭头按钮（检测 / 重扫 / 重扫全部）在工作时的自转。周期与 useSpin 的最短可见
+   时长一致，所以「瞬间完成」的动作正好转满一圈，停下的位置就是起点。 */
+.kb-icon-spin { transform-origin: center; animation: kb-spin 600ms linear infinite; }
+/* 自转中的按钮是在工作，不是「不可用」：别在它转的时候同时把它压暗。 */
+.kb-btn:has(.kb-icon-spin):disabled,
+.kb-icon-btn:has(.kb-icon-spin):disabled { opacity: 1; }
+
 @media (max-width: 1120px) {
   #kb-settings-page { height: auto; overflow: visible; }
   .kb-top-grid { grid-template-columns: minmax(0, 1fr); }
@@ -546,7 +562,8 @@ const CSS = `
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #kb-settings-page *, #kb-settings-page *::before, #kb-settings-page *::after {
+  #kb-settings-page *, #kb-settings-page *::before, #kb-settings-page *::after,
+  .kb-menu, .kb-menu * {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

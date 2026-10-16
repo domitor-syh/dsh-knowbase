@@ -49,10 +49,19 @@ export type IconName = keyof typeof PATHS
  * `dangerouslySetInnerHTML` rather than JSX children: the paths are a frozen
  * literal table in this file, never user input, and writing fourteen icons as
  * JSX would be fourteen opportunities to mistype a coordinate.
+ *
+ * `spinning` is for the three buttons that re-read something from the disk. The
+ * class it adds is the whole animation; what keeps it up long enough to be seen
+ * is `useSpin` (`./spin.ts`).
  */
-export function Icon(props: { name: IconName; size?: number }): React.ReactElement {
+export function Icon(props: {
+  name: IconName
+  size?: number
+  spinning?: boolean
+}): React.ReactElement {
   return (
     <svg
+      className={props.spinning === true ? 'kb-icon-spin' : undefined}
       width={props.size ?? 16}
       height={props.size ?? 16}
       viewBox="0 0 24 24"

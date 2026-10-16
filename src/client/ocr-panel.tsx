@@ -34,6 +34,7 @@ import * as React from 'react'
 import type { OcrDownloadStateView, OcrStatusView } from '../remote.ts'
 import { knowbaseApi } from './api.ts'
 import { Icon, type IconName } from './icons.tsx'
+import { useSpin } from './spin.ts'
 
 /**
  * How often the page asks where the download is.
@@ -204,6 +205,9 @@ function Controls(props: {
   const ready = controller.status?.ready === true
   const running = controller.running
   const state = ready ? 'present' : 'missing'
+  // 检测 is two `stat` calls: it answers before a spinner could be seen, so the
+  // flag is held open by `useSpin` rather than by the request.
+  const [checking, spin] = useSpin()
 
   return (
     <>
@@ -213,9 +217,9 @@ function Controls(props: {
           className="kb-btn"
           {...{ [`data-kb-${scope}-detect`]: '' }}
           disabled={disabled || running}
-          onClick={() => void controller.refresh()}
+          onClick={() => spin(() => controller.refresh())}
         >
-          <Icon name="refresh" />
+          <Icon name="refresh" spinning={checking} />
           检测
         </button>
         {/* Hidden rather than unmounted while a download runs — the hand-off's own

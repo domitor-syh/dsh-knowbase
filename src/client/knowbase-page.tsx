@@ -32,6 +32,9 @@
  * states hover, focus, disabled and reduced-motion behaviour, and a page this
  * size is exactly the case where a stylesheet is the smaller artefact.
  *
+ * One thing leaves the page: a row's ⋯ menu, which is drawn into `document.body`
+ * so it is not clipped by the scrolling list it hangs off (see `RowMenu`).
+ *
  * ## The hooks
  *
  * `data-kb-*` attributes are the page's test surface (`scripts/probe-*.mjs`).
@@ -43,11 +46,13 @@
  */
 
 import * as React from 'react'
+import { createPortal } from 'react-dom'
 import type { KnowledgeBaseView, MaterialView, SearchReportView, ShellInfoView } from '../remote.ts'
 import { knowbaseApi, knowbaseChannelError } from './api.ts'
 import { Icon } from './icons.tsx'
 import { OcrHint, OcrSection, useOcrController } from './ocr-panel.tsx'
 import { pageTokens } from './page-style.ts'
+import { useSpin } from './spin.ts'
 import { useColorScheme } from './theme.ts'
 
 /**
@@ -215,10 +220,16 @@ function Modal(props: {
  * Focused and selected on mount, and Enter commits: the whole dialog exists to
  * capture one string, so the user should be able to type it and press Enter
  * without ever touching the mouse.
+ *
+ * `showLabel` is off for the add dialog, whose label and placeholder are the
+ * same words twice; the string still reaches assistive technology through
+ * `aria-label`, and the rename dialog keeps its label because there the value is
+ * a name the user has already met and the label is what says which one.
  */
 function NameField(props: {
   id: string
   label: string
+  showLabel?: boolean
   placeholder?: string
   value: string
   onChange: (value: string) => void
@@ -235,9 +246,11 @@ function NameField(props: {
 
   return (
     <>
-      <label className="kb-field-label" htmlFor={props.id}>
-        {props.label}
-      </label>
+      {props.showLabel !== false && (
+        <label className="kb-field-label" htmlFor={props.id}>
+          {props.label}
+        </label>
+      )}
       <input
         id={props.id}
         ref={ref}
@@ -256,6 +269,132 @@ function NameField(props: {
         }}
       />
     </>
+  )
+}
+
+/** One menu item's height, in the stylesheet's own numbers. */
+const MENU_ITEM_HEIGHT = 32
+/** The menu's padding (6px twice) and its 1px border. */
+const MENU_CHROME = 14
+/** The menu's `min-width`; also what keeps it inside the window when anchoring. */
+const MENU_WIDTH = 148
+/** How far the menu sits from the button it belongs to. */
+const MENU_GAP = 4
+
+/** Where the menu goes, in viewport coordinates. */
+interface MenuAt {
+  readonly top: number
+  readonly right: number
+}
+
+/**
+ * Place a menu against its trigger.
+ *
+ * Below the button when there is room and above it otherwise — the last row of a
+ * long list is exactly the case where "below" runs off the bottom. The height is
+ * computed from the item count instead of measured so the first painted frame is
+ * already in the right place.
+ */
+function menuPosition(anchor: HTMLElement, items: number): MenuAt {
+  const rect = anchor.getBoundingClientRect()
+  const height = items * MENU_ITEM_HEIGHT + MENU_CHROME
+  const below = rect.bottom + MENU_GAP
+  const top =
+    below + height + 8 <= window.innerHeight ? below : Math.max(8, rect.top - height - MENU_GAP)
+  const right = Math.min(
+    Math.max(8, window.innerWidth - rect.right),
+    window.innerWidth - MENU_WIDTH - 8,
+  )
+  return { top, right }
+}
+
+/**
+ * One base's ⋯ menu.
+ *
+ * Drawn into `document.body` rather than into the row. `.kb-lib-list` scrolls,
+ * and a scrolling box clips on both axes, so a menu inside it is cut off
+ * mid-item the moment it reaches past the list — which is what a menu on the
+ * last row always does. `position: fixed` alone would not help: the page itself
+ * clips (`#kb-settings-page { overflow: hidden }`). So the menu leaves the
+ * subtree entirely, the same choice the composer popover makes.
+ *
+ * It carries the page's tokens because the `--brand-*` custom properties are
+ * declared on the page container, and a portal is not inside it.
+ */
+function RowMenu(props: {
+  anchor: HTMLElement
+  /** How many items it will draw; the position depends on it. */
+  items: number
+  fileManager: string
+  canReveal: boolean
+  onRename: () => void
+  onReveal: () => void
+  onDelete: () => void
+}): React.ReactElement {
+  const { anchor, items } = props
+  const scheme = useColorScheme()
+  const [at, setAt] = React.useState<MenuAt>(() => menuPosition(anchor, items))
+
+  // Follow the button: the list scrolls under it, and the window resizes.
+  React.useEffect(() => {
+    const update = (): void => {
+      // A row can be re-rendered out of the document under us (the list is
+      // re-read after every change); a detached node measures as all zeros.
+      if (!anchor.isConnected) return
+      setAt(menuPosition(anchor, items))
+    }
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [anchor, items])
+
+  return createPortal(
+    <div
+      className="kb-menu"
+      data-kb-menu
+      role="menu"
+      style={{ ...pageTokens(scheme), position: 'fixed', top: at.top, right: at.right }}
+    >
+      <button
+        type="button"
+        className="kb-menu-item"
+        data-kb-menu-item="rename"
+        role="menuitem"
+        onClick={props.onRename}
+      >
+        <Icon name="pencil" />
+        <span>重命名</span>
+      </button>
+      {/* Offered only where the desktop has something to open it with; the
+          sentence that follows a click is the file manager's own name, so it is
+          read before the item is drawn rather than guessed at. */}
+      {props.canReveal && (
+        <button
+          type="button"
+          className="kb-menu-item"
+          data-kb-menu-item="reveal"
+          role="menuitem"
+          onClick={props.onReveal}
+        >
+          <Icon name="folder-open" />
+          <span>从{props.fileManager}打开</span>
+        </button>
+      )}
+      <button
+        type="button"
+        className="kb-menu-item kb-menu-item--danger"
+        data-kb-menu-item="delete"
+        role="menuitem"
+        onClick={props.onDelete}
+      >
+        <Icon name="trash" />
+        <span>删除知识库</span>
+      </button>
+    </div>,
+    document.body,
   )
 }
 
@@ -339,8 +478,15 @@ export function KnowbasePage(): React.ReactElement {
 
   const [dialog, setDialog] = React.useState<Dialog | undefined>(undefined)
   const [draftName, setDraftName] = React.useState('')
-  /** The base whose row menu is open; `''` when none is. */
-  const [menuFor, setMenuFor] = React.useState('')
+  /**
+   * The open row menu: which base it belongs to, and the button it hangs off.
+   *
+   * The anchor travels with the id because the menu is drawn into
+   * `document.body` — once it is out of the row it can no longer ask React for
+   * the element it was opened from.
+   */
+  const [menu, setMenu] = React.useState<{ id: string; anchor: HTMLElement } | undefined>(undefined)
+  const [spinning, spin] = useSpin()
 
   const uploadInput = React.useRef<HTMLInputElement | null>(null)
 
@@ -515,18 +661,18 @@ export function KnowbasePage(): React.ReactElement {
   // Closing the row menu. Both listeners are installed only while one is open,
   // so a page with no menu pays nothing for them.
   React.useEffect(() => {
-    if (menuFor === '') return
+    if (menu === undefined) return
     const onDown = (event: MouseEvent): void => {
       const target = event.target
       if (!(target instanceof Element)) return
       // The trigger's own click toggles; a click inside the menu is the menu's.
       if (target.closest('[data-kb-menu]') !== null) return
       if (target.closest('[data-kb-lib-more]') !== null) return
-      setMenuFor('')
+      setMenu(undefined)
     }
     document.addEventListener('click', onDown)
     return () => document.removeEventListener('click', onDown)
-  }, [menuFor])
+  }, [menu])
 
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -536,14 +682,14 @@ export function KnowbasePage(): React.ReactElement {
         setDialog(undefined)
         return
       }
-      if (menuFor !== '') {
+      if (menu !== undefined) {
         event.preventDefault()
-        setMenuFor('')
+        setMenu(undefined)
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [dialog, menuFor])
+  }, [dialog, menu])
 
   const selected = bases.find(item => item.id === selectedId)
   const folderPath =
@@ -573,25 +719,27 @@ export function KnowbasePage(): React.ReactElement {
     if (busy || id === selectedId) return
     setSelectedId(id)
     setReport(undefined)
-    setMenuFor('')
+    setMenu(undefined)
   }
 
   /** Re-read one base — or every base — from the disk. */
   const rescan = (kbId: string): void => {
-    void run(async () => {
-      const current = knowbaseApi()!
-      await current.rescan(kbId)
-      await refreshBases()
-      if (kbId === '' || kbId === selectedId) {
-        setMaterials(await current.listMaterials(kbId === '' ? selectedId : kbId))
-      }
-      return note(kbId === '' ? '已重新扫描全部知识库。' : '已重新扫描该知识库。')
+    spin(async () => {
+      await run(async () => {
+        const current = knowbaseApi()!
+        await current.rescan(kbId)
+        await refreshBases()
+        if (kbId === '' || kbId === selectedId) {
+          setMaterials(await current.listMaterials(kbId === '' ? selectedId : kbId))
+        }
+        return note(kbId === '' ? '已重新扫描全部知识库。' : '已重新扫描该知识库。')
+      })
     })
   }
 
   /** Hand one base's folder to the desktop's file manager. */
   const reveal = (kbId: string): void => {
-    setMenuFor('')
+    setMenu(undefined)
     void run(async () => {
       const result = await knowbaseApi()!.revealBaseFolder(kbId)
       if (!result.ok) throw new Error(result.message)
@@ -601,7 +749,7 @@ export function KnowbasePage(): React.ReactElement {
 
   /** Open the add / rename dialog, resetting the field it carries. */
   const openDialog = (next: Dialog, initial: string): void => {
-    setMenuFor('')
+    setMenu(undefined)
     setDraftName(initial)
     setDialog(next)
   }
@@ -781,7 +929,7 @@ export function KnowbasePage(): React.ReactElement {
                 disabled={busy}
                 onClick={() => rescan('')}
               >
-                <Icon name="refresh" />
+                <Icon name="refresh" spinning={spinning} />
               </button>
               <button
                 type="button"
@@ -802,7 +950,7 @@ export function KnowbasePage(): React.ReactElement {
             <ul className="kb-lib-list" id="kb-lib-list">
               {bases.map(item => {
                 const active = item.id === selectedId
-                const open = menuFor === item.id
+                const open = menu?.id === item.id
                 return (
                   <li key={item.id} data-kb-lib-row={item.id}>
                     <div className={`kb-lib-row${active ? ' is-selected' : ''}`}>
@@ -826,52 +974,13 @@ export function KnowbasePage(): React.ReactElement {
                         aria-haspopup="menu"
                         aria-expanded={open ? 'true' : 'false'}
                         disabled={busy}
-                        onClick={() => setMenuFor(open ? '' : item.id)}
+                        onClick={event =>
+                          setMenu(open ? undefined : { id: item.id, anchor: event.currentTarget })
+                        }
                       >
                         <Icon name="more-horizontal" size={16} />
                       </button>
                     </div>
-
-                    {open && (
-                      <div className="kb-menu" data-kb-menu role="menu">
-                        <button
-                          type="button"
-                          className="kb-menu-item"
-                          data-kb-menu-item="rename"
-                          role="menuitem"
-                          onClick={() => openDialog({ kind: 'rename', id: item.id }, item.name)}
-                        >
-                          <Icon name="pencil" />
-                          <span>重命名</span>
-                        </button>
-                        {/* Offered only where the desktop has something to open
-                            it with; the sentence that would follow a click is
-                            the file manager's own name, so it is read before
-                            the item is drawn rather than guessed at. */}
-                        {shell?.canReveal !== false && (
-                          <button
-                            type="button"
-                            className="kb-menu-item"
-                            data-kb-menu-item="reveal"
-                            role="menuitem"
-                            onClick={() => reveal(item.id)}
-                          >
-                            <Icon name="folder-open" />
-                            <span>从{shell?.fileManager ?? '文件资源管理器'}打开</span>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="kb-menu-item kb-menu-item--danger"
-                          data-kb-menu-item="delete"
-                          role="menuitem"
-                          onClick={() => openDialog({ kind: 'deleteBase', id: item.id }, '')}
-                        >
-                          <Icon name="trash" />
-                          <span>删除知识库</span>
-                        </button>
-                      </div>
-                    )}
                   </li>
                 )
               })}
@@ -932,7 +1041,7 @@ export function KnowbasePage(): React.ReactElement {
                       disabled={busy}
                       onClick={() => rescan(selected.id)}
                     >
-                      <Icon name="refresh" />
+                      <Icon name="refresh" spinning={spinning} />
                       重扫
                     </button>
                   </div>
@@ -982,6 +1091,23 @@ export function KnowbasePage(): React.ReactElement {
         </div>
       </div>
 
+      {/* Outside the columns, and rendered into `document.body` — see `RowMenu`
+          for why the list cannot hold it. */}
+      {menu !== undefined && (
+        <RowMenu
+          anchor={menu.anchor}
+          items={shell?.canReveal === false ? 2 : 3}
+          fileManager={shell?.fileManager ?? '文件资源管理器'}
+          canReveal={shell?.canReveal !== false}
+          onRename={() => {
+            const target = bases.find(item => item.id === menu.id)
+            openDialog({ kind: 'rename', id: menu.id }, target?.name ?? '')
+          }}
+          onReveal={() => reveal(menu.id)}
+          onDelete={() => openDialog({ kind: 'deleteBase', id: menu.id }, '')}
+        />
+      )}
+
       {dialog !== undefined && (
         <Modal
           title={
@@ -1009,6 +1135,7 @@ export function KnowbasePage(): React.ReactElement {
             <NameField
               id="kb-new-input"
               label="新知识库名称"
+              showLabel={false}
               placeholder="新知识库名称"
               value={draftName}
               onChange={setDraftName}
