@@ -106,6 +106,20 @@ const DEFAULT_TIMEOUT_MS = 60_000
 const OCR_OEM = 1
 
 /**
+ * Page segmentation mode — stated explicitly, not inherited.
+ *
+ * tesseract.js leaves the engine's built-in default in place, and that default
+ * behaves as SINGLE_BLOCK (PSM 6) — measured, not assumed: on a real screenshot
+ * whose Chinese paragraph is interleaved with the matching English, PSM 6 split
+ * the middle Chinese line into noise while the English came out intact, and the
+ * engine's no-argument run was byte-identical to an explicit PSM 6
+ * (`HANDOFF.md` §16 v46). AUTO (PSM 3) is tesseract's own general-purpose
+ * default and read that same screenshot correctly, so it is set rather than
+ * left to the wrapper.
+ */
+const OCR_PSM = '3'
+
+/**
  * The worker's script.
  *
  * One message in, one message out: `{ ok: true, text }` or
@@ -137,6 +151,7 @@ const run = async () => {
   const worker = await Tesseract.createWorker(workerData.langs, workerData.oem, options)
 
   try {
+    await worker.setParameters({ tessedit_pageseg_mode: workerData.psm })
     const result = await worker.recognize(Buffer.from(workerData.data))
     const text = result && result.data && typeof result.data.text === 'string' ? result.data.text : ''
     parentPort.postMessage({ ok: true, text })
@@ -236,6 +251,7 @@ export async function extractImageText(
       workerPath: resolved.workerPath,
       langs,
       oem: OCR_OEM,
+      psm: OCR_PSM,
       cacheDir: options.cacheDir,
       offlineLangPath: path.join(options.cacheDir, '__no-network__'),
       data,
