@@ -219,7 +219,7 @@ dsh --profile kbdev --no-open --port 3111
 | `probe-real-usage.mjs` | **端到端真实使用**：五种格式入库 → 提问 → 核对引用与内容准确性 → 「不该命中的说不认识」 |
 | `probe-files.mjs` | 知识库页面：建库、上传、删除、重扫、文件夹路径 |
 | `probe-multi-select.mjs` | 输入区药丸与选库弹层（含关闭态的首个操作） |
-| `probe-status-badge.mjs` | 五种来源状态徽标（自备夹具 + 自清索引） |
+| `probe-status-badge.mjs` | 五种来源状态徽标（自备夹具 + 自清索引；「未命中」用生僻字构造，保证真的是空集） |
 | `probe-retrieval-test.mjs` | 检索测试面板：范围切换、score 与覆盖率 |
 | `probe-reader.mjs` | 引用 → 右栏阅读器 → 命中段高亮 |
 | `probe-ocr.mjs` | OCR：检测不联网、真下载、取消即删、重扫后可检索 |
