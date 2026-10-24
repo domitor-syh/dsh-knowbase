@@ -66,6 +66,9 @@ export const REMOTE_METHODS = [
   'listProposals',
   'approveProposal',
   'rejectProposal',
+  'getStatistics',
+  'setStatisticsEnabled',
+  'clearStatistics',
 ] as const
 
 /** One Remote method name. */

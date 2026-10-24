@@ -5,6 +5,7 @@ import { ToolRuntime, assertObjectJsonSchema, assertSupportedJsonSchema, validat
 import { describe, expect, it, vi } from 'vitest'
 import { KnowbaseService, MemoryStore } from '../src/core/service.ts'
 import { SessionSelectionRegistry } from '../src/core/session-scope.ts'
+import { StatisticsRegistry } from '../src/core/statistics.ts'
 import { installKnowledgeTools } from '../src/tools.ts'
 import { createMemoryVaultFs } from '../src/vault-fs.ts'
 
@@ -20,7 +21,12 @@ async function fixture() {
   await service.addFiles(base.id, [{ name: 'evidence.txt', data: new TextEncoder().encode('registry evidence '.repeat(1200)) }])
   const selection = new SessionSelectionRegistry()
   await selection.set('session-a', { enabled: true, scope: [base.id] })
-  const deps = { service: () => service, selection }
+  const statistics = new StatisticsRegistry()
+  await statistics.useStore({
+    loadSettings: () => undefined, loadRecords: () => [],
+    saveSettings: async () => {}, put: async () => {}, delete: async () => {},
+  })
+  const deps = { service: () => service, selection, statistics }
   const owner = root.plugin({
     name: 'knowledge-tools-registry-test-owner',
     inject: ['tools'],
@@ -49,9 +55,9 @@ describe('knowledge tools with the real Host tool registry', () => {
   it('registers all raw input/output schemas, including integer and open output properties', async () => {
     const f = await fixture()
     try {
-      expect(f.tools.schemas().map(schema => schema.name)).toEqual(expect.arrayContaining(['kb_list', 'kb_search', 'kb_read']))
-      expect(f.tools.schemas()).toHaveLength(4)
-      for (const name of ['kb_list', 'kb_search', 'kb_read']) {
+      expect(f.tools.schemas().map(schema => schema.name)).toEqual(expect.arrayContaining(['kb_list', 'kb_search', 'kb_read', 'kb_stats', 'kb_propose_text']))
+      expect(f.tools.schemas()).toHaveLength(5)
+      for (const name of ['kb_list', 'kb_search', 'kb_read', 'kb_stats', 'kb_propose_text']) {
         const def = f.tools.get(name)!
         expect(def).toBeDefined()
         expect(() => assertObjectJsonSchema(def.parameters)).not.toThrow()
@@ -62,6 +68,11 @@ describe('knowledge tools with the real Host tool registry', () => {
       const input = f.tools.get('kb_read')!.parameters
       expect(validateJsonSchemaValue(input, { kbId: f.base.id, materialId: 'evidence.txt', offset: 0, limit: 8000 })).toEqual([])
       expect(validateJsonSchemaValue(input, { kbId: f.base.id, materialId: 'evidence.txt', offset: 0.5 })).not.toEqual([])
+      const stats = f.tools.get('kb_stats')!.parameters
+      expect(validateJsonSchemaValue(stats, {})).toEqual([])
+      expect(validateJsonSchemaValue(stats, { kbId: f.base.id, offset: 0, limit: 50 })).toEqual([])
+      expect(validateJsonSchemaValue(stats, { offset: 0.5 })).not.toEqual([])
+      expect(validateJsonSchemaValue(stats, { enabled: true })).not.toEqual([])
     } finally { await f.root.fiber.dispose() }
   })
 
@@ -69,6 +80,8 @@ describe('knowledge tools with the real Host tool registry', () => {
     const f = await fixture()
     try {
       const inputs = [
+        ['kb_stats', {}],
+        ['kb_stats', { kbId: f.base.id, offset: 0, limit: 50 }],
         ['kb_list', {}],
         ['kb_list', { kbId: f.base.id, limit: 1 }],
         ['kb_search', { query: 'registry evidence', limit: 8 }],
@@ -135,7 +148,7 @@ describe('knowledge tools with the real Host tool registry', () => {
       expect(f.tools.schemas()).toEqual([])
       expect(f.tools.get('kb_list')).toBeUndefined()
       installKnowledgeTools(f.root, f.deps)
-      expect(f.tools.schemas()).toHaveLength(4)
+      expect(f.tools.schemas()).toHaveLength(5)
       await f.root.fiber.dispose()
       expect(f.tools.get('kb_list')).toBeUndefined()
       expect(f.tools.schemas()).toEqual([])

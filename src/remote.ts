@@ -31,9 +31,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { OcrResourceManager, OcrResourceStatus } from './core/ocr-resources.ts'
 import type { ProposalRegistry, ProposalView as CoreProposalView } from './core/proposals.ts'
+import type { StatisticsMaterial, StatisticsView } from './core/statistics-types.ts'
+import type { StatisticsRegistry } from './core/statistics.ts'
 import type { SessionSelectionRegistry } from './core/session-scope.ts'
 import type { KnowbaseService, ScanReport } from './core/service.ts'
 import { revealFolder, shellInfo } from './core/shell.ts'
+import { promptLabel } from './prompt-map.ts'
 import { installRemoteMarkers } from './remote-methods.ts'
 
 /** Cordis service key, wire namespace, and registry key. */
@@ -216,6 +219,8 @@ interface Dependencies {
   /** The language-pack download, held between calls — see `./core/ocr-resources.ts`. */
   readonly ocr: OcrResourceManager
   readonly proposals: ProposalRegistry
+  /** Automatic retrieval statistics; optional only for older fixture constructors. */
+  readonly statistics?: StatisticsRegistry
 }
 
 /** See the module note: instance state is not reachable from a Remote call. */
@@ -228,6 +233,24 @@ function deps(): Dependencies {
     throw new Error('knowbase: Remote service was invoked before it was initialized')
   }
   return found
+}
+
+function requireStatistics(): StatisticsRegistry {
+  const statistics = deps().statistics
+  if (statistics === undefined) throw new Error('统计服务尚未就绪。')
+  return statistics
+}
+
+function statisticsView(offset: number, limit: number): StatisticsView {
+  const { service } = deps()
+  const statistics = requireStatistics()
+  const bases = service.listKnowledgeBases()
+  const materials: StatisticsMaterial[] = bases.flatMap(base => service.listMaterials(base.id).map(material => ({
+    kbId: base.id, materialId: material.id, kbName: promptLabel(base.name, 240), title: promptLabel(material.title, 240),
+  })))
+  const ids = bases.map(base => base.id)
+  statistics.reconcile(materials, ids)
+  return statistics.snapshot(materials, ids, offset, limit)
 }
 
 /** Read one session's scope in wire shape. */
@@ -293,9 +316,10 @@ export class KnowbaseRemote extends TypertRemoteService {
     selection: SessionSelectionRegistry,
     ocr: OcrResourceManager,
     proposals: ProposalRegistry,
+    statistics?: StatisticsRegistry,
   ) {
     super(ctx, SERVICE_KEY)
-    DEPENDENCIES.set(SERVICE_KEY, { service, selection, ocr, proposals })
+    DEPENDENCIES.set(SERVICE_KEY, { service, selection, ocr, proposals, statistics })
   }
 
   /** Every knowledge base, ordered by name. */
@@ -540,6 +564,23 @@ export class KnowbaseRemote extends TypertRemoteService {
       reason: outcome.kind === 'error' ? outcome.reason : '',
       elapsedMs,
     }
+  }
+
+  /** Local aggregate view; never scans or reads material bodies. */
+  async getStatistics(offset: number, limit: number): Promise<StatisticsView> {
+    return statisticsView(offset, limit)
+  }
+
+  /** User-controlled opt-in; no matching Agent action is registered. */
+  async setStatisticsEnabled(enabled: boolean): Promise<StatisticsView> {
+    await requireStatistics().setEnabled(enabled)
+    return statisticsView(0, 50)
+  }
+
+  /** Clear only local statistical aggregates after the Client confirmation. */
+  async clearStatistics(): Promise<StatisticsView> {
+    await requireStatistics().clear()
+    return statisticsView(0, 50)
   }
 
   /** The scope the composer toggle and the retrieval seam both read. */

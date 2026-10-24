@@ -33,6 +33,7 @@ import { z } from 'zod'
 import type { SessionScopeStore } from './core/session-scope.ts'
 import type { ProposalStore, StoredProposal } from './core/proposals.ts'
 import type { KnowbaseStore } from './core/service.ts'
+import type { StatisticsStore } from './core/statistics.ts'
 
 /**
  * A knowledge base on the medium. Version 1, widened in place.
@@ -155,6 +156,46 @@ export const SESSION_DOMAIN = defineDomain({
     session_scopes: domainTable(sessionScopeSchema),
   },
 })
+
+const statisticsCountersSchema = z.object({
+  requests: z.number().int().nonnegative(), hits: z.number().int().nonnegative(),
+  noMatch: z.number().int().nonnegative(), notReady: z.number().int().nonnegative(),
+  emptyScope: z.number().int().nonnegative(), errors: z.number().int().nonnegative(),
+})
+
+export const STATISTICS_DOMAIN = defineDomain({
+  name: 'dsh_knowbase_statistics',
+  version: 1,
+  tables: {
+    settings: domainTable(z.object({ enabled: z.boolean(), since: z.number(), generation: z.string() })),
+    daily_counts: domainTable(z.object({
+      id: z.string(), generation: z.string(), day: z.string(), scopeIds: z.array(z.string()),
+      kbId: z.string(), materialId: z.string(), counters: statisticsCountersSchema,
+      recallTurns: z.number().int().nonnegative(),
+    })),
+  },
+})
+
+export interface OpenedStatisticsStore {
+  readonly store: StatisticsStore
+  close(): Promise<void>
+}
+
+export async function openStatisticsStore(facility: DomainFacility): Promise<OpenedStatisticsStore> {
+  const domain = await facility.open(STATISTICS_DOMAIN)
+  const settings = domain.table('settings')
+  const daily = domain.table('daily_counts')
+  return {
+    store: {
+      loadSettings: () => [...settings.entries()].find(([id]) => id === 'settings')?.[1],
+      loadRecords: () => [...daily.entries()].map(([, record]) => record),
+      saveSettings: value => settings.put('settings', { ...value }),
+      put: value => daily.put(value.id, { ...value, scopeIds: [...value.scopeIds] }),
+      delete: async id => { await daily.delete(id) },
+    },
+    close: () => domain.close(),
+  }
+}
 
 /** An opened store plus the handle that releases it. */
 export interface OpenedStore {

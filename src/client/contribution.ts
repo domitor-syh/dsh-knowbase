@@ -105,6 +105,15 @@ const sessionScopeSchema = z.object({
   kbIds: z.array(z.string()),
 })
 
+const statisticsSchema = z.object({
+  enabled: z.boolean(), available: z.boolean(), persistenceError: z.boolean(),
+  retentionDays: count, since: z.number().finite().nonnegative(), runtimeDedupOnly: z.boolean(), dropped: count,
+  counters: z.object({ requests: count, hits: count, noMatch: count, notReady: count, emptyScope: count, errors: count }),
+  hitRate: z.number().finite().min(0).max(1).nullable(),
+  entries: z.array(z.object({ kbId: z.string(), materialId: z.string(), kbName: z.string(), title: z.string(), recallTurns: count })).max(50),
+  total: count, offset: count, nextOffset: count.nullable(),
+})
+
 const proposalSchema = z.object({
   id: z.string(), sessionId: z.string(), kbId: z.string(), kbName: z.string(), fileName: z.string(),
   content: z.string(), contentBytes: z.number(), contentHash: z.string(), contentPreview: z.string(),
@@ -291,6 +300,12 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
     ],
     result: sessionScopeSchema,
   },
+  getStatistics: {
+    parameters: [{ name: 'offset', schema: count.max(Number.MAX_SAFE_INTEGER) }, { name: 'limit', schema: z.number().int().min(1).max(50) }],
+    result: statisticsSchema,
+  },
+  setStatisticsEnabled: { parameters: [{ name: 'enabled', schema: boolean }], result: statisticsSchema },
+  clearStatistics: { parameters: [], result: statisticsSchema },
   listProposals: {
     parameters: [{ name: 'sessionId', schema: string }],
     result: z.array(proposalSchema),
@@ -374,6 +389,9 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
   }
 
   interface TypertRemoteNamespace$6b6e6f7762617365 {
+    getStatistics: (offset: number, limit: number) => Promise<unknown>
+    setStatisticsEnabled: (enabled: boolean) => Promise<unknown>
+    clearStatistics: () => Promise<unknown>
     listProposals: (sessionId: string) => Promise<unknown>
     approveProposal: (sessionId: string, proposalId: string) => Promise<unknown>
     rejectProposal: (sessionId: string, proposalId: string) => Promise<unknown>

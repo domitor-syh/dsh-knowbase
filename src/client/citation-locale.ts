@@ -2,6 +2,16 @@ import type { Context } from '@deepseek-ai/cordis'
 import { useSyncExternalStore } from 'react'
 
 const zh = {
+  statsTitle: '自动检索统计', statsEnable: '记录自动检索统计', statsRefresh: '刷新', statsClear: '清空统计',
+  statsConfirm: '确认清空', statsCancel: '取消', statsConfirmHelp: '清空本地累计统计？此操作无法撤销，统计开关保持不变。',
+  statsHelp: '仅统计会话中的自动知识检索；手动检索测试和知识库工具调用不计入。默认关闭，仅本地保存计数，不记录问题或正文。命中率不代表回答正确率。',
+  statsRetention: '本地保留天数', statsDedup: '同一轮的重复检索仅在本次运行期间去重；重启后重放可能重复计数。',
+  statsSince: '累计起始时间', statsNever: '从未开启', statsOff: '记录已关闭；保留期内的历史统计仍可查看。',
+  statsLoading: '正在读取统计…', statsFailed: '统计操作失败，请刷新重试。', statsUnavailable: '统计存储暂不可用，无法更改设置或清空。',
+  statsPersistence: '部分统计未能保存，重启后可能丢失。', statsDropped: '未记录的统计次数',
+  statsRequests: '检索请求', statsHits: '命中', statsNoMatch: '未命中', statsNotReady: '未就绪', statsEmptyScope: '范围失效', statsErrors: '检索失败',
+  statsHitRate: '命中率', statsNoRate: '暂无有效检索', statsMaterials: '资料召回', statsRecallTurns: '召回轮次', statsEmpty: '暂无资料召回记录。',
+  statsPrevious: '上一页', statsNext: '下一页', statsTotal: '资料总数',
   scanTitle: '最近一次完成的扫描', scanNone: '暂无扫描报告。重扫后可查看；旧版宿主可能不提供报告。',
   scanIncremental: '增量扫描', scanForce: '强制重建', scanTime: '完成时间', scanDuration: '耗时',
   scanScanned: '扫描文件', scanAdded: '新增', scanReused: '复用', scanChanged: '变化', scanDeleted: '删除',
@@ -27,6 +37,16 @@ const zh = {
 } as const
 export type CitationText = (key: keyof typeof zh) => string
 const en: Record<keyof typeof zh, string> = {
+  statsTitle: 'Automatic retrieval statistics', statsEnable: 'Record automatic retrieval statistics', statsRefresh: 'Refresh', statsClear: 'Clear statistics',
+  statsConfirm: 'Confirm clear', statsCancel: 'Cancel', statsConfirmHelp: 'Clear the local totals? This cannot be undone. Recording remains unchanged.',
+  statsHelp: 'Counts automatic knowledge retrieval in conversations only. Manual search tests and knowledge tool calls are excluded. Off by default. Only local counts are stored, without questions or document text. Hit rate does not measure answer accuracy.',
+  statsRetention: 'Local retention in days', statsDedup: 'Repeated retrieval within a turn is deduplicated during this run only. Replay after a restart may count again.',
+  statsSince: 'Counting since', statsNever: 'Never enabled', statsOff: 'Recording is off. History within the retention period remains visible.',
+  statsLoading: 'Loading statistics…', statsFailed: 'Statistics could not be updated. Refresh to retry.', statsUnavailable: 'Statistics storage is unavailable. Settings and clearing are disabled.',
+  statsPersistence: 'Some statistics could not be saved and may be lost after a restart.', statsDropped: 'Observations not recorded',
+  statsRequests: 'Retrieval requests', statsHits: 'Hits', statsNoMatch: 'No match', statsNotReady: 'Not ready', statsEmptyScope: 'Unavailable scope', statsErrors: 'Retrieval errors',
+  statsHitRate: 'Hit rate', statsNoRate: 'No eligible retrievals yet', statsMaterials: 'Material recall', statsRecallTurns: 'Turns recalled', statsEmpty: 'No material recall recorded yet.',
+  statsPrevious: 'Previous', statsNext: 'Next', statsTotal: 'Total materials',
   scanTitle: 'Last completed scan', scanNone: 'No scan report yet. Rescan to inspect; older Hosts may omit reports.',
   scanIncremental: 'Incremental scan', scanForce: 'Forced rebuild', scanTime: 'Completed', scanDuration: 'Duration',
   scanScanned: 'Files scanned', scanAdded: 'Added', scanReused: 'Reused', scanChanged: 'Changed', scanDeleted: 'Deleted',

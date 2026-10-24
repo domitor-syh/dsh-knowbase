@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { KnowbaseService, MemoryStore } from '../src/core/service.ts'
 import { SessionSelectionRegistry } from '../src/core/session-scope.ts'
 import { createMemoryVaultFs } from '../src/vault-fs.ts'
+import { StatisticsRegistry } from '../src/core/statistics.ts'
 import { runKnowledgeTool, type KnowledgeToolName } from '../src/knowledge-tools.ts'
 import { installKnowledgeTools } from '../src/tools.ts'
 
@@ -24,7 +25,12 @@ async function fixture() {
   const selection = new SessionSelectionRegistry()
   await selection.set('a', { enabled: true, scope: [a.id] })
   await selection.set('b', { enabled: true, scope: [b.id] })
-  const deps = { service: () => service, selection }
+  const statistics = new StatisticsRegistry()
+  await statistics.useStore({
+    loadSettings: () => undefined, loadRecords: () => [],
+    saveSettings: async () => {}, put: async () => {}, delete: async () => {},
+  })
+  const deps = { service: () => service, selection, statistics }
   const run = (name: KnowledgeToolName, args: unknown = {}, agentId: string | undefined = 'a') => runKnowledgeTool(name, args, agentId, deps)
   return { service, selection, deps, a, b, text, fs, run, root }
 }
@@ -71,7 +77,7 @@ describe('read-only Agent knowledge tools', () => {
     expect(run('kb_read', { kbId: a.id, materialId: '说明.md', offset: text.length + 50 })).toMatchObject({ text: '', locator: '正文结束', nextOffset: null, offset: text.length })
   })
 
-  it.each(['kb_list', 'kb_search', 'kb_read'] as const)('%s cannot widen scope with a guessed id', async name => {
+  it.each(['kb_list', 'kb_search', 'kb_read', 'kb_stats'] as const)('%s cannot widen scope with a guessed id', async name => {
     const { run, b } = await fixture()
     expect(run(name, { kbId: b.id, ...(name === 'kb_search' ? { query: 'secret' } : {}), ...(name === 'kb_read' ? { materialId: 'secret.txt' } : {}) })).toMatchObject({ status: 'out_of_scope' })
   })
@@ -116,6 +122,9 @@ describe('read-only Agent knowledge tools', () => {
   })
 
   it.each([
+    ['kb_stats', { offset: -1 }], ['kb_stats', { offset: 0.5 }], ['kb_stats', { offset: Number.MAX_SAFE_INTEGER + 1 }],
+    ['kb_stats', { limit: 0 }], ['kb_stats', { limit: 51 }], ['kb_stats', { limit: 1.5 }], ['kb_stats', { kbId: '' }],
+    ['kb_stats', { enabled: true }], ['kb_stats', { clear: true }], ['kb_stats', { path: '/private' }], ['kb_stats', null],
     ['kb_list', { limit: 101 }], ['kb_list', { offset: -1 }], ['kb_list', { offset: 1.5 }],
     ['kb_search', { query: ' ' }], ['kb_search', { query: 'x'.repeat(2001) }], ['kb_search', { query: 'x', limit: 9 }],
     ['kb_read', { kbId: 'x', materialId: 'y', limit: 8001 }], ['kb_read', { kbId: 'x', materialId: 'y', limit: 0 }],
@@ -143,11 +152,74 @@ describe('read-only Agent knowledge tools', () => {
     expect(JSON.stringify(run('kb_search', { query: 'x' }))).not.toContain('private')
   })
 
+  it('reads default-off statistics synchronously and reports missing storage consistently', async () => {
+    const { run, deps, selection } = await fixture()
+    const view = run('kb_stats')
+    expect(view).toMatchObject({ status: 'ok', kind: 'statistics', enabled: false, available: true, retentionDays: 30, counters: { requests: 0 }, entries: [], hitRate: null, offset: 0, nextOffset: null })
+    expect(view).not.toBeInstanceOf(Promise)
+    expect(runKnowledgeTool('kb_stats', {}, 'a', { service: deps.service, selection }).status).toBe('not_ready')
+    expect(runKnowledgeTool('kb_stats', {}, 'a', { ...deps, statistics: new StatisticsRegistry() })).toMatchObject({ status: 'not_ready', kind: 'statistics', available: false })
+    expect(runKnowledgeTool('kb_stats', {}, undefined, deps).status).toBe('no_agent')
+    expect(runKnowledgeTool('kb_stats', {}, 'a', { ...deps, service: () => undefined }).status).toBe('not_ready')
+    expect(run('kb_stats', {}, 'unknown').status).toBe('disabled')
+    await selection.set('a', { enabled: true, scope: [] })
+    expect(run('kb_stats').status).toBe('no_selection')
+    await selection.set('a', { enabled: true, scope: ['deleted'] })
+    expect(run('kb_stats').status).toBe('empty_scope')
+  })
+
+  it('filters live statistics and counts historical requests only within the complete allowed scope', async () => {
+    const { run, deps, service, selection, a, b } = await fixture()
+    await deps.statistics.setEnabled(true)
+    const record = (turn: number, scopeIds: string[], outcome: Parameters<StatisticsRegistry['record']>[0]['outcome']) => deps.statistics.record({ sessionId: 'a', turn, inputKey: `input-${turn}`, scopeIds, outcome })
+    record(1, [a.id], { kind: 'hits', passages: [
+      { kbId: a.id, materialId: '说明.md', kbName: a.name, materialTitle: '说明.md', text: 'evidence', locator: 'one' },
+      { kbId: a.id, materialId: '附件.zip', kbName: a.name, materialTitle: '附件.zip', text: 'evidence', locator: 'two' },
+    ] })
+    record(2, [b.id], { kind: 'hits', passages: [{ kbId: b.id, materialId: 'secret.txt', kbName: b.name, materialTitle: 'secret.txt', text: 'private', locator: 'three' }] })
+    record(3, [a.id, b.id], { kind: 'no_match' })
+    const snapshot = vi.spyOn(deps.statistics, 'snapshot')
+    expect(run('kb_stats', { limit: 1 })).toMatchObject({ status: 'ok', counters: { requests: 1, hits: 1, noMatch: 0 }, total: 2, nextOffset: 1, entries: [{ kbId: a.id, recallTurns: 1 }] })
+    expect(snapshot.mock.calls[0]![1]).toEqual([a.id])
+    expect(snapshot.mock.calls[0]![0]).toHaveLength(2)
+    expect(snapshot.mock.calls[0]![0].every(material => material.kbId === a.id)).toBe(true)
+    expect(run('kb_stats', { offset: 1, limit: 1 })).toMatchObject({ total: 2, offset: 1, nextOffset: null })
+    expect(run('kb_stats', { offset: 100 })).toMatchObject({ entries: [], nextOffset: null })
+    expect(JSON.stringify(run('kb_stats'))).not.toContain(b.id)
+    await selection.set('a', { enabled: true, scope: 'all' })
+    expect(run('kb_stats')).toMatchObject({ counters: { requests: 3, hits: 2, noMatch: 1 }, total: 3, hitRate: 2 / 3 })
+    expect(run('kb_stats', { kbId: a.id })).toMatchObject({ counters: { requests: 1 }, total: 2 })
+    await service.deleteMaterial(a.id, '附件.zip')
+    expect(run('kb_stats', { kbId: a.id })).toMatchObject({ total: 1, entries: [{ materialId: '说明.md' }] })
+    await deps.statistics.flush()
+  })
+
+  it('sanitizes statistics display metadata and never reads the vault or records manual tool use', async () => {
+    const { run, deps, service, fs, a, root } = await fixture()
+    await deps.statistics.setEnabled(true)
+    deps.statistics.record({ sessionId: 'a', turn: 1, inputKey: 'evidence', scopeIds: [a.id], outcome: { kind: 'hits', passages: [{ kbId: a.id, materialId: '说明.md', kbName: a.name, materialTitle: '说明.md', text: 'evidence', locator: 'one' }] } })
+    const original = service.listMaterials.bind(service)
+    vi.spyOn(service, 'listKnowledgeBases').mockReturnValue([{ ...a, name: `${root}\\private` }])
+    vi.spyOn(service, 'listMaterials').mockImplementation(id => original(id).map(material => ({ ...material, title: 'C:\\private\\secret.md' })))
+    const reads = [vi.spyOn(fs, 'readText'), vi.spyOn(fs, 'readBytes')]
+    const record = vi.spyOn(deps.statistics, 'record')
+    expect(run('kb_stats')).toMatchObject({ entries: [{ kbName: '路径已隐藏', title: '路径已隐藏' }] })
+    expect(JSON.stringify(run('kb_stats'))).not.toContain(root)
+    run('kb_list')
+    run('kb_search', { query: 'evidence' })
+    run('kb_read', { kbId: a.id, materialId: '说明.md' })
+    for (const read of reads) expect(read).not.toHaveBeenCalled()
+    expect(record).not.toHaveBeenCalled()
+    vi.spyOn(deps.statistics, 'snapshot').mockImplementation(() => { throw new Error('C:\\private\\secret') })
+    expect(run('kb_stats')).toEqual({ status: 'error', message: '知识库操作失败，未获得可靠结果。' })
+    await deps.statistics.flush()
+  })
+
   it('registers canonical JSON output, checks cancellation and leaves mutations untouched', async () => {
     const { deps, service } = await fixture()
     const definitions: Def[] = []
     installKnowledgeTools({ tools: { register: (def: Def) => { definitions.push(def); return () => {} } } } as unknown as Context, deps)
-    expect(definitions.map(def => def.name)).toEqual(['kb_list', 'kb_search', 'kb_read', 'kb_propose_text'])
+    expect(definitions.map(def => def.name)).toEqual(['kb_list', 'kb_search', 'kb_read', 'kb_stats', 'kb_propose_text'])
     const mutations = [vi.spyOn(service, 'rescan'), vi.spyOn(service, 'addFiles'), vi.spyOn(service, 'deleteMaterial')]
     const execution = { agent: { id: 'a' }, signal: new AbortController().signal } as Parameters<Def['execute']>[1]
     for (const definition of definitions) {

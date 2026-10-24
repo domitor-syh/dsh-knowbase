@@ -21,6 +21,7 @@ import {
   queryFrom,
   statusOf,
   type PreStepPayload,
+  type PreStepOptions,
   type RetrievalOutcome,
   type RetrievedPassage,
 } from '../src/pre-step.ts'
@@ -63,7 +64,7 @@ function incoming(text = '默认波特率是多少？'): UserMessage {
 }
 
 /** Capture the listener a plugin registers, the way the host would. */
-function captureListener(options: { retrieve: (p: PreStepPayload) => Promise<RetrievalOutcome> }) {
+function captureListener(options: PreStepOptions) {
   let listener:
     | ((payload: PreStepPayload, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>)
     | undefined
@@ -406,6 +407,26 @@ describe('installPreStep', () => {
       async () => ENTER,
     )
     expect(messagesOf(other)).toHaveLength(2)
+  })
+
+  it('observes only admitted new inputs and contains observer failures', async () => {
+    const observed: RetrievalOutcome[] = []
+    const listener = captureListener({
+      retrieve: async () => ({ kind: 'hits', passages: [PASSAGE] }),
+      observe: (_payload, outcome) => { observed.push(outcome); throw new Error('statistics unavailable') },
+    })
+    const payload = { agent: { id: 'a1' }, turn: 9, step: 0, messages: [incoming()] }
+    const rejected = { kind: 'reject' as const }
+    expect(await listener(payload, async () => rejected)).toBe(rejected)
+    expect(observed).toHaveLength(0)
+    const entered = await listener(payload, async () => ({ ...ENTER, startsRequestSeries: true }))
+    expect(entered).toMatchObject({ kind: 'enter', startsRequestSeries: true })
+    expect(messagesOf(entered)).toHaveLength(2)
+    expect(observed).toHaveLength(1)
+    await listener({ ...payload, step: 1 }, async () => ENTER)
+    expect(observed).toHaveLength(1)
+    await listener({ ...payload, step: 2, messages: [incoming('another input')] }, async () => ENTER)
+    expect(observed).toHaveLength(2)
   })
 
   it('does not search when the step carries no new input', async () => {

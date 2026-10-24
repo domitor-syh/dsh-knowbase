@@ -36,6 +36,9 @@ import { installPreStep, queryFrom } from './pre-step.ts'
 import { installLibraryPrompt } from './prompt-map.ts'
 import { KnowbaseRemote } from './remote.ts'
 import { openProposalStore, openSessionScopeStore, openStorageDomainStore, type OpenedProposalStore, type OpenedSessionStore } from './store.ts'
+import { StatisticsRegistry } from './core/statistics.ts'
+import { openStatisticsStore } from './store.ts'
+import { mountStatisticsStore } from './statistics-lifecycle.ts'
 import { createNodeVaultFs } from './vault-fs.ts'
 import { installKnowledgeTools } from './tools.ts'
 
@@ -50,6 +53,8 @@ export function apply(ctx: Context): void {
   const selection = new SessionSelectionRegistry()
   let service: KnowbaseService | undefined
   const proposals = new ProposalRegistry({ service: () => service, selection })
+  const statistics = new StatisticsRegistry()
+  const retrievalScopes = new WeakMap<object, readonly string[]>()
   let disposed = false
 
   // The retrieval seam. It exists from the first moment and answers `not_ready`
@@ -74,7 +79,17 @@ export function apply(ctx: Context): void {
       const query = queryFrom(payload.messages)
       if (query === '') return { kind: 'no_match' }
 
+      retrievalScopes.set(payload, scope.ids.filter(id => current.getKnowledgeBase(id) !== undefined))
       return current.retrieve(query, scope.ids)
+    },
+    observe: (payload, outcome) => {
+      const scopeIds = retrievalScopes.get(payload)
+      retrievalScopes.delete(payload)
+      if (scopeIds === undefined) return
+      statistics.record({
+        sessionId: payload.agent.id, turn: payload.turn, inputKey: queryFrom(payload.messages),
+        scopeIds, outcome,
+      })
     },
   })
 
@@ -86,10 +101,16 @@ export function apply(ctx: Context): void {
   })
 
   ctx.inject(['tools'], toolScope => {
-    installKnowledgeTools(toolScope, { service: () => service, selection, proposals })
+    installKnowledgeTools(toolScope, { service: () => service, selection, proposals, statistics })
   })
 
   installLibraryPrompt(ctx, () => service)
+
+  ctx.inject(['storageDomain'], storageScope => {
+    const mounted = mountStatisticsStore(statistics, () => openStatisticsStore(storageScope.storageDomain),
+      () => console.info('[knowbase] statistics storage unavailable'))
+    storageScope.effect(() => () => mounted.close())
+  })
 
   ctx.inject(['storageDomain'], storageScope => {
     void (async () => {
@@ -155,6 +176,7 @@ export function apply(ctx: Context): void {
           selection,
           new OcrResourceManager({ fs: vault, root: vaultRoot }),
           proposals,
+          statistics,
         )
 
         ctx.effect(() => () => {
@@ -179,5 +201,6 @@ export function apply(ctx: Context): void {
     disposed = true
     service = undefined
     console.info('[knowbase] host half disposed')
+    return statistics.dispose()
   })
 }

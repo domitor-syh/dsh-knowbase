@@ -12,6 +12,7 @@
  * @module @domitor-syh/dsh-knowbase/client/api
  */
 
+import type { StatisticsView } from '../core/statistics-types.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import type { RemoteFailure, RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type {
@@ -90,6 +91,9 @@ export interface KnowbaseApi {
     all: boolean,
     kbIds: readonly string[],
   ): Promise<SessionScopeView>
+  getStatistics(offset: number, limit: number): Promise<StatisticsView>
+  setStatisticsEnabled(enabled: boolean): Promise<StatisticsView>
+  clearStatistics(): Promise<StatisticsView>
   listProposals(sessionId: string): Promise<readonly ProposalView[]>
   approveProposal(sessionId: string, proposalId: string): Promise<ProposalView>
   rejectProposal(sessionId: string, proposalId: string): Promise<ProposalView>
@@ -141,7 +145,10 @@ interface KnowbaseWire {
     all: boolean,
     kbIds: readonly string[],
   ) => Promise<RemoteResult<SessionScopeView>>
-    listProposals: (sessionId: string) => Promise<RemoteResult<readonly ProposalView[]>>
+  getStatistics: (offset: number, limit: number) => Promise<RemoteResult<StatisticsView>>
+  setStatisticsEnabled: (enabled: boolean) => Promise<RemoteResult<StatisticsView>>
+  clearStatistics: () => Promise<RemoteResult<StatisticsView>>
+  listProposals: (sessionId: string) => Promise<RemoteResult<readonly ProposalView[]>>
     approveProposal: (sessionId: string, proposalId: string) => Promise<RemoteResult<ProposalView>>
     rejectProposal: (sessionId: string, proposalId: string) => Promise<RemoteResult<ProposalView>>
 }
@@ -236,6 +243,9 @@ export function createKnowbaseApi(ctx: Context): KnowbaseApi {
     getSessionScope: agentId => unwrap(wire.getSessionScope(agentId)),
     setSessionScope: (agentId, enabled, all, kbIds) =>
       unwrap(wire.setSessionScope(agentId, enabled, all, kbIds)),
+    getStatistics: (offset, limit) => unwrap(wire.getStatistics(offset, limit)),
+    setStatisticsEnabled: enabled => unwrap(wire.setStatisticsEnabled(enabled)),
+    clearStatistics: () => unwrap(wire.clearStatistics()),
     listProposals: sessionId => unwrap(wire.listProposals(sessionId)),
     approveProposal: (sessionId, proposalId) => unwrap(wire.approveProposal(sessionId, proposalId)),
     rejectProposal: (sessionId, proposalId) => unwrap(wire.rejectProposal(sessionId, proposalId)),

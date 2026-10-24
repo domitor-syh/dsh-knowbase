@@ -53,6 +53,7 @@ import { Icon } from './icons.tsx'
 import { OcrHint, OcrSection, useOcrController } from './ocr-panel.tsx'
 import { pageTokens } from './page-style.ts'
 import { ScopePicker } from './scope-picker.tsx'
+import { StatisticsPanel } from './statistics-panel.tsx'
 import { ScanSummary } from './scan-summary.tsx'
 import { useSpin } from './spin.ts'
 import { useColorScheme } from './theme.ts'
@@ -887,6 +888,8 @@ export function KnowbasePage(): React.ReactElement {
           {report !== undefined && <Report report={report} scopeNote={testScopeNote} />}
         </section>
       </div>
+
+      <StatisticsPanel />
 
       <div className="kb-columns">
         <aside className="kb-card" aria-label="知识库列表">

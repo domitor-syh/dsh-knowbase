@@ -21,6 +21,13 @@ const schemas = {
   kb_read: {
     type: 'object', properties: { kbId, materialId: { type: 'string', description: 'Material id from kb_list or kb_search; not an arbitrary file path.' }, offset, limit: { type: 'integer', description: 'Maximum UTF-16 code units; default 4000, range 1–8000.' } }, required: ['kbId', 'materialId'], additionalProperties: false,
   },
+  kb_stats: {
+    type: 'object', properties: {
+      kbId: { type: 'string', description: 'Knowledge-base id from kb_list; omit to use the current conversation selection.' },
+      offset: { type: 'integer', description: 'Zero-based statistics entry offset; nonnegative safe integer, default 0.' },
+      limit: { type: 'integer', description: 'Maximum statistics entries; default 50, range 1–50.' },
+    }, additionalProperties: false,
+  },
   kb_propose_text: {
     type: 'object', properties: {
       kbId: { type: 'string', description: 'Knowledge-base id from kb_list; must be allowed by the current conversation scope.' },

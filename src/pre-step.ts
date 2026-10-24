@@ -272,6 +272,8 @@ export interface PreStepOptions {
    * reached, and it is what the client renders as the answer's source badge.
    */
   retrieve: (payload: PreStepPayload) => Promise<RetrievalOutcome>
+  /** Observe an admitted, deduplicated outcome without delaying or changing it. */
+  observe?: (payload: PreStepPayload, outcome: RetrievalOutcome) => void
   /** Diagnostics sink; defaults to `console`. */
   log?: (message: string) => void
 }
@@ -365,6 +367,8 @@ export function installPreStep(ctx: Context, options: PreStepOptions): void {
     // so a status line on every answer would be reporting a decision they made.
     if (outcome.kind === 'disabled') return decision
 
-    return appendEvidence(decision, createOutcomeMessage(outcome))
+    const admitted = appendEvidence(decision, createOutcomeMessage(outcome))
+    try { options.observe?.(payload, outcome) } catch { /* Statistics never affect the model request. */ }
+    return admitted
   })
 }
