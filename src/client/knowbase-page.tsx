@@ -53,6 +53,7 @@ import { Icon } from './icons.tsx'
 import { OcrHint, OcrSection, useOcrController } from './ocr-panel.tsx'
 import { pageTokens } from './page-style.ts'
 import { ScopePicker } from './scope-picker.tsx'
+import { ScanSummary } from './scan-summary.tsx'
 import { useSpin } from './spin.ts'
 import { useColorScheme } from './theme.ts'
 
@@ -1022,6 +1023,7 @@ export function KnowbasePage(): React.ReactElement {
                   </div>
                 </div>
 
+                <ScanSummary report={selected.lastScan} />
                 <ul className="kb-file-list" id="kb-file-list">
                   {materials.map(material => (
                     <li key={material.id} className="kb-file-row" data-kb-file-row={material.id}>

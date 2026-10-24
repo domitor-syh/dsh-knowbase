@@ -33,6 +33,16 @@ const PKG = '@domitor-syh/dsh-knowbase'
 /** Cordis service key of `KnowbaseRemote`. */
 const SERVICE = 'knowbase'
 
+const count = z.number().int().nonnegative()
+const scanReportSchema = z.object({
+  mode: z.enum(['incremental', 'force']),
+  startedAt: z.number().finite(), completedAt: z.number().finite(), elapsedMs: z.number().nonnegative(),
+  scanned: count, rebuilt: count, skipped: count,
+  added: count, reused: count, changed: count, deleted: count, unsearchable: count,
+  failures: z.array(z.object({ fileName: z.string(), reason: z.string() })).max(100),
+  omittedFailures: count,
+})
+
 const knowledgeBaseSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -42,6 +52,7 @@ const knowledgeBaseSchema = z.object({
   indexedCount: z.number(),
   bytes: z.number(),
   updatedAt: z.number(),
+  lastScan: scanReportSchema.optional(),
 })
 
 const materialSchema = z.object({

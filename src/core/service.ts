@@ -114,12 +114,26 @@ export interface RescanOptions {
 
 /** Counts from the most recent scan of one base. */
 export interface ScanReport {
+  readonly mode: 'incremental' | 'force'
+  readonly startedAt: number
+  readonly completedAt: number
+  /** Approximate wall-clock time, clamped if the clock moves backwards. */
+  readonly elapsedMs: number
+  /** Regular files considered by the walk, excluding hidden/link/depth exclusions. */
+  readonly scanned: number
+  /** Indexable files processed this time, including unsuccessful attempts. */
+  readonly rebuilt: number
+  /** Unsupported regular files; overlaps reused on subsequent scans. */
+  readonly skipped: number
   readonly added: number
   readonly reused: number
   readonly changed: number
   readonly deleted: number
-  /** Indexable files that remain listed but are not searchable. */
+  /** Indexable files without searchable chunks, including empty/OCR-not-ready. */
   readonly unsearchable: number
+  /** First 100 unsearchable files; relative names and authored reasons only. */
+  readonly failures: readonly Readonly<{ fileName: string; reason: string }>[]
+  readonly omittedFailures: number
 }
 
 /** One file as a scan found it: where it is, how big, when it changed. */
@@ -786,6 +800,7 @@ export class KnowbaseService {
     forced: ReadonlySet<string> = new Set(),
     bumpRevision = true,
   ): Promise<readonly Material[]> {
+    const startedAt = this.#now()
     const entries = await this.#walk(this.#baseDir(base), this.#baseDir(base), 0)
     const previous = this.#materials.get(base.id) ?? new Map<string, Material>()
     const oldIds = new Set(previous.keys())
@@ -839,9 +854,7 @@ export class KnowbaseService {
 
     const deleted = oldIds.size
     const changedState = added + changed + deleted > 0
-    const report: ScanReport = { added, reused, changed, deleted, unsearchable }
     if (bumpRevision && changedState) await this.#bumpRevision(base.id)
-
     // Commit only after the revision record is durable. A storage failure leaves
     // the previous material/index/report snapshot visible and dirty markers live.
     for (const id of oldIds) {
@@ -854,6 +867,24 @@ export class KnowbaseService {
       this.#indexMaterial(material, base.name)
     }
     this.#materials.set(base.id, found)
+    const completedAt = this.#now()
+    const failures = [...found.values()]
+      .filter(material => !material.indexed && isIndexable(material.fileName))
+      .slice(0, 100)
+      .map(material => Object.freeze({
+        fileName: material.fileName,
+        reason: material.note || '未提取到可检索文字。',
+      }))
+    const report: ScanReport = Object.freeze({
+      mode: options.force === true ? 'force' : 'incremental',
+      startedAt, completedAt, elapsedMs: Math.max(0, completedAt - startedAt),
+      scanned: entries.length,
+      rebuilt: toExtract.filter(entry => isIndexable(entry.relative)).length,
+      skipped: entries.filter(entry => !isIndexable(entry.relative)).length,
+      added, reused, changed, deleted, unsearchable,
+      failures: Object.freeze(failures),
+      omittedFailures: Math.max(0, unsearchable - failures.length),
+    })
     this.#scanReports.set(base.id, report)
     this.#dirtyMaterials.delete(base.id)
     return [...found.values()]

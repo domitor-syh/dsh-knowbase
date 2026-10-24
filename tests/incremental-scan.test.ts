@@ -56,7 +56,7 @@ describe('runtime incremental scans', () => {
     expect(remove).not.toHaveBeenCalled()
     expect(service.getMaterial(base.id, 'stable.txt')).toBe(prior)
     expect(service.getKnowledgeBase(base.id)!.indexRevision).toBe(revision)
-    expect(service.getLastScanReport(base.id)).toEqual({ added: 0, reused: 1, changed: 0, deleted: 0, unsearchable: 0 })
+    expect(service.getLastScanReport(base.id)).toMatchObject({ added: 0, reused: 1, changed: 0, deleted: 0, unsearchable: 0 })
   })
 
   it('commits only changed/deleted/new materials and bumps external changes once', async () => {
@@ -80,7 +80,7 @@ describe('runtime incremental scans', () => {
     expect(service.retrieve('deletedword', [base.id]).kind).toBe('no_match')
     expect(hit(service, base.id, 'freshword').materialId).toBe('new.txt')
     expect(service.getKnowledgeBase(base.id)!.indexRevision).toBe(revision + 1)
-    expect(service.getLastScanReport(base.id)).toEqual({ added: 1, reused: 1, changed: 1, deleted: 1, unsearchable: 0 })
+    expect(service.getLastScanReport(base.id)).toMatchObject({ added: 1, reused: 1, changed: 1, deleted: 1, unsearchable: 0 })
     await service.rescan(base.id)
     expect(service.getKnowledgeBase(base.id)!.indexRevision).toBe(revision + 1)
   })

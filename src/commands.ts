@@ -29,6 +29,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import { resolveScope, type SessionSelectionRegistry } from './core/session-scope.ts'
 import { KnowbaseError, type KnowbaseService } from './core/service.ts'
+import { formatScanFailures, formatScanSummary } from './scan-summary.ts'
 
 /** Dependencies the command surface needs. */
 export interface CommandDeps {
@@ -202,17 +203,21 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
             if (name !== '' && target === undefined) {
               return { kind: 'error', text: `没有名为「${name}」的知识库。` }
             }
-            await service.rescan(target?.id, { force })
+            try {
+              await service.rescan(target?.id, { force })
+            } catch {
+              return { kind: 'error', text: '扫描未完成，请检查资料读取权限后重试。未完成库保留上次成功快照；扫描多个库时，先完成的库可能已更新。' }
+            }
             const bases = target === undefined ? service.listKnowledgeBases() : [target]
             const files = bases.reduce((sum, base) => sum + service.listMaterials(base.id).length, 0)
-            const reports = bases.flatMap(base => {
+            const items = bases.flatMap(base => {
               const report = service.getLastScanReport(base.id)
-              return report === undefined ? [] : [report]
+              return report === undefined ? [] : [{ name: base.name, report }]
             })
-            const reused = reports.reduce((sum, report) => sum + report.reused, 0)
             return {
               kind: 'success',
-              text: `已${force ? '强制重建' : '增量扫描'}：${bases.length} 个知识库、${files} 个文件，复用 ${reused} 个文件。`,
+              text: `已${force ? '强制重建' : '增量扫描'}：${bases.length} 个知识库、${files} 个文件。` +
+                formatScanSummary(items.map(item => item.report)) + formatScanFailures(items),
             }
           }
 

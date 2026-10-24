@@ -31,7 +31,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { OcrResourceManager, OcrResourceStatus } from './core/ocr-resources.ts'
 import type { SessionSelectionRegistry } from './core/session-scope.ts'
-import type { KnowbaseService } from './core/service.ts'
+import type { KnowbaseService, ScanReport } from './core/service.ts'
 import { revealFolder, shellInfo } from './core/shell.ts'
 import { installRemoteMarkers } from './remote-methods.ts'
 
@@ -64,6 +64,8 @@ export interface KnowledgeBaseView {
   readonly indexedCount: number
   readonly bytes: number
   readonly updatedAt: number
+  /** Last committed runtime scan; absent before scanning or on older Hosts. */
+  readonly lastScan?: ScanReport
 }
 
 /** One file inside a knowledge base, as the list needs it. */
@@ -258,6 +260,7 @@ function baseView(service: KnowbaseService, id: string): KnowledgeBaseView | und
   const knowledgeBase = service.getKnowledgeBase(id)
   if (knowledgeBase === undefined) return undefined
   const materials = service.listMaterials(id)
+  const lastScan = service.getLastScanReport(id)
   return {
     id: knowledgeBase.id,
     name: knowledgeBase.name,
@@ -267,6 +270,7 @@ function baseView(service: KnowbaseService, id: string): KnowledgeBaseView | und
     indexedCount: materials.filter(material => material.indexed).length,
     bytes: materials.reduce((sum, material) => sum + material.bytes, 0),
     updatedAt: knowledgeBase.updatedAt,
+    ...(lastScan === undefined ? {} : { lastScan }),
   }
 }
 

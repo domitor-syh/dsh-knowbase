@@ -53,11 +53,42 @@ describe('/kb rescan', () => {
     expect(scan).not.toHaveBeenCalled()
   })
 
+  it('shows unsearchable reasons separately from unsupported formats', async () => {
+    const { service, base, run } = await fixture()
+    await service.addFiles(base.id, [
+      { name: 'empty.txt', data: new Uint8Array() },
+      { name: 'archive.zip', data: new Uint8Array([1, 2, 3]) },
+    ])
+    const result = await run('rescan 项目 资料')
+    expect(result.kind).toBe('success')
+    expect(result.text).toContain('扫描 2')
+    expect(result.text).toContain('复用 1')
+    expect(result.text).toContain('格式跳过 1')
+    expect(result.text).toContain('重建尝试 1')
+    expect(result.text).toContain('不可检索 1')
+    expect(result.text).toContain('empty.txt')
+    expect(result.text).toContain('未提取到可检索文字')
+    expect(result.text).not.toContain('command-scan-fixture')
+  })
+
+  it('does not surface raw paths or OS messages after an interrupted scan', async () => {
+    const { service, run } = await fixture()
+    vi.spyOn(service, 'rescan').mockRejectedValueOnce(new Error('EACCES C:\\private\\vault ENCODED_SECRET'))
+    const result = await run('rescan')
+    expect(result.kind).toBe('error')
+    expect(result.text).toContain('保留上次成功快照')
+    expect(result.text).not.toMatch(/private|ENCODED_SECRET|EACCES/u)
+  })
+
   it('reports only the requested base and its reuse count', async () => {
     const { service, base, run } = await fixture()
     await service.createKnowledgeBase('另一个库')
     await service.addFiles(base.id, [{ name: '说明.txt', data: new TextEncoder().encode('本地检索说明') }])
     const result = await run('rescan 项目 资料')
-    expect(result.text).toContain('1 个知识库、1 个文件，复用 1 个文件')
+    expect(result.text).toContain('1 个知识库、1 个文件。')
+    expect(result.text).toContain('复用 1')
+    expect(result.text).toContain('新增 0')
+    expect(result.text).toContain('删除 0')
+    expect(result.text).toContain('重建尝试 0')
   })
 })

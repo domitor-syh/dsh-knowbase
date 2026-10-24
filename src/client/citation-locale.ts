@@ -2,6 +2,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import { useSyncExternalStore } from 'react'
 
 const zh = {
+  scanTitle: '最近一次完成的扫描', scanNone: '暂无扫描报告。重扫后可查看；旧版宿主可能不提供报告。',
+  scanIncremental: '增量扫描', scanForce: '强制重建', scanTime: '完成时间', scanDuration: '耗时',
+  scanScanned: '扫描文件', scanAdded: '新增', scanReused: '复用', scanChanged: '变化', scanDeleted: '删除',
+  scanRebuilt: '重建尝试', scanSkipped: '格式跳过', scanUnsearchable: '不可检索',
+  scanFailures: '不可检索文件及原因', scanOmitted: '未展开项',
+  scanHelp: '重建尝试包含失败、空文件和超限；格式跳过仅统计不支持的常规文件，可与复用重叠。不统计隐藏文件、链接和深度范围外文件。',
+  scanRuntime: '报告来自最近完成的启动、上传或重扫，重启后重新建立。扫描中断时保留上次报告；多库扫描可能部分完成。',
   sources: '知识库来源', view: '查看本次回答引用的知识库片段', close: '关闭',
   base: '知识库', file: '文件', location: '位置', id: '引用 ID',
   legacy: '旧消息无稳定引用 ID', hidden: '路径已隐藏', copy: '复制引用', copying: '正在复制…',
@@ -20,6 +27,13 @@ const zh = {
 } as const
 export type CitationText = (key: keyof typeof zh) => string
 const en: Record<keyof typeof zh, string> = {
+  scanTitle: 'Last completed scan', scanNone: 'No scan report yet. Rescan to inspect; older Hosts may omit reports.',
+  scanIncremental: 'Incremental scan', scanForce: 'Forced rebuild', scanTime: 'Completed', scanDuration: 'Duration',
+  scanScanned: 'Files scanned', scanAdded: 'Added', scanReused: 'Reused', scanChanged: 'Changed', scanDeleted: 'Deleted',
+  scanRebuilt: 'Rebuild attempts', scanSkipped: 'Unsupported formats', scanUnsearchable: 'Unsearchable',
+  scanFailures: 'Unsearchable files and reasons', scanOmitted: 'Items not shown',
+  scanHelp: 'Rebuild attempts include unsuccessful, empty and oversized files. Unsupported regular files can also be reused. Hidden entries, links and files beyond the depth limit are excluded.',
+  scanRuntime: 'Reports reflect the last completed startup, upload or rescan and are recreated after restart. Interrupted scans retain the previous report; multi-base scans may partially complete.',
   sources: 'Knowledge base sources', view: 'View knowledge base evidence for this answer', close: 'Close',
   base: 'Knowledge base', file: 'File', location: 'Location', id: 'Citation ID',
   legacy: 'Legacy message: no stable citation ID', hidden: 'Path hidden', copy: 'Copy citation', copying: 'Copying…',

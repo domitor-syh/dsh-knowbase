@@ -140,7 +140,7 @@ describe('O-05 explicit UTF-8 text format allowlist', () => {
       expect(add).not.toHaveBeenCalled()
       expect(remove).not.toHaveBeenCalled()
       expect(service.getMaterial(base.id, name)).toBe(prior)
-      expect(service.getLastScanReport(base.id)).toEqual({ added: 0, reused: 1, changed: 0, deleted: 0, unsearchable: 0 })
+      expect(service.getLastScanReport(base.id)).toMatchObject({ added: 0, reused: 1, changed: 0, deleted: 0, unsearchable: 0 })
       await service.rescan(base.id, { force: true })
       expect(readText).toHaveBeenCalledTimes(1)
       expect(add).toHaveBeenCalledTimes(prior.chunks.length)
