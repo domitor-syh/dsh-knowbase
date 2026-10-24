@@ -41,6 +41,8 @@ export interface ChunkOptions {
   readonly maxChars?: number
   /** Characters carried over from the previous chunk. Default 0 — see the module note. */
   readonly overlapChars?: number
+  /** Interpret Markdown headings; false for source/config text. Default true. */
+  readonly markdownHeadings?: boolean
 }
 
 const DEFAULTS = { targetChars: 600, maxChars: 900, overlapChars: 0 } as const
@@ -158,7 +160,7 @@ export function chunkText(text: string, options: ChunkOptions = {}): Chunk[] {
 
   lines.forEach((line, index) => {
     const lineNumber = index + 1
-    const heading = HEADING.exec(line.trim())
+    const heading = options.markdownHeadings === false ? null : HEADING.exec(line.trim())
 
     if (heading !== null) {
       closeBuffer(lineNumber - 1)
@@ -203,7 +205,7 @@ export function chunkText(text: string, options: ChunkOptions = {}): Chunk[] {
     const body = pending.lines.join('\n').trim()
     // A chunk made only of headings cannot serve as evidence — offering
     // "## 串口" as a citation is worse than offering nothing.
-    const hasBody = pending.lines.some(line => HEADING.exec(line.trim()) === null)
+    const hasBody = options.markdownHeadings === false || pending.lines.some(line => HEADING.exec(line.trim()) === null)
     if (body.length > 0 && hasBody) {
       const locator =
         pending.startLine === pending.endLine

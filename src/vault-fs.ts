@@ -9,16 +9,22 @@
  * same way the host writes `storages/` and `attachments/`: with `node:fs`.
  *
  * Because a raw `node:fs` handle is unconstrained, every method here funnels
- * its path through {@link assertInside} first. The fence is lexical — it stops
- * a name built from user text from walking out of the vault with `../` — and it
- * is applied at one place rather than at each call site.
+ * its path through lexical containment, then checks every existing component with
+ * `lstat` and verifies final realpath containment. Links inside the root are
+ * rejected for reads and writes; `stat` and parent directory listings report
+ * links as `other`, while directly listing a final link returns an empty list.
+ * File I/O accepts only plain files, directory creation accepts only directories,
+ * and moving/removing directory trees rejects linked or special descendants.
+ * This blocks ordinary link escapes, while external-process TOCTOU replacement and
+ * hardlinks remain filesystem limitations rather than claims this port can remove.
  *
  * @module @domitor-syh/dsh-knowbase/vault-fs
  */
 
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { assertInside } from './core/vault.ts'
+import { decodeUtf8Text, TextReadError } from './core/text.ts'
 
 /** One directory entry, as a scan sees it. */
 export interface VaultEntry {
@@ -47,8 +53,8 @@ export interface VaultFileSystem {
   listDir(dir: string): Promise<readonly VaultEntry[]>
   /** One path's kind, size and mtime, or `undefined` when it does not exist. */
   stat(target: string): Promise<VaultStat | undefined>
-  /** Read a file as text (UTF-8). */
-  readText(file: string): Promise<string>
+  /** Strict UTF-8 text, rejecting binary control characters; optional byte bound. */
+  readText(file: string, maxBytes?: number): Promise<string>
   /** Read a file as bytes. */
   readBytes(file: string): Promise<Uint8Array>
   /** Create or replace a file, creating its parent directory. */
@@ -62,12 +68,15 @@ export interface VaultFileSystem {
 }
 
 /** Build a `VaultEntry` from an `lstat`-style result. */
-function entryOf(name: string, info: { isFile(): boolean; isDirectory(): boolean; size: number; mtimeMs: number }): VaultEntry {
+function entryOf(
+  name: string,
+  info: { isFile(): boolean; isDirectory(): boolean; size: number | bigint; mtimeMs: number | bigint },
+): VaultEntry {
   return {
     name,
     kind: info.isFile() ? 'file' : info.isDirectory() ? 'directory' : 'other',
-    size: info.isFile() ? info.size : 0,
-    mtimeMs: info.mtimeMs,
+    size: info.isFile() ? Number(info.size) : 0,
+    mtimeMs: Number(info.mtimeMs),
   }
 }
 
@@ -78,21 +87,79 @@ function entryOf(name: string, info: { isFile(): boolean; isDirectory(): boolean
  * @returns the port.
  */
 export function createNodeVaultFs(root: string): VaultFileSystem {
-  const guard = (target: string): string => {
-    assertInside(root, target)
-    return target
+  const rootPath = path.resolve(root)
+
+  const check = async (target: string, mode: 'observe' | 'read' | 'write'): Promise<PathCheck> => {
+    assertInside(rootPath, target)
+    const absolute = path.resolve(target)
+    const relative = path.relative(rootPath, absolute)
+    const parts = relative === '' ? [] : relative.split(path.sep)
+
+    // The vault itself is never accepted as a link. Its ancestors may be links:
+    // those are trusted installation paths, and assertRealContainment uses the
+    // root's resolved physical location as the boundary.
+    let rootInfo
+    try {
+      rootInfo = await lstat(rootPath)
+    } catch (error) {
+      if (isMissing(error)) return { absolute, info: undefined, missing: true }
+      throw error
+    }
+    if (rootInfo.isSymbolicLink()) throw linkError(rootPath)
+    if (!rootInfo.isDirectory()) throw new Error(`知识库根目录不是目录：${rootPath}`)
+    let current = rootPath
+    for (let index = 0; index < parts.length; index += 1) {
+      current = path.join(current, parts[index] as string)
+      let info
+      try {
+        info = await lstat(current)
+      } catch (error) {
+        if (isMissing(error)) return { absolute, info: undefined, missing: true }
+        throw error
+      }
+      const isFinal = index === parts.length - 1
+      if (info.isSymbolicLink()) {
+        if (isFinal && mode === 'observe') return { absolute, info, link: true }
+        throw linkError(current)
+      }
+      if (!isFinal && !info.isDirectory()) {
+        return { absolute, info: undefined, missing: true }
+      }
+      if (isFinal) {
+        if (mode !== 'observe' && !info.isFile() && !info.isDirectory()) throw specialFileError(current)
+        if (mode === 'read' && !info.isFile()) throw specialFileError(current)
+        await assertRealContainment(rootPath, absolute)
+        return { absolute, info, link: false }
+      }
+    }
+
+    if (mode === 'read') throw specialFileError(absolute)
+    await assertRealContainment(rootPath, absolute)
+    return { absolute, info: rootInfo, link: false }
+  }
+
+  const checkWriteParent = async (target: string): Promise<void> => {
+    await check(path.dirname(target), 'write')
   }
 
   return {
     async listDir(dir) {
+      const checked = await check(dir, 'observe')
+      if (checked.link || checked.missing || checked.info?.isFile()) return []
+      if (!checked.info?.isDirectory()) throw specialFileError(checked.absolute)
       try {
-        const entries = await readdir(guard(dir), { withFileTypes: true })
+        const entries = await readdir(checked.absolute, { withFileTypes: true })
         const result: VaultEntry[] = []
         for (const entry of entries) {
-          const full = path.join(dir, entry.name)
-          const info = await stat(full).catch(() => undefined)
-          if (info === undefined) continue
-          result.push(entryOf(entry.name, info))
+          const full = path.join(checked.absolute, entry.name)
+          try {
+            // lstat is deliberate: listing must never turn a link into the
+            // directory or file it points at.
+            const info = await lstat(full)
+            result.push(entryOf(entry.name, info))
+          } catch (error) {
+            if (!isMissing(error)) throw error
+          }
         }
         return result
       } catch (error) {
@@ -103,44 +170,134 @@ export function createNodeVaultFs(root: string): VaultFileSystem {
 
     async stat(target) {
       try {
-        return entryOf('', await stat(guard(target)))
+        const checked = await check(target, 'observe')
+        if (checked.missing || checked.info === undefined) return undefined
+        return entryOf('', checked.info)
       } catch (error) {
         if (isMissing(error)) return undefined
         throw error
       }
     },
 
-    async readText(file) {
-      return readFile(guard(file), 'utf8')
+    async readText(file, maxBytes) {
+      const checked = await check(file, 'read')
+      if (maxBytes === undefined) return decodeUtf8Text(await readFile(checked.absolute))
+      const handle = await open(checked.absolute, 'r')
+      try {
+        // Read at most one byte beyond the bound; the scan's stat may already be stale.
+        const bytes = new Uint8Array(maxBytes + 1)
+        let length = 0
+        while (length < bytes.byteLength) {
+          const { bytesRead } = await handle.read(bytes, length, bytes.byteLength - length, null)
+          if (bytesRead === 0) break
+          length += bytesRead
+        }
+        if (length > maxBytes) throw new TextReadError('too-large')
+        return decodeUtf8Text(bytes.subarray(0, length), maxBytes)
+      } finally {
+        await handle.close()
+      }
     },
 
     async readBytes(file) {
-      const buffer = await readFile(guard(file))
+      const checked = await check(file, 'read')
+      const buffer = await readFile(checked.absolute)
       return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
     },
 
     async writeFile(file, data) {
-      guard(file)
-      await mkdir(path.dirname(file), { recursive: true })
-      await writeFile(file, data)
+      const checked = await check(file, 'write')
+      if (checked.info && !checked.info.isFile()) throw specialFileError(checked.absolute)
+      await mkdir(path.dirname(checked.absolute), { recursive: true })
+      // Re-check after recursive creation: a pre-existing link or a link raced
+      // into the path must not be accepted merely because mkdir succeeded.
+      const final = await check(checked.absolute, 'write')
+      await writeFile(final.absolute, data)
     },
 
     async ensureDir(dir) {
-      await mkdir(guard(dir), { recursive: true })
+      const checked = await check(dir, 'write')
+      if (checked.info && !checked.info.isDirectory()) {
+        throw new Error(`知识库路径已存在且不是目录：${checked.absolute}`)
+      }
+      await mkdir(checked.absolute, { recursive: true })
+      await check(checked.absolute, 'write')
     },
 
     async move(from, to) {
-      guard(from)
-      guard(to)
-      await mkdir(path.dirname(to), { recursive: true })
-      await rename(from, to)
+      const source = await check(from, 'write')
+      const destination = await check(to, 'write')
+      if (source.missing) throw missingError(source.absolute)
+      if (source.info?.isDirectory()) await assertTreeHasNoLinks(source.absolute)
+      await checkWriteParent(destination.absolute)
+      await mkdir(path.dirname(destination.absolute), { recursive: true })
+      await check(destination.absolute, 'write')
+      await check(source.absolute, 'write')
+      await rename(source.absolute, destination.absolute)
     },
 
     async remove(target) {
-      await rm(guard(target), { recursive: true, force: true })
+      const checked = await check(target, 'write')
+      if (checked.missing) return
+      if (checked.info?.isDirectory()) await assertTreeHasNoLinks(checked.absolute)
+      await rm(checked.absolute, { recursive: true, force: true })
     },
   }
 }
+
+type PathInfo = {
+  readonly isFile: () => boolean
+  readonly isDirectory: () => boolean
+  readonly isSymbolicLink: () => boolean
+  readonly size: number | bigint
+  readonly mtimeMs: number | bigint
+}
+
+type PathCheck = {
+  readonly absolute: string
+  readonly info: PathInfo | undefined
+  readonly missing?: boolean
+  readonly link?: boolean
+}
+
+function linkError(target: string): Error {
+  return new Error(`拒绝访问知识库内的链接路径：${target}`)
+}
+
+function specialFileError(target: string): Error {
+  return new Error(`拒绝访问知识库内的特殊文件或非普通文件：${target}`)
+}
+
+function missingError(target: string): Error {
+  const error = new Error(`ENOENT: no such file or directory, ${target}`) as Error & { code?: string }
+  error.code = 'ENOENT'
+  return error
+}
+
+/** Resolve the trusted root and final object, rejecting real-path escape. */
+async function assertRealContainment(root: string, target: string): Promise<void> {
+  const [rootReal, targetReal] = await Promise.all([realpath(root), realpath(target)])
+  const relative = path.relative(rootReal, targetReal)
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`拒绝访问知识库真实根目录之外的路径：${target}`)
+  }
+}
+
+/** A move/remove must not silently carry or recurse through linked or special objects. */
+async function assertTreeHasNoLinks(target: string): Promise<void> {
+  const info = await lstat(target)
+  if (info.isSymbolicLink()) throw linkError(target)
+  if (!info.isDirectory()) return
+  const entries = await readdir(target, { withFileTypes: true })
+  for (const entry of entries) {
+    const child = path.join(target, entry.name)
+    const childInfo = await lstat(child)
+    if (childInfo.isSymbolicLink()) throw linkError(child)
+    if (!childInfo.isFile() && !childInfo.isDirectory()) throw specialFileError(child)
+    if (childInfo.isDirectory()) await assertTreeHasNoLinks(child)
+  }
+}
+
 
 /** True for the "no such file or directory" family, which is not an error here. */
 function isMissing(error: unknown): boolean {
@@ -207,11 +364,11 @@ export function createMemoryVaultFs(root: string): VaultFileSystem {
       return undefined
     },
 
-    async readText(file) {
+    async readText(file, maxBytes) {
       const resolved = guard(file)
       const data = files.get(resolved)
       if (data === undefined) throw new Error(`ENOENT: ${resolved}`)
-      return new TextDecoder().decode(data)
+      return decodeUtf8Text(data, maxBytes)
     },
 
     async readBytes(file) {

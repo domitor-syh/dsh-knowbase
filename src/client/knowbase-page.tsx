@@ -21,7 +21,7 @@
  * ## Shape
  *
  * The hand-off's layout, top to bottom: a title, a two-card grid (OCR packs,
- * retrieval test), one sliding notice, then two columns — the base list on the
+ * retrieval test), a floating notice, then two columns — the base list on the
  * left, the selected base's files on the right. Everything destructive goes
  * through one centred modal rather than the inline two-step confirm this page
  * used to carry, because there are now four of them (add, rename, delete base,
@@ -52,6 +52,7 @@ import { knowbaseApi, knowbaseChannelError } from './api.ts'
 import { Icon } from './icons.tsx'
 import { OcrHint, OcrSection, useOcrController } from './ocr-panel.tsx'
 import { pageTokens } from './page-style.ts'
+import { ScopePicker } from './scope-picker.tsx'
 import { useSpin } from './spin.ts'
 import { useColorScheme } from './theme.ts'
 
@@ -123,42 +124,28 @@ type Dialog =
   | { readonly kind: 'deleteBase'; readonly id: string }
   | { readonly kind: 'deleteFile'; readonly id: string }
 
-/**
- * The one notice strip.
- *
- * Always mounted, `hidden` when there is nothing to say: the hand-off's slide-in
- * needs the element to exist one frame before the class lands, and a live region
- * that is created at the same moment as its text is not announced by every
- * screen reader. The double `requestAnimationFrame` is the standard way to get a
- * transition to run on an element that was hidden a moment ago.
- */
-function Alert(props: { text: string; kind: 'notice' | 'error' }): React.ReactElement {
+/** Floating page-local feedback; each new message lives for three seconds. */
+function Alert(props: { text: string; kind: 'notice' | 'error'; revision: number }): React.ReactElement {
   const [shown, setShown] = React.useState(false)
-  const { text, kind } = props
+  const { text, kind, revision } = props
 
   React.useEffect(() => {
-    setShown(false)
+    setShown(text !== '')
     if (text === '') return
-    let inner = 0
-    const outer = window.requestAnimationFrame(() => {
-      inner = window.requestAnimationFrame(() => setShown(true))
-    })
-    return () => {
-      window.cancelAnimationFrame(outer)
-      window.cancelAnimationFrame(inner)
-    }
-  }, [text, kind])
+    const timer = window.setTimeout(() => setShown(false), 3000)
+    return () => window.clearTimeout(timer)
+  }, [text, kind, revision])
 
   return (
     <div
-      className={`kb-alert kb-alert--${kind}${shown ? ' is-in' : ''}`}
+      className={`kb-alert kb-alert--${kind}`}
       data-kb-alert
       role="status"
       aria-live="polite"
-      hidden={text === ''}
+      hidden={!shown}
     >
-      <Icon name={kind === 'error' ? 'alert-triangle' : 'check'} />
-      <span>{text}</span>
+      <Icon name={kind === 'error' ? 'alert-triangle' : 'check-circle'} />
+      <span>{shown ? text : ''}</span>
     </div>
   )
 }
@@ -464,8 +451,17 @@ export function KnowbasePage(): React.ReactElement {
   const [selectedId, setSelectedId] = React.useState<string>('')
   const [materials, setMaterials] = React.useState<readonly MaterialView[]>([])
   const [report, setReport] = React.useState<SearchReportView | undefined>(undefined)
-  const [error, setError] = React.useState('')
-  const [notice, setNotice] = React.useState('')
+  const [error, setErrorState] = React.useState('')
+  const [notice, setNoticeState] = React.useState('')
+  const [feedbackRevision, setFeedbackRevision] = React.useState(0)
+  const setError = React.useCallback((text: string): void => {
+    setErrorState(text)
+    if (text !== '') setFeedbackRevision(value => value + 1)
+  }, [])
+  const setNotice = React.useCallback((text: string): void => {
+    setNoticeState(text)
+    if (text !== '') setFeedbackRevision(value => value + 1)
+  }, [])
   const [busy, setBusy] = React.useState(false)
   const [vaultRoot, setVaultRoot] = React.useState('')
   const [shell, setShell] = React.useState<ShellInfoView | undefined>(undefined)
@@ -838,6 +834,7 @@ export function KnowbasePage(): React.ReactElement {
       data-kb-folder-path={folderPath}
       style={pageTokens(scheme)}
     >
+      <div className="kb-page-content">
       <header className="kb-head">
         <h1 className="kb-head-title">知识库</h1>
       </header>
@@ -848,43 +845,23 @@ export function KnowbasePage(): React.ReactElement {
         <OcrSection controller={ocr} disabled={busy} />
 
         <section className="kb-card" data-kb-retrieval-test aria-label="检索测试">
-          <div className="kb-block-head">
-            <h2 className="kb-card-title">检索测试（不调用模型）</h2>
-            <div className="kb-scope-group" role="group" aria-label="检索范围">
-              <button
-                type="button"
-                className="kb-scope"
-                data-kb-test-scope="base"
-                aria-pressed={testAll ? 'false' : 'true'}
-                disabled={busy || selected === undefined}
-                onClick={() => {
-                  setTestAll(false)
-                  setReport(undefined)
-                }}
-              >
-                当前库
-              </button>
-              <button
-                type="button"
-                className="kb-scope"
-                data-kb-test-scope="all"
-                aria-pressed={testAll ? 'true' : 'false'}
-                disabled={busy || bases.length === 0}
-                onClick={() => {
-                  setTestAll(true)
-                  setReport(undefined)
-                }}
-              >
-                全部知识库（{bases.length}）
-              </button>
-            </div>
-          </div>
           <div className="kb-search-row">
+            <ScopePicker
+              value={testAll ? 'all' : 'base'}
+              baseCount={bases.length}
+              currentAvailable={selected !== undefined}
+              disabled={busy}
+              onChange={value => {
+                setTestAll(value === 'all')
+                setReport(undefined)
+              }}
+            />
             <input
               type="text"
               className="kb-input"
               id="kb-test-input"
-              placeholder="输入一个问题"
+              placeholder="检索测试(不调用模型)，请输入一个问题"
+              aria-label="检索测试(不调用模型)，请输入一个问题"
               autoComplete="off"
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -909,8 +886,6 @@ export function KnowbasePage(): React.ReactElement {
           {report !== undefined && <Report report={report} scopeNote={testScopeNote} />}
         </section>
       </div>
-
-      <Alert text={alertText} kind={error !== '' ? 'error' : 'notice'} />
 
       <div className="kb-columns">
         <aside className="kb-card" aria-label="知识库列表">
@@ -1091,6 +1066,9 @@ export function KnowbasePage(): React.ReactElement {
         </div>
       </div>
 
+      </div>
+      <Alert text={alertText} kind={error !== '' ? 'error' : 'notice'} revision={feedbackRevision} />
+
       {/* Outside the columns, and rendered into `document.body` — see `RowMenu`
           for why the list cannot hold it. */}
       {menu !== undefined && (
@@ -1152,16 +1130,16 @@ export function KnowbasePage(): React.ReactElement {
             />
           )}
           {dialog.kind === 'deleteBase' && (
-            <p>
-              确认删除「{bases.find(item => item.id === dialog.id)?.name ?? ''}」？删除 = 移入
-              _回收站，不销毁。
-            </p>
+            <>
+              <p>确认删除「{bases.find(item => item.id === dialog.id)?.name ?? ''}」？</p>
+              <p className="kb-delete-note">删除 = 移入 _回收站，不销毁。</p>
+            </>
           )}
           {dialog.kind === 'deleteFile' && (
-            <p>
-              确认删除「{materials.find(item => item.id === dialog.id)?.fileName ?? ''}」？删除 =
-              移入 _回收站，不销毁。
-            </p>
+            <>
+              <p>确认删除「{materials.find(item => item.id === dialog.id)?.fileName ?? ''}」？</p>
+              <p className="kb-delete-note">删除 = 移入 _回收站，不销毁。</p>
+            </>
           )}
         </Modal>
       )}

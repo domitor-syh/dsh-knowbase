@@ -30,7 +30,9 @@ import {
   setChannelError,
   setKnowbaseApi,
 } from './api.ts'
-import { KnowbaseSourceAction } from './citation-button.tsx'
+import { KnowbaseSourceAction, KnowbaseSourceOverlay } from './citation-button.tsx'
+import { closeSources } from './citation-dialog.ts'
+import { installCitationLocale } from './citation-locale.ts'
 import { ComposerKnowbaseToggle } from './composer-toggle.tsx'
 import { TYPERT_REMOTE } from './contribution.ts'
 import { KnowbasePanel, KnowbasePanelIcon, PANEL_ID } from './panel.tsx'
@@ -52,6 +54,12 @@ export const inject = ['slots', 'locale', 'remote']
 
 export function apply(ctx: Context): void {
   console.info('[knowbase] client half loaded')
+
+  installCitationLocale(ctx)
+  ctx.effect(() => () => closeSources())
+  ctx.slots.inject('shell.overlay', () =>
+    ctx.slots.register({ name: 'shell.overlay', id: 'knowbase-citations', order: 40 }, KnowbaseSourceOverlay),
+  )
 
   // Follow the host's colour scheme before anything paints. Acquired through the
   // dynamic `ctx.inject` rather than the static list above on purpose: a host

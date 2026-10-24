@@ -51,6 +51,7 @@ export function KnowbasePanelIcon(props: { size: number }): React.ReactElement {
   return (
     <svg
       data-kb-panel-icon
+      style={{ display: 'block', transform: 'translateY(1px)' }}
       width={props.size}
       height={props.size}
       viewBox="0 0 24 24"
@@ -71,16 +72,17 @@ export function KnowbasePanelIcon(props: { size: number }): React.ReactElement {
 /**
  * The centre-column page.
  *
- * The frame gives this column a definite height, so the scroll container is
- * ours: the page must not grow the frame, it must scroll inside it. The width
- * cap and the centring belong to the page itself (`#kb-settings-page` carries
- * the hand-off's `max-width: 1320px`), so this wrapper adds nothing but the
- * height and the overflow — a second cap here would silently squeeze the
- * two-column layout the hand-off draws.
+ * The frame gives this column a definite height. The page owns the inner scroll
+ * container and the overlay is positioned inside that page. The width and
+ * centring belong to the page itself (`#kb-settings-page` carries the hand-off's
+ * inner padding), so this wrapper adds only the height and overflow boundary.
  */
 export function KnowbasePanel(): React.ReactElement {
   return (
-    <div data-kb-panel-page style={{ height: '100%', minHeight: 0, overflowY: 'auto' }}>
+    <div
+      data-kb-panel-page
+      style={{ position: 'relative', height: '100%', minHeight: 0, overflow: 'hidden' }}
+    >
       <KnowbasePage />
     </div>
   )

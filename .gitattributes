@@ -16,3 +16,8 @@
 *.zip binary
 *.woff binary
 *.woff2 binary
+
+# Frozen benchmark inputs/results carry exact SHA-256 hashes; preserve bytes.
+outputs/retrieval-baseline-repro/** -text -eol whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+outputs/retrieval-quality-before.json -text -eol whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+outputs/retrieval-quality-after.json -text -eol whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

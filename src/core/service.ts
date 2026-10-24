@@ -23,6 +23,7 @@ import path from 'node:path'
 import type { RetrievedPassage, ServiceOutcome } from '../pre-step.ts'
 import type { VaultFileSystem } from '../vault-fs.ts'
 import { Bm25Index } from './bm25.ts'
+import { createCitationId } from './citation-id.ts'
 import { chunkPages, chunkText, type ChunkOptions } from './chunk.ts'
 import { OcrError, type OcrEngine } from './ocr.ts'
 import { MAX_PDF_PAGES, PdfError, extractPdfPages } from './pdf.ts'
@@ -40,6 +41,7 @@ import {
   type StoredKnowledgeBase,
 } from './model.ts'
 import { compareText } from './order.ts'
+import { TextReadError } from './text.ts'
 import {
   isRecycleName,
   parseVaultFolderName,
@@ -102,6 +104,22 @@ export interface RetrieveOptions {
 export interface AddFilesOptions {
   /** Overwrite a same-named file instead of keeping both. Default `false`. */
   readonly overwrite?: boolean
+}
+
+/** Explicit controls for a rescan. The snapshot is intentionally in-memory only. */
+export interface RescanOptions {
+  /** Re-read every indexable file and rebuild its index contribution. */
+  readonly force?: boolean
+}
+
+/** Counts from the most recent scan of one base. */
+export interface ScanReport {
+  readonly added: number
+  readonly reused: number
+  readonly changed: number
+  readonly deleted: number
+  /** Indexable files that remain listed but are not searchable. */
+  readonly unsearchable: number
 }
 
 /** One file as a scan found it: where it is, how big, when it changed. */
@@ -196,10 +214,17 @@ export class KnowbaseService {
   readonly #now: () => number
   readonly #chunkOptions: ChunkOptions
   readonly #ocr: OcrEngine | undefined
+  #ocrTail: Promise<void> = Promise.resolve()
   readonly #index = new Bm25Index()
   readonly #chunks = new Map<string, ChunkContext>()
   readonly #knowledgeBases = new Map<string, KnowledgeBase>()
   readonly #materials = new Map<string, Map<string, Material>>()
+  readonly #scanReports = new Map<string, ScanReport>()
+  readonly #dirtyMaterials = new Map<string, Set<string>>()
+  // Serialize public mutations, including disk reconciliation, across bases.
+  // This deliberately simple queue prevents an awaited extraction from later
+  // committing over a rename/delete/upload. Reads keep seeing the prior stage.
+  #mutationTail: Promise<void> = Promise.resolve()
 
   constructor(
     store: KnowbaseStore,
@@ -228,25 +253,29 @@ export class KnowbaseService {
    * scan so every listed base has a folder to read.
    */
   async initialize(): Promise<{ knowledgeBases: number; materials: number; migrated: number }> {
-    this.#knowledgeBases.clear()
-    this.#materials.clear()
-    this.#chunks.clear()
-    this.#index.clear()
+    return this.#mutate(async () => {
+      this.#knowledgeBases.clear()
+      this.#materials.clear()
+      this.#scanReports.clear()
+      this.#dirtyMaterials.clear()
+      this.#chunks.clear()
+      this.#index.clear()
 
-    await this.#fs.ensureDir(this.#root)
-    await this.#fs.ensureDir(recycleDir(this.#root))
+      await this.#fs.ensureDir(this.#root)
+      await this.#fs.ensureDir(recycleDir(this.#root))
 
-    this.#loadRecords()
-    await this.#ensureFolders()
-    const migrated = await this.#migrateLegacy()
-    await this.#syncFromDisk()
+      this.#loadRecords()
+      await this.#ensureFolders()
+      const migrated = await this.#migrateLegacy()
+      await this.#syncFromDisk()
 
-    let materials = 0
-    for (const base of this.#knowledgeBases.values()) {
-      materials += (await this.#scanBase(base)).length
-    }
+      let materials = 0
+      for (const base of this.#knowledgeBases.values()) {
+        materials += (await this.#scanBase(base, {}, new Set(), false)).length
+      }
 
-    return { knowledgeBases: this.#knowledgeBases.size, materials, migrated }
+      return { knowledgeBases: this.#knowledgeBases.size, materials, migrated }
+    })
   }
 
   // ------------------------------------------------------------- knowledge bases
@@ -275,70 +304,90 @@ export class KnowbaseService {
    * "I made a base and it vanished".
    */
   async createKnowledgeBase(rawName: string, description = ''): Promise<KnowledgeBase> {
-    const name = normalizeName(rawName)
-    if (name.length === 0) throw new KnowbaseError('invalid-name', '知识库名称不能为空。')
-    if (this.findKnowledgeBaseByName(name) !== undefined) {
-      throw new KnowbaseError('duplicate-name', `已存在名为「${name}」的知识库。`)
-    }
+    return this.#mutate(async () => {
+      const name = normalizeName(rawName)
+      if (name.length === 0) throw new KnowbaseError('invalid-name', '知识库名称不能为空。')
+      if (this.findKnowledgeBaseByName(name) !== undefined) {
+        throw new KnowbaseError('duplicate-name', `已存在名为「${name}」的知识库。`)
+      }
 
-    const id = newId('kb')
-    const folderName = vaultFolderName(name, id)
-    await this.#fs.ensureDir(this.#baseDir({ folderName }))
+      const id = newId('kb')
+      const folderName = vaultFolderName(name, id)
+      await this.#fs.ensureDir(this.#baseDir({ folderName }))
 
-    const timestamp = this.#now()
-    const knowledgeBase: KnowledgeBase = {
-      id,
-      name,
-      description: description.trim(),
-      folderName,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      indexRevision: 0,
-    }
-    this.#knowledgeBases.set(id, knowledgeBase)
-    this.#materials.set(id, new Map())
-    await this.#store.saveKnowledgeBase(knowledgeBase)
-    return knowledgeBase
+      const timestamp = this.#now()
+      const knowledgeBase: KnowledgeBase = {
+        id,
+        name,
+        description: description.trim(),
+        folderName,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        indexRevision: 0,
+      }
+      this.#knowledgeBases.set(id, knowledgeBase)
+      this.#materials.set(id, new Map())
+      await this.#store.saveKnowledgeBase(knowledgeBase)
+      return knowledgeBase
+    })
   }
 
   /** Rename a base, moving its folder so the name is the same in both places. */
   async renameKnowledgeBase(id: string, rawName: string): Promise<KnowledgeBase> {
-    const current = this.#requireKnowledgeBase(id)
+    return this.#mutate(async () => {
+      const current = this.#requireKnowledgeBase(id)
 
-    const name = normalizeName(rawName)
-    if (name.length === 0) throw new KnowbaseError('invalid-name', '知识库名称不能为空。')
-    const clash = this.findKnowledgeBaseByName(name)
-    if (clash !== undefined && clash.id !== id) {
-      throw new KnowbaseError('duplicate-name', `已存在名为「${name}」的知识库。`)
-    }
+      const name = normalizeName(rawName)
+      if (name.length === 0) throw new KnowbaseError('invalid-name', '知识库名称不能为空。')
+      const clash = this.findKnowledgeBaseByName(name)
+      if (clash !== undefined && clash.id !== id) {
+        throw new KnowbaseError('duplicate-name', `已存在名为「${name}」的知识库。`)
+      }
 
-    const folderName = vaultFolderName(name, id)
-    if (folderName !== current.folderName) {
-      await this.#fs.move(this.#baseDir(current), path.join(this.#root, folderName))
-    }
+      const folderName = vaultFolderName(name, id)
+      if (name === current.name && folderName === current.folderName) return current
+      if (folderName !== current.folderName) {
+        await this.#fs.move(this.#baseDir(current), path.join(this.#root, folderName))
+      }
 
-    const updated: KnowledgeBase = { ...current, name, folderName, updatedAt: this.#now() }
-    this.#knowledgeBases.set(id, updated)
-    // Citations carry the base name, so a rename has to reach the contexts
-    // already in the index or old passages would cite the old name.
-    for (const [chunkId, context] of this.#chunks) {
-      if (context.kbId === id) this.#chunks.set(chunkId, { ...context, kbName: name })
-    }
-    await this.#store.saveKnowledgeBase(updated)
-    return updated
+      const updated: KnowledgeBase = {
+        ...current,
+        name,
+        folderName,
+        updatedAt: this.#now(),
+        indexRevision: current.indexRevision + 1,
+      }
+      this.#knowledgeBases.set(id, updated)
+      // Citations carry the base name, so a rename has to reach the contexts
+      // already in the index or old passages would cite the old name.
+      for (const [chunkId, context] of this.#chunks) {
+        if (context.kbId !== id) continue
+        this.#chunks.set(chunkId, {
+          ...context,
+          kbName: name,
+          filePath: path.join(this.#root, folderName, ...context.materialId.split('/')),
+        })
+      }
+      await this.#store.saveKnowledgeBase(updated)
+      return updated
+    })
   }
 
   /** Update a knowledge base's description. */
   async updateDescription(id: string, rawDescription: string): Promise<KnowledgeBase> {
-    const current = this.#requireKnowledgeBase(id)
-    const updated: KnowledgeBase = {
-      ...current,
-      description: rawDescription.trim(),
-      updatedAt: this.#now(),
-    }
-    this.#knowledgeBases.set(id, updated)
-    await this.#store.saveKnowledgeBase(updated)
-    return updated
+    return this.#mutate(async () => {
+      const current = this.#requireKnowledgeBase(id)
+      const description = rawDescription.trim()
+      if (description === current.description) return current
+      const updated: KnowledgeBase = {
+        ...current,
+        description,
+        updatedAt: this.#now(),
+      }
+      this.#knowledgeBases.set(id, updated)
+      await this.#store.saveKnowledgeBase(updated)
+      return updated
+    })
   }
 
   /**
@@ -350,17 +399,21 @@ export class KnowbaseService {
    * empty base by the next sync, which is not what deleting it meant.
    */
   async deleteKnowledgeBase(id: string): Promise<boolean> {
-    const current = this.#knowledgeBases.get(id)
-    if (current === undefined) return false
+    return this.#mutate(async () => {
+      const current = this.#knowledgeBases.get(id)
+      if (current === undefined) return false
 
-    this.#unindexBase(id)
-    const target = await this.#freeRecycleName(current.folderName)
-    await this.#fs.move(this.#baseDir(current), target)
+      const target = await this.#freeRecycleName(current.folderName)
+      await this.#fs.move(this.#baseDir(current), target)
 
-    this.#materials.delete(id)
-    this.#knowledgeBases.delete(id)
-    await this.#store.deleteKnowledgeBase(id)
-    return true
+      this.#unindexBase(id)
+      this.#materials.delete(id)
+      this.#scanReports.delete(id)
+      this.#dirtyMaterials.delete(id)
+      this.#knowledgeBases.delete(id)
+      await this.#store.deleteKnowledgeBase(id)
+      return true
+    })
   }
 
   // ----------------------------------------------------------------- materials
@@ -374,6 +427,11 @@ export class KnowbaseService {
       all.push(...files.values())
     }
     return all.sort((left, right) => compareText(left.fileName, right.fileName))
+  }
+
+  /** Last successful scan report; never persisted or used as disk truth. */
+  getLastScanReport(kbId: string): ScanReport | undefined {
+    return this.#scanReports.get(kbId)
   }
 
   /** Look one up inside its base. */
@@ -434,24 +492,29 @@ export class KnowbaseService {
     files: readonly IncomingFile[],
     options: AddFilesOptions = {},
   ): Promise<readonly Material[]> {
-    const base = this.#requireKnowledgeBase(kbId)
-    if (files.length === 0) return []
+    return this.#mutate(async () => {
+      const base = this.#requireKnowledgeBase(kbId)
+      if (files.length === 0) return []
 
-    const taken = new Set((await this.#fs.listDir(this.#baseDir(base))).map(entry => entry.name))
-    const created: string[] = []
+      const taken = new Set((await this.#fs.listDir(this.#baseDir(base))).map(entry => entry.name))
+      const created: string[] = []
+      const dirty = this.#dirtyMaterials.get(kbId) ?? new Set<string>()
+      this.#dirtyMaterials.set(kbId, dirty)
 
-    for (const file of files) {
-      const wanted = sanitizeSegment(file.name, '未命名文件')
-      const name = options.overwrite === true ? wanted : uniqueSegment(wanted, taken)
-      taken.add(name)
-      await this.#fs.writeFile(path.join(this.#baseDir(base), name), file.data)
-      created.push(name)
-    }
+      for (const file of files) {
+        const wanted = sanitizeSegment(file.name, '未命名文件')
+        const name = options.overwrite === true ? wanted : uniqueSegment(wanted, taken)
+        taken.add(name)
+        dirty.add(name)
+        await this.#fs.writeFile(path.join(this.#baseDir(base), name), file.data)
+        created.push(name)
+      }
 
-    const materials = await this.#scanBase(base)
-    await this.#bumpRevision(base)
-    const wanted = new Set(created)
-    return materials.filter(material => wanted.has(material.fileName))
+      // A write is an invalidation even when size and mtime happen to match.
+      const materials = await this.#scanBase(base, {}, new Set(created))
+      const wanted = new Set(created)
+      return materials.filter(material => wanted.has(material.fileName))
+    })
   }
 
   /**
@@ -461,30 +524,30 @@ export class KnowbaseService {
    * removed from the disk at all, and the user can drag it back.
    */
   async deleteMaterial(kbId: string, id: string): Promise<boolean> {
-    const base = this.#requireKnowledgeBase(kbId)
-    const material = this.#materials.get(kbId)?.get(id)
-    if (material === undefined) return false
+    return this.#mutate(async () => {
+      const base = this.#requireKnowledgeBase(kbId)
+      const material = this.#materials.get(kbId)?.get(id)
+      if (material === undefined) return false
 
-    const source = path.join(this.#baseDir(base), ...id.split('/'))
-    const target = await this.#freeRecycleName(path.basename(id))
-    await this.#fs.move(source, target)
+      const source = path.join(this.#baseDir(base), ...id.split('/'))
+      const target = await this.#freeRecycleName(path.basename(id))
+      await this.#fs.move(source, target)
 
-    await this.#scanBase(base)
-    await this.#bumpRevision(base)
-    return true
+      await this.#scanBase(base)
+      return true
+    })
   }
 
   /** Re-read a base from the disk, or every base when `kbId` is omitted. */
-  async rescan(kbId?: string): Promise<void> {
-    await this.#fs.ensureDir(this.#root)
-    await this.#fs.ensureDir(recycleDir(this.#root))
-    const bases = kbId === undefined ? [...this.#knowledgeBases.values()] : [this.#requireKnowledgeBase(kbId)]
-    if (kbId === undefined) await this.#syncFromDisk()
-    for (const base of bases) {
-      const live = this.#knowledgeBases.get(base.id)
-      if (live === undefined) continue
-      await this.#scanBase(live)
-    }
+  async rescan(kbId?: string, options: RescanOptions = {}): Promise<void> {
+    return this.#mutate(async () => {
+      await this.#fs.ensureDir(this.#root)
+      await this.#fs.ensureDir(recycleDir(this.#root))
+      // Adopt first: newly discovered folders must be scanned on this call too.
+      if (kbId === undefined) await this.#syncFromDisk()
+      const bases = kbId === undefined ? [...this.#knowledgeBases.values()] : [this.#requireKnowledgeBase(kbId)]
+      for (const base of bases) await this.#scanBase(base, options)
+    })
   }
 
   // ---------------------------------------------------------------- retrieval
@@ -521,6 +584,13 @@ export class KnowbaseService {
         const context = this.#chunks.get(chunkId)
         return context !== undefined && allowed.has(context.kbId)
       },
+      distinctKey: chunkId => {
+        const context = this.#chunks.get(chunkId)!
+        // Keep independent sources and differing text; only equivalent text in
+        // the same material shares one context-budget slot. No fixed overfetch.
+        return JSON.stringify([context.kbId, context.materialId,
+          context.text.normalize('NFKC').replace(/\s+/gu, ' ').trim()])
+      },
     })
 
     const passages: RetrievedPassage[] = []
@@ -528,6 +598,13 @@ export class KnowbaseService {
       const context = this.#chunks.get(hit.id)
       if (context === undefined) continue
       passages.push({
+        citationId: createCitationId({
+          kbId: context.kbId,
+          materialId: context.materialId,
+          ordinal: context.ordinal,
+          locator: context.locator,
+          text: context.text,
+        }),
         kbName: context.kbName,
         materialTitle: context.materialTitle,
         locator: context.locator,
@@ -545,6 +622,13 @@ export class KnowbaseService {
   }
 
   // ------------------------------------------------------------------ internals
+
+  /** Run mutations in call order; one rejection must not poison later work. */
+  #mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#mutationTail.then(operation)
+    this.#mutationTail = result.then(() => undefined, () => undefined)
+    return result
+  }
 
   /** Absolute path of one base's folder. */
   #baseDir(base: Pick<KnowledgeBase, 'folderName'>): string {
@@ -659,46 +743,119 @@ export class KnowbaseService {
         continue
       }
       if (existing.folderName === folderName) continue
-      // The folder moved or was renamed outside the app: the disk wins, because
-      // that is the name the user can see.
+      // Treat an external folder rename as an independent identity commit. Save
+      // the bumped revision before publishing the new metadata or citation
+      // contexts; a later walk failure must not expose a half-renamed snapshot.
       const renamed: KnowledgeBase = {
         ...existing,
         folderName,
         name: parseVaultFolderName(folderName)?.name ?? existing.name,
         updatedAt: this.#now(),
-      }
-      this.#knowledgeBases.set(id, renamed)
-      for (const [chunkId, context] of this.#chunks) {
-        if (context.kbId === id) this.#chunks.set(chunkId, { ...context, kbName: renamed.name })
+        indexRevision: existing.indexRevision + 1,
       }
       await this.#store.saveKnowledgeBase(renamed)
+      this.#knowledgeBases.set(id, renamed)
+      for (const [chunkId, context] of this.#chunks) {
+        if (context.kbId !== id) continue
+        this.#chunks.set(chunkId, {
+          ...context,
+          kbName: renamed.name,
+          filePath: path.join(this.#root, renamed.folderName, ...context.materialId.split('/')),
+        })
+      }
     }
 
     for (const id of [...this.#knowledgeBases.keys()]) {
       if (present.has(id)) continue
       this.#unindexBase(id)
       this.#materials.delete(id)
+      this.#scanReports.delete(id)
+      this.#dirtyMaterials.delete(id)
       this.#knowledgeBases.delete(id)
       await this.#store.deleteKnowledgeBase(id)
     }
   }
 
-  /** Re-read one base's folder and rebuild its contribution to the index. */
-  async #scanBase(base: KnowledgeBase): Promise<readonly Material[]> {
-    const previous = this.#materials.get(base.id)
-    if (previous !== undefined) {
-      for (const material of previous.values()) this.#unindexMaterial(material)
+  /**
+   * Walk, extract, then commit one base. The old map/index is untouched until
+   * walk succeeds; this is important when a directory read fails halfway.
+   */
+  async #scanBase(
+    base: KnowledgeBase,
+    options: RescanOptions = {},
+    forced: ReadonlySet<string> = new Set(),
+    bumpRevision = true,
+  ): Promise<readonly Material[]> {
+    const entries = await this.#walk(this.#baseDir(base), this.#baseDir(base), 0)
+    const previous = this.#materials.get(base.id) ?? new Map<string, Material>()
+    const oldIds = new Set(previous.keys())
+    const found = new Map<string, Material>()
+    const toExtract: ScanEntry[] = []
+    let added = 0
+    let reused = 0
+    let changed = 0
+    let unsearchable = 0
+
+    for (const entry of entries) {
+      const prior = previous.get(entry.relative)
+      const sameFingerprint = prior !== undefined &&
+        prior.bytes === entry.size && prior.mtimeMs === entry.mtimeMs
+      // A failed indexable read is deliberately never reusable: OCR packs may
+      // become available between scans. Unindexable formats have no extractor.
+      const canReuse = prior !== undefined && sameFingerprint &&
+        options.force !== true && !forced.has(entry.relative) &&
+        !this.#dirtyMaterials.get(base.id)?.has(entry.relative) &&
+        ((prior.indexed && prior.chunks.length > 0) || !isIndexable(entry.relative))
+      oldIds.delete(entry.relative)
+      if (canReuse) {
+        found.set(entry.relative, prior)
+        reused += 1
+      } else {
+        toExtract.push(entry)
+        if (prior === undefined) added += 1
+      }
     }
 
-    const found = new Map<string, Material>()
-    const baseDir = this.#baseDir(base)
-    for (const entry of await this.#walk(baseDir, baseDir, 0)) {
-      const material = await this.#readMaterial(base, entry)
-      found.set(material.id, material)
+    // Extraction is the asynchronous stage. No index/material map mutation is
+    // performed until every file has produced a material.
+    const extracted: Material[] = []
+    // Bound extraction fan-out: PDF/OCR workers are much heavier than a stat.
+    for (let offset = 0; offset < toExtract.length; offset += 4) {
+      extracted.push(...await Promise.all(toExtract.slice(offset, offset + 4)
+        .map(entry => this.#readMaterial(base, entry))))
+    }
+    const replacements: Material[] = []
+    for (const material of extracted) {
+      const prior = previous.get(material.id)
+      const sameState = prior !== undefined && sameMaterialState(prior, material)
+      if (prior !== undefined && !sameState) changed += 1
+      // A retry with the same outcome is not a state change. Force still
+      // rebuilds chunks, but fresh random chunk ids are not a new revision.
+      const replace = !sameState || options.force === true
+      found.set(material.id, replace ? material : prior!)
+      if (replace) replacements.push(material)
+      if (!material.indexed && isIndexable(material.fileName)) unsearchable += 1
+    }
+
+    const deleted = oldIds.size
+    const changedState = added + changed + deleted > 0
+    const report: ScanReport = { added, reused, changed, deleted, unsearchable }
+    if (bumpRevision && changedState) await this.#bumpRevision(base.id)
+
+    // Commit only after the revision record is durable. A storage failure leaves
+    // the previous material/index/report snapshot visible and dirty markers live.
+    for (const id of oldIds) {
+      const prior = previous.get(id)
+      if (prior !== undefined) this.#unindexMaterial(prior)
+    }
+    for (const material of replacements) {
+      const prior = previous.get(material.id)
+      if (prior !== undefined) this.#unindexMaterial(prior)
       this.#indexMaterial(material, base.name)
     }
-
     this.#materials.set(base.id, found)
+    this.#scanReports.set(base.id, report)
+    this.#dirtyMaterials.delete(base.id)
     return [...found.values()]
   }
 
@@ -733,9 +890,18 @@ export class KnowbaseService {
       return this.#silent(shell, `文件超过 ${formatMb(MAX_TEXT_BYTES)}，未解析。`)
     }
     try {
-      const text = await this.#fs.readText(entry.absolute)
-      return this.#publish(shell, text, chunkText(text, this.#chunkOptions))
-    } catch {
+      const text = await this.#fs.readText(entry.absolute, MAX_TEXT_BYTES)
+      const legacyText = ['txt', 'md', 'markdown', 'text'].includes(shell.extension)
+      return this.#publish(shell, text, chunkText(text, {
+        ...this.#chunkOptions,
+        ...(legacyText ? {} : { markdownHeadings: false }),
+      }))
+    } catch (error) {
+      if (error instanceof TextReadError) {
+        if (error.code === 'too-large') return this.#silent(shell, `文件超过 ${formatMb(MAX_TEXT_BYTES)}，未解析。`)
+        if (error.code === 'invalid-utf8') return this.#silent(shell, '文件不是有效的 UTF-8 文本，请转换编码后重扫。')
+        return this.#silent(shell, '文件包含二进制或不支持的控制字符，未作为文本解析。')
+      }
       return this.#silent(shell, '文件无法读取，可能已被其他程序占用或删除。')
     }
   }
@@ -803,7 +969,12 @@ export class KnowbaseService {
     }
 
     try {
-      const text = await this.#ocr.recognize(bytes)
+      // The OCR port does not promise reentrancy. Keep a single recognition in
+      // flight even while this scan extracts text/PDF materials concurrently.
+      const engine = this.#ocr
+      const recognition = this.#ocrTail.then(() => engine.recognize(bytes))
+      this.#ocrTail = recognition.then(() => undefined, () => undefined)
+      const text = await recognition
       // An image with no words in it is a fact about the file, not a failure:
       // a photo of a chair is not a broken document.
       if (text.trim() === '') return this.#silent(shell, '图片里没有识别出文字。')
@@ -820,7 +991,7 @@ export class KnowbaseService {
 
   /** A file the index can search, carrying the text the reader shows. */
   #publish(shell: MaterialShell, extractedText: string, chunks: readonly ChunkRecord[]): Material {
-    return { ...shell, indexed: true, extractedText, chunks, note: '' }
+    return { ...shell, indexed: chunks.length > 0, extractedText, chunks, note: '' }
   }
 
   /** Every file under a directory, depth-first, as vault-relative paths. */
@@ -906,15 +1077,29 @@ export class KnowbaseService {
     }
   }
 
-  async #bumpRevision(base: KnowledgeBase): Promise<void> {
+  async #bumpRevision(kbId: string): Promise<void> {
+    const base = this.#knowledgeBases.get(kbId)
+    if (base === undefined) return
     const updated: KnowledgeBase = {
       ...base,
       indexRevision: base.indexRevision + 1,
       updatedAt: this.#now(),
     }
-    this.#knowledgeBases.set(updated.id, updated)
     await this.#store.saveKnowledgeBase(updated)
+    this.#knowledgeBases.set(updated.id, updated)
   }
+}
+
+/** Ignore generated chunk identities when auditing an extraction's state. */
+function sameMaterialState(left: Material, right: Material): boolean {
+  return left.id === right.id && left.bytes === right.bytes && left.mtimeMs === right.mtimeMs &&
+    left.indexed === right.indexed && left.note === right.note &&
+    left.extractedText === right.extractedText && left.chunks.length === right.chunks.length &&
+    left.chunks.every((chunk, index) => {
+      const other = right.chunks[index]!
+      return chunk.ordinal === other.ordinal && chunk.text === other.text &&
+        chunk.headingPath === other.headingPath && chunk.locator === other.locator
+    })
 }
 
 /** One sentence for the user, from the PDF extractor's failure code. */

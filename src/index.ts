@@ -35,6 +35,7 @@ import { installPreStep, queryFrom } from './pre-step.ts'
 import { KnowbaseRemote } from './remote.ts'
 import { openSessionScopeStore, openStorageDomainStore, type OpenedSessionStore } from './store.ts'
 import { createNodeVaultFs } from './vault-fs.ts'
+import { installKnowledgeTools } from './tools.ts'
 
 export const name = 'knowbase'
 
@@ -79,6 +80,10 @@ export function apply(ctx: Context): void {
   // undiscoverable.
   ctx.inject(['commands'], commandScope => {
     installCommands(commandScope, { service: () => service, selection })
+  })
+
+  ctx.inject(['tools'], toolScope => {
+    installKnowledgeTools(toolScope, { service: () => service, selection })
   })
 
   ctx.inject(['storageDomain'], storageScope => {

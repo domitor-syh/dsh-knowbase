@@ -41,6 +41,12 @@ export interface RetrievedPassage {
   /** The passage text itself. */
   readonly text: string
   /**
+   * Versioned evidence fingerprint used when copying or comparing citations.
+   * Optional so messages and typed fixtures written before O-08 remain valid.
+   * This is not a permanent file identity and does not restore history.
+   */
+  readonly citationId?: string
+  /**
    * Identity of the knowledge base the passage came from.
    *
    * The display fields above are enough to *show* a source; opening one needs

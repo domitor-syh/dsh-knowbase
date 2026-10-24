@@ -1,399 +1,172 @@
-/**
- * The per-answer knowledge-base surface: a source panel when the answer had
- * evidence, a status badge when it did not.
- *
- * The host's markdown pipeline is closed — no link hooks, no component map —
- * so the `[1] …` markers inside an answer's text cannot become clickable
- * inline. The next best surface is the assistant action strip, the same row
- * the feedback buttons use: this renders a 「知识库来源」 button for every
- * answer whose turn carries this plugin's evidence, and clicking opens an
- * overlay listing the passages in marker order — full text, source title,
- * locator.
- *
- * ## Why the badge matters as much as the panel
- *
- * The plan's rule is that a miss must not be left to the model to remember to
- * mention (「未命中提示不能只交给模型"记得说"」). An answer with no badge is
- * indistinguishable from an answer the knowledge base never reached, so a turn
- * that searched and found nothing says so, in a fixed string the plugin owns.
- * The badge reports the outcome; it never claims the answer is wrong.
- *
- * The structured payload arrives inside the plugin message's `source` field
- * (see `../pre-step.ts` and `./citation-scan.ts`), so both surfaces need no
- * round trip and no text parsing. Answers written before either field existed
- * show nothing at all.
- *
- * ## Why a portal
- *
- * The overlay must escape the action strip's stacking context; rendering into
- * `document.body` with fixed positioning is the same choice the composer
- * popover makes.
- *
- * @module @domitor-syh/dsh-knowbase/client/citation-button
- */
-
 import * as React from 'react'
-import { createPortal } from 'react-dom'
 import { outcomeForAnswer, type AnswerOutcome, type SourcePassage } from './citation-scan.ts'
 import { openMaterialInReader } from './reader.ts'
+import { closeSources, showSources, sourceDialogActive, useSourceDialog } from './citation-dialog.ts'
+import { useCitationText } from './citation-locale.ts'
+import { citationCopyText, citationLabel, copyCitation, sourceGroups, validCitationId, type CopyResult } from './citation-view.ts'
 
 const COLORS = {
-  border: '#dce3ed',
-  muted: '#526176',
-  accent: '#185fa5',
-  danger: '#b3261e',
-  surface: '#fff',
-  subtle: '#f6f8fb',
-  warn: '#8a6100',
+  border: 'var(--dsw-alias-border-l1)', muted: 'var(--dsw-alias-label-secondary)',
+  text: 'var(--dsw-alias-label-primary)', accent: 'var(--dsw-alias-brand-primary)',
+  danger: 'var(--dsw-alias-state-error-primary)', surface: 'var(--dsw-alias-bg-overlay)',
+  subtle: 'var(--dsw-alias-bg-layer-2)', warn: 'var(--dsw-alias-state-warn-primary)',
 } as const
-
-/**
- * Fixed text per outcome, owned by the plugin rather than the model.
- *
- * `hits` is absent on purpose: it is the one outcome with something to open,
- * so it gets the button instead of a label.
- */
-const STATUS_TEXT: Record<string, string> = {
-  no_match: '未检索到相关知识',
-  not_ready: '知识库还没有资料',
-  no_selection: '未勾选知识库',
-  empty_scope: '所选知识库已失效',
-  error: '知识库检索暂不可用',
+const control: React.CSSProperties = {
+  border: `1px solid ${COLORS.border}`, borderRadius: 5, padding: '4px 8px',
+  background: COLORS.surface, color: COLORS.text, fontSize: 12, cursor: 'pointer',
 }
+interface Props { readonly messageId?: unknown; readonly useSession?: unknown; readonly useChat?: unknown }
 
-/** Longer explanation, shown on hover rather than in the strip. */
-const STATUS_HINT: Record<string, string> = {
-  no_match: '本次提问在所选知识库里没有命中片段。回答可能来自模型自身知识，不是库内资料。',
-  not_ready: '所选知识库里还没有已索引的资料，本次回答没有知识库依据。',
-  no_selection: '本会话已开启知识库，但一个库都没有勾选，本次没有检索任何知识库。',
-  empty_scope: '本次选中的知识库不存在或已被删除，本次回答没有知识库依据。',
-  error: '知识库检索失败，本次回答没有知识库依据。',
-}
-
-/**
- * Props the seat composes.
- *
- * The chat package publishes these as loose view types (rollback reads them
- * as `any` for the same reason); everything actually consumed is narrowed at
- * runtime, and the snapshot walk itself lives in `./citation-scan.ts`.
- */
-interface Props {
-  readonly messageId?: unknown
-  readonly useSession?: unknown
-  readonly useChat?: unknown
-}
-
-/** Report a failure without letting it escape into React's error path. */
-function messageOf(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
-}
-
-/**
- * One passage row: numbered like the answer's `[n]` markers.
- *
- * A passage whose answer predates the reader carries no ids, so the row offers
- * no action rather than a button that cannot work — the same degradation the
- * status badge uses for messages written before it existed.
- *
- * @param props - the passage, its 1-based position, and the overlay's close.
- */
-function PassageRow(props: {
-  passage: SourcePassage
-  index: number
-  onOpened: () => void
+function PassageRow({ passage, index, onOpened }: {
+  passage: SourcePassage; index: number; onOpened: () => void
 }): React.ReactElement {
-  const { passage, index, onOpened } = props
-  const [failure, setFailure] = React.useState<string | undefined>(undefined)
-  const { kbId, materialId, ordinal } = passage
-  const openable = kbId !== undefined && materialId !== undefined
-
-  const onOpen = (): void => {
-    if (kbId === undefined || materialId === undefined) return
-    const problem = openMaterialInReader({
-      kbId,
-      materialId,
-      ...(ordinal === undefined ? {} : { chunk: ordinal }),
-      title: passage.materialTitle,
-    })
-    // On success the overlay closes so the column it just revealed is visible;
-    // on failure the row says why instead of leaving a dead click.
-    if (problem === undefined) onOpened()
-    else setFailure(problem)
+  const t = useCitationText()
+  const [failure, setFailure] = React.useState(false)
+  const [copy, setCopy] = React.useState<CopyResult | 'busy' | undefined>()
+  const alive = React.useRef(true)
+  const busy = React.useRef(false)
+  React.useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const text = citationCopyText(passage, index, {
+    base: t('base'), file: t('file'), location: t('location'), id: t('id'), legacy: t('legacy'), hidden: t('hidden'),
+  })
+  const label = (value: string) => citationLabel(value, t('hidden'))
+  const onCopy = async (): Promise<void> => {
+    if (busy.current) return
+    busy.current = true; setCopy('busy')
+    let result: CopyResult
+    try { result = await copyCitation(text, globalThis.navigator?.clipboard) }
+    catch { result = 'failed' }
+    busy.current = false
+    if (alive.current) setCopy(result)
   }
-
+  const onOpen = (): void => {
+    if (passage.kbId === undefined || passage.materialId === undefined) return
+    try {
+      const problem = openMaterialInReader({
+        kbId: passage.kbId, materialId: passage.materialId,
+        ...(passage.ordinal === undefined ? {} : { chunk: passage.ordinal }), title: passage.materialTitle,
+      })
+      if (problem === undefined) onOpened()
+      else setFailure(true)
+    } catch { setFailure(true) }
+  }
   return (
-    <div
-      data-kb-passage
-      style={{
-        border: `1px solid ${COLORS.border}`,
-        borderRadius: 6,
-        background: COLORS.subtle,
-        padding: 10,
-        marginBottom: 8,
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'baseline',
-          justifyContent: 'space-between',
-          gap: 8,
-          marginBottom: 4,
-        }}
-      >
-        <div data-kb-passage-header style={{ fontSize: 12, color: COLORS.accent }}>
-          [{index + 1}] {passage.kbName} / {passage.materialTitle} · {passage.locator}
-        </div>
-        {openable ? (
-          <button
-            type="button"
-            data-kb-open-in-reader
-            title="在右侧栏打开这份资料并定位到该片段"
-            onClick={onOpen}
-            style={{
-              flexShrink: 0,
-              border: `1px solid ${COLORS.border}`,
-              background: COLORS.surface,
-              borderRadius: 4,
-              padding: '1px 6px',
-              fontSize: 11,
-              color: COLORS.accent,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            在右栏打开
-          </button>
+    <div data-kb-passage style={{ border: `1px solid ${COLORS.border}`, borderRadius: 6, background: COLORS.subtle, padding: 10, marginTop: 8, overflowWrap: 'anywhere' }}>
+      <div data-kb-passage-header style={{ fontSize: 12, color: COLORS.accent }}>
+        [{index + 1}] {label(passage.kbName)} / {label(passage.materialTitle)} · {label(passage.locator)}
+      </div>
+      <div style={{ fontSize: 11, color: COLORS.muted, margin: '4px 0', overflowWrap: 'anywhere' }}>
+        {validCitationId(passage.citationId) ? `${t('id')}: ${passage.citationId}` : t('legacy')}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '8px 0' }}>
+        <button type="button" style={control} onClick={() => { void onCopy() }} disabled={copy === 'busy'}>{copy === 'busy' ? t('copying') : t('copy')}</button>
+        {passage.kbId !== undefined && passage.materialId !== undefined ? (
+          <button type="button" data-kb-open-in-reader title={t('openHint')} style={control} onClick={onOpen}>{t('open')}</button>
         ) : null}
       </div>
-      <div data-kb-passage-text style={{ fontSize: 13, whiteSpace: 'pre-wrap', color: '#1c2733' }}>
-        {passage.text}
+      <div role="status" aria-live="polite" style={{ color: COLORS.muted, fontSize: 12 }}>
+        {copy === undefined || copy === 'busy' ? null : t(copy)}
       </div>
-      {failure === undefined ? null : (
-        <div style={{ fontSize: 11, color: COLORS.danger, marginTop: 6 }}>{failure}</div>
-      )}
+      {copy === 'failed' || copy === 'unavailable' ? (
+        <textarea aria-label={t('manual')} readOnly value={text} rows={6} onFocus={event => event.currentTarget.select()} style={{ ...control, width: '100%', boxSizing: 'border-box', cursor: 'text', marginTop: 6 }} />
+      ) : null}
+      <div data-kb-passage-text style={{ fontSize: 13, whiteSpace: 'pre-wrap', color: COLORS.text }}>{passage.text}</div>
+      {failure ? <div role="alert" style={{ fontSize: 12, color: COLORS.danger, marginTop: 6 }}>{t('openFailed')}</div> : null}
     </div>
   )
 }
 
-/** The overlay listing every passage behind one answer. */
-function SourceOverlay(props: {
-  passages: readonly SourcePassage[]
-  onClose: () => void
-}): React.ReactElement {
-  const { passages, onClose } = props
-
+/** Rendered in the inspected shell.overlay slot, never appended to the app body. */
+function SourceOverlay({ passages, onClose, owner }: { passages: readonly SourcePassage[]; onClose: () => void; owner: object }): React.ReactElement {
+  const t = useCitationText()
+  const [selected, setSelected] = React.useState('')
+  const groups = sourceGroups(passages)
+  const visible = selected === '' ? groups : groups.filter(group => group.key === selected)
+  const dialog = React.useRef<HTMLDivElement>(null)
   React.useEffect(() => {
+    const root = dialog.current
+    root?.focus()
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (!sourceDialogActive(owner)) return
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
+      if (event.key !== 'Tab' || root === null) return
+      const items = [...root.querySelectorAll<HTMLElement>('button:not(:disabled), select, textarea, summary')].filter(item => item.getClientRects().length > 0)
+      const first = items[0], last = items[items.length - 1]
+      if (first === undefined || last === undefined) { event.preventDefault(); root.focus(); return }
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === root)) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && (document.activeElement === last || document.activeElement === root)) { event.preventDefault(); first.focus() }
     }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
-
+    const onFocus = (event: FocusEvent): void => {
+      if (sourceDialogActive(owner) && root !== null && event.target instanceof Node && !root.contains(event.target)) root.focus()
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('focusin', onFocus)
+    return () => { document.removeEventListener('keydown', onKeyDown, true); document.removeEventListener('focusin', onFocus) }
+  }, [onClose, owner])
   return (
-    <div
-      role="dialog"
-      aria-label="知识库来源"
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 90,
-        background: 'rgba(15, 23, 42, 0.35)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-      }}
-    >
-      <div
-        onClick={event => event.stopPropagation()}
-        style={{
-          background: COLORS.surface,
-          borderRadius: 10,
-          border: `1px solid ${COLORS.border}`,
-          maxWidth: 640,
-          width: '100%',
-          maxHeight: '76vh',
-          display: 'flex',
-          flexDirection: 'column',
-          boxShadow: '0 16px 48px rgba(15, 23, 42, 0.24)',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 16px',
-            borderBottom: `1px solid ${COLORS.border}`,
-          }}
-        >
-          <div style={{ fontSize: 14, fontWeight: 600 }}>
-            知识库来源（{passages.length} 个片段）
-          </div>
-          <button
-            type="button"
-            aria-label="关闭"
-            onClick={onClose}
-            style={{
-              border: 'none',
-              background: 'transparent',
-              fontSize: 16,
-              color: COLORS.muted,
-              cursor: 'pointer',
-              lineHeight: 1,
-              padding: 4,
-            }}
-          >
-            ✕
-          </button>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'color-mix(in srgb, var(--dsw-alias-bg-base) 65%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, pointerEvents: 'auto' }} onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label={t('sources')} tabIndex={-1} ref={dialog} onClick={event => event.stopPropagation()} style={{ color: COLORS.text, background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 10, width: '100%', maxWidth: 720, maxHeight: '85vh', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: 16, borderBottom: `1px solid ${COLORS.border}` }}>
+          <strong>{t('sources')} ({passages.length})</strong>
+          <button type="button" onClick={onClose} style={control}>{t('close')}</button>
         </div>
-        <div style={{ padding: 16, overflowY: 'auto' }}>
-          {passages.map((passage, index) => (
-            <PassageRow key={index} passage={passage} index={index} onOpened={onClose} />
-          ))}
-          <p style={{ color: COLORS.muted, fontSize: 11, margin: '4px 2px 0' }}>
-            编号与回答中「[1]」等标记对应；片段为检索命中的原文。
-          </p>
+        <div style={{ padding: '12px 16px' }}>
+          <label style={{ fontSize: 12 }}>{t('filter')}<select value={selected} onChange={event => setSelected(event.currentTarget.value)} style={{ ...control, display: 'block', width: '100%', marginTop: 6 }}>
+            <option value="">{t('all')}</option>
+            {groups.map((group, i) => <option key={group.key} value={group.key}>{i + 1}. {citationLabel(group.kbName, t('hidden'))} / {citationLabel(group.materialTitle, t('hidden'))} ({group.entries.length})</option>)}
+          </select></label>
+        </div>
+        <div style={{ padding: '0 16px 16px', overflowY: 'auto', minHeight: 0 }}>
+          {visible.map(group => <details key={group.key} open style={{ borderTop: `1px solid ${COLORS.border}`, padding: '10px 0' }}>
+            <summary style={{ cursor: 'pointer', fontSize: 13, overflowWrap: 'anywhere' }}>{citationLabel(group.kbName, t('hidden'))} / {citationLabel(group.materialTitle, t('hidden'))} ({group.entries.length})</summary>
+            {group.entries.map(({ passage, index }) => <PassageRow key={index} passage={passage} index={index} onOpened={onClose} />)}
+          </details>)}
+          <p style={{ fontSize: 12, color: COLORS.muted }}>{t('note')}</p>
         </div>
       </div>
     </div>
   )
 }
-
-/** The status badge: a fixed sentence the plugin owns, not the model. */
-function StatusBadge(props: { outcome: AnswerOutcome }): React.ReactElement | null {
-  const status = props.outcome.status
-  if (status === undefined) return null
-
-  const label = STATUS_TEXT[status.outcome]
-  // An outcome this build has never heard of still renders — as the raw token,
-  // which is ugly but honest. A client that hid it would turn a newer Host's
-  // new state into "no status at all", which is the one reading that lies.
-  if (label === undefined && status.outcome === 'hits') return null
-
-  const text = label ?? status.outcome
-  // The reason rides along even for a known outcome: the fixed sentence says
-  // what the user needs, the reason is what makes a broken retrieval fixable.
-  // This is a local app and the reader is the operator, so the raw text is
-  // diagnostic rather than a leak.
-  const base = STATUS_HINT[status.outcome] ?? text
-  const hint = status.reason === '' ? base : `${base}（${status.reason}）`
-
-  return (
-    <span
-      title={hint}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-        padding: '2px 6px',
-        fontSize: 12,
-        color: COLORS.muted,
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 3,
-          background: COLORS.warn,
-          flexShrink: 0,
-        }}
-      />
-      {text}
-    </span>
-  )
+const dismissSources = () => closeSources()
+export function KnowbaseSourceOverlay(): React.ReactElement | null {
+  const state = useSourceDialog()
+  return state === undefined ? null : <SourceOverlay key={overlayKey(state.owner)} owner={state.owner} passages={state.passages} onClose={dismissSources} />
+}
+let nextOwner = 0
+const owners = new WeakMap<object, number>()
+function overlayKey(owner: object): number {
+  let key = owners.get(owner)
+  if (key === undefined) { key = ++nextOwner; owners.set(owner, key) }
+  return key
 }
 
-/** The assistant action: the source button when there is evidence, a badge otherwise. */
+function StatusBadge({ outcome }: { outcome: AnswerOutcome }): React.ReactElement | null {
+  const t = useCitationText()
+  const status = outcome.status
+  if (status === undefined || status.outcome === 'hits') return null
+  const known = ['no_match', 'not_ready', 'no_selection', 'empty_scope', 'error'].includes(status.outcome)
+  const text = known ? t(status.outcome as 'no_match') : status.outcome
+  const base = known ? t(`${status.outcome}Hint` as 'no_matchHint') : text
+  const hint = status.reason === '' ? base : `${base}（${citationLabel(status.reason, t('hidden'))}）`
+  return <span title={hint} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', fontSize: 12, color: COLORS.muted }}>
+    <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.warn }} />{text}
+  </span>
+}
+
 export function KnowbaseSourceAction(props: Props): React.ReactElement | null {
-  // Hook discipline on this seat is strict, and two earlier attempts proved it:
-  // a conditional or factory-nested hook call changes the hook count across
-  // renders and React aborts the whole entry with #300. So every hook is called
-  // unconditionally at the top level, and the guard on `messageId` sits after
-  // them.
-  //
-  // The two kit hooks are safe to branch on `typeof`: both are standard sources
-  // the host materializes for every session-scoped entry (`materializeStandardBinding`
-  // turns `binding.hooks` into `use<Name>` props), and both are registered
-  // unconditionally by their owners — the runtime's `session` source and
-  // ui-chat's `chat` source — so the branch never flips within one composition.
+  const t = useCitationText()
+  const owner = React.useRef<object>({})
+  React.useEffect(() => { const key = owner.current; return () => closeSources(key) }, [])
   const { messageId, useSession, useChat } = props
-
-  const [open, setOpen] = React.useState(false)
-
-  const sessionSnapshot =
-    typeof useSession === 'function'
-      ? (useSession as (selector: (state: unknown) => unknown) => unknown)(
-          (state: unknown) => state,
-        )
-      : undefined
-
-  // `useChat` is the route this host publishes the chat slice on. The snapshot
-  // fallback covers the older shape that carried `chat` on the session
-  // snapshot — reading only that one is exactly why the button never appeared:
-  // the seat was fine, the data was simply on the other route.
-  const liveChat =
-    typeof useChat === 'function'
-      ? (useChat as (selector: (state: unknown) => unknown) => unknown)((state: unknown) => state)
-      : undefined
+  const sessionSnapshot = typeof useSession === 'function'
+    ? (useSession as (selector: (state: unknown) => unknown) => unknown)((state: unknown) => state) : undefined
+  const liveChat = typeof useChat === 'function'
+    ? (useChat as (selector: (state: unknown) => unknown) => unknown)((state: unknown) => state) : undefined
   const chat = liveChat ?? (sessionSnapshot as { chat?: unknown } | undefined)?.chat
-
   const outcome = typeof messageId === 'string' ? outcomeForAnswer(chat, messageId) : undefined
-  const passages = outcome?.passages ?? []
-
-  if (typeof messageId !== 'string') return null
   if (outcome === undefined) return null
-  if (passages.length === 0) return <StatusBadge outcome={outcome} />
-
-  const actionButton = (
-    <button
-      type="button"
-      title="查看本次回答引用的知识库片段"
-      onClick={() => setOpen(true)}
-      style={{
-        border: 'none',
-        background: 'transparent',
-        padding: '2px 6px',
-        fontSize: 12,
-        color: COLORS.muted,
-        cursor: 'pointer',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 4,
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          display: 'inline-block',
-          padding: '0 5px',
-          borderRadius: 4,
-          border: `1px solid ${COLORS.border}`,
-          fontSize: 11,
-          lineHeight: '16px',
-          color: COLORS.accent,
-        }}
-      >
-        {passages.length}
-      </span>
-      知识库来源
-    </button>
-  )
-
-  return (
-    <>
-      {actionButton}
-      {open &&
-        createPortal(
-          <SourceOverlay passages={passages} onClose={() => setOpen(false)} />,
-          document.body,
-        )}
-    </>
-  )
+  if (outcome.passages.length === 0) return <StatusBadge outcome={outcome} />
+  return <button type="button" title={t('view')} onClick={event => showSources({ owner: owner.current, passages: outcome.passages, restoreFocus: event.currentTarget })} style={{ border: 'none', background: 'transparent', padding: '2px 6px', fontSize: 12, color: COLORS.muted, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+    <span aria-hidden="true" style={{ padding: '0 5px', borderRadius: 4, border: `1px solid ${COLORS.border}`, fontSize: 11, color: COLORS.accent }}>{outcome.passages.length}</span>{t('sources')}
+  </button>
 }

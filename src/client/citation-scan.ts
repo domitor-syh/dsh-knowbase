@@ -23,6 +23,8 @@ export type SourcePassage = Readonly<{
   materialTitle: string
   locator: string
   text: string
+  /** Stable versioned fingerprint; absent on legacy messages. */
+  citationId?: string
   /**
    * Identity of the material, present only on answers produced after the
    * reader existed.
@@ -149,6 +151,7 @@ function readPassage(passage: unknown): SourcePassage | undefined {
   }
   // Identity is optional and read leniently: a malformed id drops the reader
   // action, never the passage.
+  const citationId = (passage as { citationId?: unknown }).citationId
   const kbId = (passage as { kbId?: unknown }).kbId
   const materialId = (passage as { materialId?: unknown }).materialId
   const filePath = (passage as { filePath?: unknown }).filePath
@@ -158,6 +161,9 @@ function readPassage(passage: unknown): SourcePassage | undefined {
     materialTitle,
     locator,
     text,
+    ...(typeof citationId === 'string' && citationId.length === 75 && /^kb-cite-v1-[a-f0-9]{64}$/.test(citationId)
+      ? { citationId }
+      : {}),
     ...(typeof kbId === 'string' && kbId !== '' ? { kbId } : {}),
     ...(typeof materialId === 'string' && materialId !== '' ? { materialId } : {}),
     ...(typeof filePath === 'string' && filePath !== '' ? { filePath } : {}),

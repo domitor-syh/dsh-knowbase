@@ -80,7 +80,7 @@ const HELP = [
   '  /kb rename <旧名> :: <新名>            重命名（文件夹一起改名）',
   '  /kb delete <名称>                      删除知识库（文件夹移入 _回收站，不销毁）',
   '  /kb rm <库名> :: <文件名>               删除文件（移入 _回收站，不销毁）',
-  '  /kb rescan [库名]                      重新扫描磁盘（在资源管理器里丢进文件后用它）',
+  '  /kb rescan [--force] [库名]            增量重扫；--force 强制重新解析全部文件',
   '  /kb use <库名[,库名]|全部|关闭>        设置本会话的检索范围',
   '  /kb search <问题>                      检索测试（不调用模型）',
   '  /kb root                               显示知识库根目录（你的文件实际存放的位置）',
@@ -93,7 +93,7 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
   ctx.commands.register({
     name: 'kb',
     description: '知识库：管理库与文件、设置本会话检索范围 / Knowledge base',
-    input: { hint: 'list | files <库名> | create <名称> | rescan [库名] | use <库名[,库名]|全部|关闭>' },
+    input: { hint: 'list | files <库名> | create <名称> | rescan [--force] [库名] | use <库名[,库名]|全部|关闭>' },
     async handler(invocation): Promise<CommandResult> {
       const agentId = invocation.agent.id
       const raw = invocation.rawInput.trim()
@@ -196,12 +196,23 @@ export function installCommands(ctx: Context, deps: CommandDeps): void {
           }
 
           case 'rescan': {
-            await service.rescan(argument === '' ? undefined : service.findKnowledgeBaseByName(argument)?.id)
-            const bases = service.listKnowledgeBases()
-            const files = service.listMaterials().length
+            const force = /^--force(?:\s|$)/.test(argument)
+            const name = force ? argument.slice('--force'.length).trim() : argument
+            const target = name === '' ? undefined : service.findKnowledgeBaseByName(name)
+            if (name !== '' && target === undefined) {
+              return { kind: 'error', text: `没有名为「${name}」的知识库。` }
+            }
+            await service.rescan(target?.id, { force })
+            const bases = target === undefined ? service.listKnowledgeBases() : [target]
+            const files = bases.reduce((sum, base) => sum + service.listMaterials(base.id).length, 0)
+            const reports = bases.flatMap(base => {
+              const report = service.getLastScanReport(base.id)
+              return report === undefined ? [] : [report]
+            })
+            const reused = reports.reduce((sum, report) => sum + report.reused, 0)
             return {
               kind: 'success',
-              text: `已重新扫描：${bases.length} 个知识库、${files} 个文件。`,
+              text: `已${force ? '强制重建' : '增量扫描'}：${bases.length} 个知识库、${files} 个文件，复用 ${reused} 个文件。`,
             }
           }
 

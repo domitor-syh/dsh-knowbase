@@ -90,7 +90,9 @@ function BookGlyph(props: { size: number }): React.ReactElement {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      style={{ flexShrink: 0 }}
+      // Flex centers the boxes; the Chinese glyph ink sits slightly lower.
+      // Keep this optical correction local to the composer book icon.
+      style={{ display: 'block', flexShrink: 0, transform: 'translateY(1px)' }}
     >
       <path d="M12 6.5C10 5 7.5 4.5 5 4.5v13c2.5 0 5 .5 7 2" />
       <path d="M12 6.5c2-1.5 4.5-2 7-2v13c-2.5 0-5 .5-7 2" />
@@ -549,7 +551,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
                   detail={
                     base.materialCount === 0
                       ? '暂无文件'
-                      : `${base.materialCount} 个文件 / ${base.indexedCount} 可检索`
+                      : `${base.materialCount} 个文件`
                   }
                   checked={isBaseSelected(scope, base.id)}
                   disabled={busy || !ready}

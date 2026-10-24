@@ -32,8 +32,11 @@ export interface KnowledgeBase {
   readonly createdAt: number
   readonly updatedAt: number
   /**
-   * Bumped whenever this base's searchable content changes. Retrieval traces
-   * record it so a stale answer can be explained after the fact.
+   * Bumped once per committed runtime change to scanned material state or base
+   * citation identity (name/path). No-op scans/retries and force rebuilds of the
+   * same state do not bump it. Startup rebuilds have no persisted material
+   * snapshot to compare, so this is not a cross-restart content fingerprint.
+   * Retrieval traces record it so a stale answer can be explained afterwards.
    */
   readonly indexRevision: number
 }
@@ -103,15 +106,19 @@ export interface ChunkRecord {
  * the reader but not read: claiming a format tesseract cannot decode would put
  * "no text found" notes on files the plugin never had a way to read.
  */
+/** Explicit UTF-8 text allowlist. Files are indexed verbatim, never parsed or executed. */
+export const TEXT_EXTENSIONS: ReadonlySet<string> = new Set([
+  'txt', 'md', 'markdown', 'text',
+  'json', 'jsonl', 'yaml', 'yml', 'csv', 'tsv',
+  'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'py', 'rb', 'go', 'rs',
+  'java', 'c', 'h', 'cpp', 'hpp', 'cs', 'css', 'scss',
+  'html', 'htm', 'xml', 'sql', 'sh', 'ps1',
+])
+
+/** Extensions with a local extractor; capability does not guarantee successful extraction. */
 export const INDEXABLE_EXTENSIONS: ReadonlySet<string> = new Set([
-  'txt',
-  'md',
-  'markdown',
-  'text',
-  'pdf',
-  'png',
-  'jpg',
-  'jpeg',
+  ...TEXT_EXTENSIONS,
+  'pdf', 'png', 'jpg', 'jpeg',
 ])
 
 /** Extensions that carry text the OCR engine can extract. */

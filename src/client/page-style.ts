@@ -151,22 +151,30 @@ const CSS = `
 #kb-settings-page [hidden] { display: none !important; }
 
 #kb-settings-page {
-  max-width: 1320px;
+  position: relative;
+  width: 100%;
   height: 100%;
-  margin: 0 auto;
-  padding: 24px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  margin: 0;
   overflow: hidden;
   font-size: 14px;
   line-height: 1.5;
   color: var(--brand-foreground);
-  font-family: var(--brand-font-sans);
+  font-family: inherit;
+}
+.kb-page-content {
+  height: 100%;
+  padding: 32px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-/* 页头 */
-.kb-head-title { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 700; }
+/* 仅页头跟随宿主标题排版，卡片正文保持原有字体。 */
+.kb-head { flex: none; }
+.kb-head-title { margin: 0; font-size: 20px; line-height: 28px; font-weight: 400; font-family: inherit; }
+.kb-card, .kb-modal, .kb-alert, .kb-placeholder { font-family: var(--brand-font-sans); }
 
 /* 卡片：无边框，侧阴影（独立卡片观感） */
 .kb-card {
@@ -177,13 +185,15 @@ const CSS = `
   box-shadow: var(--brand-shadow-card);
 }
 /* 顶部两卡：OCR 窄 / 检索宽（检索测试需要更多空间） */
-.kb-top-grid { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 5fr); gap: 16px; }
-.kb-top-grid .kb-card { min-width: 0; display: flex; flex-direction: column; }
-.kb-top-grid .kb-report { flex: 1; min-height: 0; max-height: 200px; overflow-y: auto; margin-top: 12px; padding-top: 12px; }
+.kb-top-grid { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 5fr); gap: 16px; flex: none; }
+.kb-top-grid .kb-card { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* OCR 内容决定行高，检索结果不参与网格的固有尺寸计算。 */
+.kb-top-grid [data-kb-retrieval-test] { contain: size; overflow: hidden; }
+.kb-top-grid .kb-report { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 12px; padding-top: 12px; }
 
 /* 统一居中模态（添加/重命名/删除知识库、删除文件） */
 .kb-modal-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 100;
   display: flex;
@@ -193,7 +203,10 @@ const CSS = `
   background: var(--brand-overlay);
 }
 .kb-modal {
-  width: min(400px, calc(100vw - 48px));
+  width: 400px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
   padding: 20px;
   background: var(--brand-card);
   border-radius: var(--brand-radius-xl);
@@ -201,6 +214,8 @@ const CSS = `
 }
 .kb-modal-title { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.3; color: var(--brand-foreground); }
 .kb-modal-body { margin-top: 12px; font-size: 13px; line-height: 1.6; color: var(--brand-secondary-foreground); overflow-wrap: anywhere; }
+.kb-modal-body > p { margin: 0; }
+.kb-modal-body .kb-delete-note { margin-top: 8px; font-size: 12px; color: var(--state-warning); }
 .kb-modal-body .kb-input { margin-top: 4px; }
 .kb-modal-body .kb-field-label { display: block; margin-top: 12px; }
 .kb-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
@@ -297,24 +312,31 @@ const CSS = `
 }
 .kb-ocr-privacy svg { flex: none; margin-top: 1px; color: var(--brand-muted-foreground); }
 
-/* 提示条（互斥单条，滑入） */
+/* 页面局部浮动反馈，不占据网格或列表空间。 */
 .kb-alert {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 110;
+  width: max-content;
+  max-width: calc(100% - 48px);
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 10px 16px;
   border: 1px solid var(--brand-border);
   border-radius: var(--brand-radius);
   background: var(--brand-card);
+  box-shadow: var(--brand-shadow-popover);
   font-size: 13px;
-  opacity: 0;
-  transform: translateY(-4px);
-  transition: opacity 180ms ease, transform 180ms ease;
+  color: var(--brand-foreground);
+  overflow-wrap: anywhere;
+  pointer-events: none;
 }
 .kb-alert svg { flex: none; }
-.kb-alert.is-in { opacity: 1; transform: translateY(0); }
-.kb-alert--error { border-color: var(--state-error); color: var(--state-error); }
-.kb-alert--notice { border-color: var(--brand-primary); color: var(--brand-primary); }
+.kb-alert--error svg { color: var(--state-error); }
+.kb-alert--notice svg { color: var(--state-success); }
 
 /* 主区两栏：左列表 / 右文件（页面整体固定，仅列表内部滚动） */
 .kb-columns { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: stretch; flex: 1; min-height: 0; }
@@ -505,26 +527,64 @@ const CSS = `
 .kb-inline-hint p { margin: 0 0 12px; font-size: 13px; color: var(--brand-secondary-foreground); }
 
 /* 检索测试 */
-.kb-scope-group { display: inline-flex; border: 1px solid var(--brand-border); border-radius: var(--brand-radius); overflow: hidden; }
-.kb-scope {
-  height: 32px;
+.kb-scope-picker { flex: 0 0 90px; width: 90px; }
+.kb-scope-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
   padding: 0 12px;
-  border: 0;
-  background: var(--brand-card);
-  color: var(--brand-secondary-foreground);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 400;
+  border-radius: var(--brand-radius);
+  text-align: left;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background-color 160ms ease, color 160ms ease;
 }
-.kb-scope + .kb-scope { border-left: 1px solid var(--brand-border); }
-.kb-scope:hover:not([aria-pressed="true"]):not(:disabled) { background: var(--brand-muted); }
-.kb-scope[aria-pressed="true"] { background: var(--brand-sidebar-accent); color: var(--brand-accent-foreground); font-weight: 700; }
-.kb-scope:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: -2px; }
-.kb-scope:disabled { opacity: 0.45; cursor: not-allowed; }
-.kb-search-row { display: flex; gap: 8px; margin-top: 16px; }
-.kb-search-row .kb-input { flex: 1 1 auto; min-width: 0; }
+.kb-scope-trigger:disabled { opacity: 0.45; cursor: not-allowed; }
+.kb-scope-trigger:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 2px; }
+.kb-scope-chevron { display: flex; flex: none; transition: transform 140ms ease; }
+.kb-scope-trigger[aria-expanded="true"] .kb-scope-chevron { transform: rotate(180deg); }
+/* Portal: carry page tokens and typography, independent of the clipped card. */
+.kb-scope-menu {
+  box-sizing: border-box;
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--brand-border);
+  border-radius: var(--brand-radius);
+  background: var(--brand-popover);
+  color: var(--brand-popover-foreground);
+  font-family: var(--brand-font-sans);
+  box-shadow: var(--brand-shadow-popover);
+}
+.kb-scope-option {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--brand-radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.kb-scope-option:hover:not(:disabled):not([aria-selected="true"]) { background: var(--brand-muted); }
+.kb-scope-option[aria-selected="true"] { background: var(--brand-sidebar-accent); color: var(--brand-accent-foreground); }
+.kb-scope-option:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: -2px; }
+.kb-scope-option:disabled { opacity: 0.45; cursor: not-allowed; }
+.kb-scope-option svg { display: block; flex: none; }
+.kb-search-row { display: flex; align-items: center; gap: 8px; flex: none; }
+.kb-search-row input.kb-input { flex: 1 1 auto; min-width: 0; }
 .kb-search-row .kb-btn { flex: none; }
 .kb-report { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--brand-border); font-size: 13px; }
 .kb-report:empty { display: none; }
@@ -557,8 +617,9 @@ const CSS = `
 .kb-icon-btn:has(.kb-icon-spin):disabled { opacity: 1; }
 
 @media (max-width: 1120px) {
-  #kb-settings-page { height: auto; overflow: visible; }
   .kb-top-grid { grid-template-columns: minmax(0, 1fr); }
+  .kb-top-grid [data-kb-retrieval-test] { height: 220px; }
+  .kb-columns { flex: none; min-height: 320px; }
   .kb-file-list { max-height: 360px; }
   .kb-lib-list { max-height: 320px; }
 }
@@ -570,7 +631,7 @@ const CSS = `
 
 @media (prefers-reduced-motion: reduce) {
   #kb-settings-page *, #kb-settings-page *::before, #kb-settings-page *::after,
-  .kb-menu, .kb-menu * {
+  .kb-menu, .kb-menu *, .kb-scope-menu, .kb-scope-menu * {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

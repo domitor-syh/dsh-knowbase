@@ -22,7 +22,7 @@
  */
 
 import { compareId } from './order.ts'
-import { termFrequencies, tokenize, type TokenizeOptions } from './tokenize.ts'
+import { isHan, termFrequencies, tokenize, type TokenizeOptions } from './tokenize.ts'
 
 /** One scored result. */
 export interface SearchHit {
@@ -53,6 +53,8 @@ export interface SearchOptions {
    * rule — filter during recall, then re-validate before returning.
    */
   readonly accept?: (id: string) => boolean
+  /** Collapse equivalent evidence BEFORE applying limit; best-ranked source wins. */
+  readonly distinctKey?: (id: string) => string
 }
 
 /** Tunables, exposed for calibration against a real question set. */
@@ -66,6 +68,15 @@ export interface Bm25Options extends TokenizeOptions {
 interface IndexedDocument {
   readonly length: number
   readonly frequencies: ReadonlyMap<string, number>
+  readonly hanFrequencies: ReadonlyMap<string, number>
+  readonly identifiers: readonly string[]
+}
+
+/** Same normalization as tokenize; Han must terminate a Latin/digit run. */
+function identifierRuns(text: string): string[] {
+  const normalized = text.normalize('NFKC').toLowerCase()
+  const words = normalized.match(/[\p{L}\p{N}]+/gu) ?? []
+  return words.flatMap(word => word.split(/[\p{Script=Han}]+/u)).filter(word => /\d/u.test(word))
 }
 
 /** An inverted index with BM25 ranking over n-gram terms. */
@@ -75,7 +86,9 @@ export class Bm25Index {
   readonly #tokenizeOptions: TokenizeOptions
   readonly #documents = new Map<string, IndexedDocument>()
   readonly #postings = new Map<string, Map<string, number>>()
+  readonly #hanPostings = new Map<string, Map<string, number>>()
   #totalLength = 0
+  #ordinaryDocumentCount = 0
 
   constructor(options: Bm25Options = {}) {
     this.#k1 = options.k1 ?? 1.2
@@ -90,7 +103,7 @@ export class Bm25Index {
 
   /** Mean document length in terms; 0 when empty. */
   get averageLength(): number {
-    return this.#documents.size === 0 ? 0 : this.#totalLength / this.#documents.size
+    return this.#ordinaryDocumentCount === 0 ? 0 : this.#totalLength / this.#ordinaryDocumentCount
   }
 
   /** Whether a document id is indexed. */
@@ -108,15 +121,32 @@ export class Bm25Index {
     if (this.#documents.has(id)) this.remove(id)
 
     const tokens = tokenize(text, this.#tokenizeOptions)
-    const frequencies = termFrequencies(tokens)
-    this.#documents.set(id, { length: tokens.length, frequencies })
-    this.#totalLength += tokens.length
+    // Single Han characters have a dedicated code-point posting list. Keeping
+    // them out of ordinary BM25 statistics prevents adding an unrelated one-
+    // character document from changing every multi-character query's IDF or
+    // length normalization.
+    const frequencies = termFrequencies(tokens.filter(token => !(Array.from(token).length === 1 && isHan(token))))
+    const hanFrequencies = termFrequencies(Array.from(text.normalize('NFKC').toLowerCase()).filter(character => isHan(character)))
+    const identifiers = identifierRuns(text)
+    const length = [...frequencies.values()].reduce((sum, frequency) => sum + frequency, 0)
+    this.#documents.set(id, { length, frequencies, hanFrequencies, identifiers })
+    this.#totalLength += length
+    if (frequencies.size > 0) this.#ordinaryDocumentCount += 1
 
     for (const [term, frequency] of frequencies) {
       let posting = this.#postings.get(term)
       if (posting === undefined) {
         posting = new Map()
         this.#postings.set(term, posting)
+      }
+      posting.set(id, frequency)
+    }
+
+    for (const [term, frequency] of hanFrequencies) {
+      let posting = this.#hanPostings.get(term)
+      if (posting === undefined) {
+        posting = new Map()
+        this.#hanPostings.set(term, posting)
       }
       posting.set(id, frequency)
     }
@@ -129,6 +159,7 @@ export class Bm25Index {
 
     this.#documents.delete(id)
     this.#totalLength -= document.length
+    if (document.frequencies.size > 0) this.#ordinaryDocumentCount -= 1
 
     for (const term of document.frequencies.keys()) {
       const posting = this.#postings.get(term)
@@ -139,6 +170,12 @@ export class Bm25Index {
       // alive forever after its last document is gone.
       if (posting.size === 0) this.#postings.delete(term)
     }
+    for (const term of document.hanFrequencies.keys()) {
+      const posting = this.#hanPostings.get(term)
+      if (posting === undefined) continue
+      posting.delete(id)
+      if (posting.size === 0) this.#hanPostings.delete(term)
+    }
 
     return true
   }
@@ -147,7 +184,9 @@ export class Bm25Index {
   clear(): void {
     this.#documents.clear()
     this.#postings.clear()
+    this.#hanPostings.clear()
     this.#totalLength = 0
+    this.#ordinaryDocumentCount = 0
   }
 
   /**
@@ -157,34 +196,48 @@ export class Bm25Index {
    * word is not a stronger request for that word.
    */
   search(query: string, options: SearchOptions = {}): SearchHit[] {
-    const { limit = 6, minScore = 0, minCoverage = 0, accept } = options
+    const { limit = 6, minScore = 0, minCoverage = 0, accept, distinctKey } = options
     if (limit <= 0 || this.#documents.size === 0) return []
 
-    const queryTerms = [...new Set(tokenize(query, this.#tokenizeOptions))]
-    if (queryTerms.length === 0) return []
+    const normalizedQuery = query.normalize('NFKC').toLowerCase().trim()
+    const queryTerms = [...new Set(tokenize(normalizedQuery, this.#tokenizeOptions))]
+    const queryCharacters = Array.from(normalizedQuery)
+    const singleHanQuery = queryCharacters.length === 1 && isHan(queryCharacters[0]!)
+    if (queryTerms.length === 0 && !singleHanQuery) return []
 
-    const total = this.#documents.size
-    const average = this.averageLength || 1
+    // Preserve legacy 2–3-character fragment recall. Longer identifier-only
+    // queries must occur CONTIGUOUSLY inside one indexed run, not merely share
+    // a few n-grams. Mixed questions, multiword queries and punctuation retain
+    // normal OR recall; this is not an implicit AND/semantic query rewrite.
+    const identifierQuery = queryCharacters.length >= 4 &&
+      /^[\p{L}\p{N}]+$/u.test(normalizedQuery) && /\d/u.test(normalizedQuery) &&
+      !queryCharacters.some(character => isHan(character))
+    const accepted = new Set<string>()
+    let total = 0
+    let totalLength = 0
+    for (const [id, document] of this.#documents) {
+      if (accept !== undefined && !accept(id)) continue
+      accepted.add(id)
+      if (document.frequencies.size > 0) {
+        total += 1
+        totalLength += document.length
+      }
+    }
+    const average = totalLength / total || 1
     const accumulated = new Map<string, { score: number; matched: Set<string> }>()
-
-    for (const term of queryTerms) {
-      const posting = this.#postings.get(term)
+    for (const term of singleHanQuery ? [queryCharacters[0]!] : queryTerms) {
+      const hanTerm = Array.from(term).length === 1 && isHan(term)
+      const posting = (hanTerm ? this.#hanPostings : this.#postings).get(term)
       if (posting === undefined) continue
-
-      const documentFrequency = posting.size
-      // Robertson/Sparck-Jones with the +1 shift, so a term present in every
-      // document scores 0 rather than going negative.
-      const idf = Math.log(1 + (total - documentFrequency + 0.5) / (documentFrequency + 0.5))
-
+      const documentFrequency = [...posting.keys()].filter(id => accepted.has(id)).length
+      const corpusSize = hanTerm ? accepted.size : total
+      const idf = Math.log(1 + (corpusSize - documentFrequency + 0.5) / (documentFrequency + 0.5))
       for (const [id, frequency] of posting) {
-        if (accept !== undefined && !accept(id)) continue
-        const document = this.#documents.get(id)
-        if (document === undefined) continue
-
-        const normalization =
-          frequency + this.#k1 * (1 - this.#b + this.#b * (document.length / average))
+        if (!accepted.has(id)) continue
+        const document = this.#documents.get(id)!
+        if (identifierQuery && !document.identifiers.some(identifier => identifier.includes(normalizedQuery))) continue
+        const normalization = frequency + this.#k1 * (1 - this.#b + this.#b * (document.length / average))
         const contribution = (idf * (frequency * (this.#k1 + 1))) / normalization
-
         const entry = accumulated.get(id) ?? { score: 0, matched: new Set<string>() }
         entry.score += contribution
         entry.matched.add(term)
@@ -194,23 +247,23 @@ export class Bm25Index {
 
     const hits: SearchHit[] = []
     for (const [id, entry] of accumulated) {
-      const coverage = entry.matched.size / queryTerms.length
+      const coverage = singleHanQuery ? 1 : entry.matched.size / queryTerms.length
       if (entry.score <= minScore || coverage < minCoverage) continue
-      hits.push({
-        id,
-        score: entry.score,
-        coverage,
-        matchedTerms: queryTerms.filter(term => entry.matched.has(term)),
-      })
+      hits.push({ id, score: entry.score, coverage, matchedTerms: singleHanQuery ? [queryCharacters[0]!] : queryTerms.filter(term => entry.matched.has(term)) })
     }
 
-    // Ties break on id so a result set is reproducible rather than dependent on
-    // Map insertion order, which would make tests and trace logs flaky. The id
-    // order is by code point (`./order.ts`), not by collation: reproducibility
-    // is the whole point here, and a collator would put the result back at the
-    // mercy of the runtime's locale data.
     hits.sort((left, right) => right.score - left.score || compareId(left.id, right.id))
-    return hits.slice(0, limit)
+    if (distinctKey === undefined) return hits.slice(0, limit)
+    const distinct: SearchHit[] = []
+    const seen = new Set<string>()
+    for (const hit of hits) {
+      const key = distinctKey(hit.id)
+      if (seen.has(key)) continue
+      seen.add(key)
+      distinct.push(hit)
+      if (distinct.length >= limit) break
+    }
+    return distinct
   }
 
   /** How many indexed documents contain a term. Diagnostics and tests. */
