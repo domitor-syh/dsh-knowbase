@@ -32,6 +32,7 @@ import { resolveScope, SessionSelectionRegistry } from './core/session-scope.ts'
 import { KnowbaseService } from './core/service.ts'
 import { resolveVaultRoot } from './core/vault.ts'
 import { installPreStep, queryFrom } from './pre-step.ts'
+import { installLibraryPrompt } from './prompt-map.ts'
 import { KnowbaseRemote } from './remote.ts'
 import { openSessionScopeStore, openStorageDomainStore, type OpenedSessionStore } from './store.ts'
 import { createNodeVaultFs } from './vault-fs.ts'
@@ -85,6 +86,8 @@ export function apply(ctx: Context): void {
   ctx.inject(['tools'], toolScope => {
     installKnowledgeTools(toolScope, { service: () => service, selection })
   })
+
+  installLibraryPrompt(ctx, () => service)
 
   ctx.inject(['storageDomain'], storageScope => {
     void (async () => {
