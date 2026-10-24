@@ -67,7 +67,7 @@ describe('ProposalRegistry', () => {
     const stale = await registry.create('session-a', kbId, 'stale.md', '提案内容', '')
     await service.addFiles(kbId, [{ name: 'other.md', data: new TextEncoder().encode('外部变更') }])
     await expect(registry.approve('session-a', stale.id)).rejects.toMatchObject({ code: 'stale' })
-    expect((await registry.list('session-a'))[0]?.status).toBe('pending')
+    expect((await registry.list('session-a'))[0]?.status).toBe('failed')
 
     await expect(registry.create('session-a', kbId, 'other.md', '不能覆盖', '')).rejects.toMatchObject({ code: 'duplicate' })
     expect(new TextDecoder().decode(await fs.readBytes(path.join(baseDir, 'other.md')))).toBe('外部变更')

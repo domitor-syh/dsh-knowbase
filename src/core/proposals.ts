@@ -9,6 +9,7 @@ export const MAX_PROPOSAL_BYTES = 64 * 1024
 export const PROPOSAL_TTL_MS = 30 * 60 * 1000
 export const MAX_PROPOSAL_REASON = 500
 export const MAX_PROPOSAL_PREVIEW = 4000
+export const MAX_PROPOSALS_PER_SESSION = 100
 
 export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'failed'
 
@@ -142,6 +143,7 @@ export class ProposalRegistry {
     return [...this.#proposals.values()]
       .filter(proposal => proposal.sessionId === sessionId)
       .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(0, MAX_PROPOSALS_PER_SESSION)
       .map(viewOf)
   }
 
@@ -165,7 +167,10 @@ export class ProposalRegistry {
     const service = this.#requireService()
     const base = this.#requireInScope(sessionId, proposal.kbId, service)
     if (base.indexRevision !== proposal.baseRevision) {
-      throw new ProposalError('stale', '知识库在提案后发生变化，请重新生成提案。')
+      const failure = '知识库在提案后发生变化，请重新生成提案。'
+      const failed: StoredProposal = { ...proposal, status: 'failed', failure }
+      await this.#save(failed)
+      throw new ProposalError('stale', failure)
     }
 
     try {
