@@ -36,6 +36,7 @@ import { installCitationLocale } from './citation-locale.ts'
 import { ComposerKnowbaseToggle } from './composer-toggle.tsx'
 import { TYPERT_REMOTE } from './contribution.ts'
 import { KnowbasePanel, KnowbasePanelIcon, PANEL_ID } from './panel.tsx'
+import { ProposalInbox } from './proposal-inbox.tsx'
 import { installPageStyle } from './page-style.ts'
 import { installReader } from './reader.ts'
 import { installTheme } from './theme.ts'
@@ -149,7 +150,18 @@ export function apply(ctx: Context): void {
     ),
   )
 
-  // The per-answer source panel trigger — the same action strip the feedback
+  ctx.slots.inject('conversation.input.left', () =>
+    ctx.slots.register(
+      {
+        name: 'conversation.input.left',
+        id: 'knowbase-proposals',
+        order: 45,
+        inject: (sessionId: string) => ({ sessionId }),
+      },
+      ProposalInbox,
+    ),
+  )
+
   // buttons use. The markdown pipeline cannot turn `[1]` markers into links,
   // so the panel opens from here instead: the component scans the chat
   // snapshot for this plugin's evidence node and renders a button only when

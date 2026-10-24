@@ -50,7 +50,7 @@ describe('knowledge tools with the real Host tool registry', () => {
     const f = await fixture()
     try {
       expect(f.tools.schemas().map(schema => schema.name)).toEqual(expect.arrayContaining(['kb_list', 'kb_search', 'kb_read']))
-      expect(f.tools.schemas()).toHaveLength(3)
+      expect(f.tools.schemas()).toHaveLength(4)
       for (const name of ['kb_list', 'kb_search', 'kb_read']) {
         const def = f.tools.get(name)!
         expect(def).toBeDefined()
@@ -135,7 +135,7 @@ describe('knowledge tools with the real Host tool registry', () => {
       expect(f.tools.schemas()).toEqual([])
       expect(f.tools.get('kb_list')).toBeUndefined()
       installKnowledgeTools(f.root, f.deps)
-      expect(f.tools.schemas()).toHaveLength(3)
+      expect(f.tools.schemas()).toHaveLength(4)
       await f.root.fiber.dispose()
       expect(f.tools.get('kb_list')).toBeUndefined()
       expect(f.tools.schemas()).toEqual([])

@@ -25,6 +25,7 @@ import type {
   SessionScopeView,
   ShellInfoView,
   UploadResultView,
+  ProposalView,
 } from '../remote.ts'
 
 /** A Remote call that failed on the Host. */
@@ -89,6 +90,9 @@ export interface KnowbaseApi {
     all: boolean,
     kbIds: readonly string[],
   ): Promise<SessionScopeView>
+  listProposals(sessionId: string): Promise<readonly ProposalView[]>
+  approveProposal(sessionId: string, proposalId: string): Promise<ProposalView>
+  rejectProposal(sessionId: string, proposalId: string): Promise<ProposalView>
 }
 
 /** Unwrap a Remote result, turning a Host-side failure into a rejection. */
@@ -137,6 +141,9 @@ interface KnowbaseWire {
     all: boolean,
     kbIds: readonly string[],
   ) => Promise<RemoteResult<SessionScopeView>>
+    listProposals: (sessionId: string) => Promise<RemoteResult<readonly ProposalView[]>>
+    approveProposal: (sessionId: string, proposalId: string) => Promise<RemoteResult<ProposalView>>
+    rejectProposal: (sessionId: string, proposalId: string) => Promise<RemoteResult<ProposalView>>
 }
 
 /**
@@ -229,5 +236,8 @@ export function createKnowbaseApi(ctx: Context): KnowbaseApi {
     getSessionScope: agentId => unwrap(wire.getSessionScope(agentId)),
     setSessionScope: (agentId, enabled, all, kbIds) =>
       unwrap(wire.setSessionScope(agentId, enabled, all, kbIds)),
+    listProposals: sessionId => unwrap(wire.listProposals(sessionId)),
+    approveProposal: (sessionId, proposalId) => unwrap(wire.approveProposal(sessionId, proposalId)),
+    rejectProposal: (sessionId, proposalId) => unwrap(wire.rejectProposal(sessionId, proposalId)),
   }
 }

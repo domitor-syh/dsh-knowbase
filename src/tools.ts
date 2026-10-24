@@ -2,6 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import {
   knowledgeDescriptions,
+  runKnowledgeProposal,
   runKnowledgeTool,
   type KnowledgeToolDeps,
   type KnowledgeToolName,
@@ -20,6 +21,14 @@ const schemas = {
   kb_read: {
     type: 'object', properties: { kbId, materialId: { type: 'string', description: 'Material id from kb_list or kb_search; not an arbitrary file path.' }, offset, limit: { type: 'integer', description: 'Maximum UTF-16 code units; default 4000, range 1–8000.' } }, required: ['kbId', 'materialId'], additionalProperties: false,
   },
+  kb_propose_text: {
+    type: 'object', properties: {
+      kbId: { type: 'string', description: 'Knowledge-base id from kb_list; must be allowed by the current conversation scope.' },
+      fileName: { type: 'string', description: 'One safe filename with a known UTF-8 text extension; no path.' },
+      content: { type: 'string', description: 'UTF-8 text for a new file; maximum 64 KiB.' },
+      reason: { type: 'string', description: 'Short reason shown to the user; maximum 500 characters.' },
+    }, required: ['kbId', 'fileName', 'content'], additionalProperties: false,
+  },
 } as const
 
 export function installKnowledgeTools(ctx: Context, deps: KnowledgeToolDeps): void {
@@ -34,8 +43,10 @@ export function installKnowledgeTools(ctx: Context, deps: KnowledgeToolDeps): vo
       },
       async execute(args, exec) {
         exec.signal.throwIfAborted()
-        // Snapshot metadata can omit optional fields; canonical tool values cannot.
-        return JSON.parse(JSON.stringify(runKnowledgeTool(name, args, exec.agent?.id, deps)))
+        const value = name === 'kb_propose_text'
+          ? await runKnowledgeProposal(args, exec.agent?.id, deps)
+          : runKnowledgeTool(name, args, exec.agent?.id, deps)
+        return JSON.parse(JSON.stringify(value))
       },
       isConcurrencySafe: () => true,
     } satisfies ToolDefinition)

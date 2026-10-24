@@ -31,6 +31,7 @@ import type { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
 import type { SessionScopeStore } from './core/session-scope.ts'
+import type { ProposalStore, StoredProposal } from './core/proposals.ts'
 import type { KnowbaseStore } from './core/service.ts'
 
 /**
@@ -107,6 +108,37 @@ const sessionScopeSchema = z.object({
   updatedAt: z.number(),
 })
 
+const proposalSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  kbId: z.string(),
+  kbName: z.string(),
+  fileName: z.string(),
+  content: z.string(),
+  contentBytes: z.number().int().nonnegative(),
+  contentHash: z.string(),
+  reason: z.string(),
+  baseRevision: z.number().int().nonnegative(),
+  createdAt: z.number(),
+  expiresAt: z.number(),
+  status: z.enum(['pending', 'approved', 'rejected', 'expired', 'failed']),
+  appliedAt: z.number().optional(),
+  materialId: z.string().optional(),
+  failure: z.string().optional(),
+})
+
+/**
+ * Pending write proposals have their own version axis: old installations can
+ * keep reading the knowledge and session domains while this feature evolves.
+ */
+export const PROPOSAL_DOMAIN = defineDomain({
+  name: 'dsh_knowbase_proposals',
+  version: 1,
+  tables: {
+    proposals: domainTable(proposalSchema),
+  },
+})
+
 /**
  * Session selections live in their own domain, not a third table above.
  *
@@ -164,6 +196,23 @@ export async function openStorageDomainStore(facility: DomainFacility): Promise<
     deleteLegacyMaterial: id => legacyMaterials.delete(id),
   }
 
+  return { store, close: () => domain.close() }
+}
+
+export interface OpenedProposalStore {
+  readonly store: ProposalStore
+  /** Release the proposal domain. */
+  close(): Promise<void>
+}
+
+/** Open the independent proposal domain. */
+export async function openProposalStore(facility: DomainFacility): Promise<OpenedProposalStore> {
+  const domain = await facility.open(PROPOSAL_DOMAIN)
+  const proposals = domain.table('proposals')
+  const store: ProposalStore = {
+    loadAll: () => [...proposals.entries()].map(([, record]) => record),
+    save: proposal => proposals.put(proposal.id, { ...proposal }),
+  }
   return { store, close: () => domain.close() }
 }
 

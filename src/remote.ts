@@ -30,6 +30,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { OcrResourceManager, OcrResourceStatus } from './core/ocr-resources.ts'
+import type { ProposalRegistry, ProposalView as CoreProposalView } from './core/proposals.ts'
 import type { SessionSelectionRegistry } from './core/session-scope.ts'
 import type { KnowbaseService, ScanReport } from './core/service.ts'
 import { revealFolder, shellInfo } from './core/shell.ts'
@@ -138,6 +139,8 @@ export interface SessionScopeView {
   readonly kbIds: readonly string[]
 }
 
+export type ProposalView = CoreProposalView
+
 /** A file the browser is pushing into a base. */
 export interface UploadedFileView {
   readonly name: string
@@ -212,6 +215,7 @@ interface Dependencies {
   readonly selection: SessionSelectionRegistry
   /** The language-pack download, held between calls — see `./core/ocr-resources.ts`. */
   readonly ocr: OcrResourceManager
+  readonly proposals: ProposalRegistry
 }
 
 /** See the module note: instance state is not reachable from a Remote call. */
@@ -288,9 +292,10 @@ export class KnowbaseRemote extends TypertRemoteService {
     service: KnowbaseService,
     selection: SessionSelectionRegistry,
     ocr: OcrResourceManager,
+    proposals: ProposalRegistry,
   ) {
     super(ctx, SERVICE_KEY)
-    DEPENDENCIES.set(SERVICE_KEY, { service, selection, ocr })
+    DEPENDENCIES.set(SERVICE_KEY, { service, selection, ocr, proposals })
   }
 
   /** Every knowledge base, ordered by name. */
@@ -554,6 +559,22 @@ export class KnowbaseRemote extends TypertRemoteService {
     // Remote call arrives through, and nothing here should depend on it.
     return readScope(agentId)
   }
+
+
+  async listProposals(sessionId: string): Promise<readonly ProposalView[]> {
+    return deps().proposals.list(sessionId)
+  }
+
+  /** Apply one proposal after an explicit user action in the Client. */
+  async approveProposal(sessionId: string, proposalId: string): Promise<ProposalView> {
+    return deps().proposals.approve(sessionId, proposalId)
+  }
+
+  /** Reject one proposal without touching the knowledge base. */
+  async rejectProposal(sessionId: string, proposalId: string): Promise<ProposalView> {
+    return deps().proposals.reject(sessionId, proposalId)
+  }
+
 }
 
 /** Decode base64 to bytes, or `undefined` when the string is not base64. */

@@ -105,6 +105,14 @@ const sessionScopeSchema = z.object({
   kbIds: z.array(z.string()),
 })
 
+const proposalSchema = z.object({
+  id: z.string(), sessionId: z.string(), kbId: z.string(), kbName: z.string(), fileName: z.string(),
+  content: z.string(), contentBytes: z.number(), contentHash: z.string(), contentPreview: z.string(),
+  reason: z.string(), baseRevision: z.number(), createdAt: z.number(), expiresAt: z.number(),
+  status: z.enum(['pending', 'approved', 'rejected', 'expired', 'failed']),
+  appliedAt: z.number().optional(), materialId: z.string().optional(), failure: z.string().optional(),
+})
+
 // A file pushed from the browser. Bytes travel base64-encoded because the
 // channel carries lossless JSON only (see `../remote.ts` and `HANDOFF.md` §15).
 const uploadedFileSchema = z.object({
@@ -283,6 +291,18 @@ const SPECS: Record<RemoteMethodName, MethodSpec> = {
     ],
     result: sessionScopeSchema,
   },
+  listProposals: {
+    parameters: [{ name: 'sessionId', schema: string }],
+    result: z.array(proposalSchema),
+  },
+  approveProposal: {
+    parameters: [{ name: 'sessionId', schema: string }, { name: 'proposalId', schema: string }],
+    result: proposalSchema,
+  },
+  rejectProposal: {
+    parameters: [{ name: 'sessionId', schema: string }, { name: 'proposalId', schema: string }],
+    result: proposalSchema,
+  },
 }
 
 /** Build a unary (non-stream) invocation descriptor. */
@@ -351,6 +371,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       all: boolean,
       kbIds: readonly string[],
     ) => Promise<unknown>
+  }
+
+  interface TypertRemoteNamespace$6b6e6f7762617365 {
+    listProposals: (sessionId: string) => Promise<unknown>
+    approveProposal: (sessionId: string, proposalId: string) => Promise<unknown>
+    rejectProposal: (sessionId: string, proposalId: string) => Promise<unknown>
   }
 
   interface TypertRemoteNamespaceMap {

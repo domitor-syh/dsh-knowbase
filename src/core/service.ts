@@ -41,6 +41,7 @@ import {
   type StoredKnowledgeBase,
 } from './model.ts'
 import { compareText } from './order.ts'
+import { isSafeTextProposalName } from './proposal-name.ts'
 import { TextReadError } from './text.ts'
 import {
   isRecycleName,
@@ -64,7 +65,7 @@ export interface KnowbaseStore {
 }
 
 /** Failure codes a caller can act on, rather than parsing messages. */
-export type KnowbaseErrorCode = 'duplicate-name' | 'invalid-name' | 'not-found' | 'io'
+export type KnowbaseErrorCode = 'duplicate-name' | 'invalid-name' | 'not-found' | 'stale-revision' | 'io'
 
 /** A domain failure with a machine-readable code. */
 export class KnowbaseError extends Error {
@@ -528,6 +529,49 @@ export class KnowbaseService {
       const materials = await this.#scanBase(base, {}, new Set(created))
       const wanted = new Set(created)
       return materials.filter(material => wanted.has(material.fileName))
+    })
+  }
+
+  /**
+   * Add one generated UTF-8 text file with an optimistic revision check.
+   *
+   * The caller has already obtained user approval. A new file is written only
+   * after the base and revision are checked; if the scan cannot commit, the
+   * file is removed so the visible disk state returns to the pre-approval state.
+   */
+  async addTextAtomically(
+    kbId: string,
+    fileName: string,
+    text: string,
+    expectedRevision: number,
+  ): Promise<Material> {
+    return this.#mutate(async () => {
+      const base = this.#requireKnowledgeBase(kbId)
+      if (base.indexRevision !== expectedRevision) {
+        throw new KnowbaseError('stale-revision', '知识库在提案后发生变化，请重新生成提案。')
+      }
+      if (!isSafeTextProposalName(fileName)) {
+        throw new KnowbaseError('invalid-name', '文件名必须是安全的单层文本文件名。')
+      }
+
+      const target = path.join(this.#baseDir(base), fileName)
+      if (await this.#fs.stat(target) !== undefined) {
+        throw new KnowbaseError('duplicate-name', '目标文件已存在，提案未覆盖原资料。')
+      }
+      await this.#fs.writeFile(target, text)
+      try {
+        const materials = await this.#scanBase(base, {}, new Set([fileName]))
+        const material = materials.find(candidate => candidate.fileName === fileName)
+        if (material === undefined) throw new KnowbaseError('io', '新文件未出现在提交后的扫描结果中。')
+        return material
+      } catch (error) {
+        try {
+          await this.#fs.remove(target)
+        } catch {
+          throw new KnowbaseError('io', '写入失败且自动回滚失败，请先停止继续写入并检查回收站。')
+        }
+        throw error
+      }
     })
   }
 

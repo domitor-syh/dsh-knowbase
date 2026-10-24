@@ -147,7 +147,7 @@ describe('read-only Agent knowledge tools', () => {
     const { deps, service } = await fixture()
     const definitions: Def[] = []
     installKnowledgeTools({ tools: { register: (def: Def) => { definitions.push(def); return () => {} } } } as unknown as Context, deps)
-    expect(definitions.map(def => def.name)).toEqual(['kb_list', 'kb_search', 'kb_read'])
+    expect(definitions.map(def => def.name)).toEqual(['kb_list', 'kb_search', 'kb_read', 'kb_propose_text'])
     const mutations = [vi.spyOn(service, 'rescan'), vi.spyOn(service, 'addFiles'), vi.spyOn(service, 'deleteMaterial')]
     const execution = { agent: { id: 'a' }, signal: new AbortController().signal } as Parameters<Def['execute']>[1]
     for (const definition of definitions) {

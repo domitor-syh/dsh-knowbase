@@ -30,11 +30,12 @@ import { createOcrEngine } from './core/ocr.ts'
 import { OcrResourceManager, ocrCacheDir } from './core/ocr-resources.ts'
 import { resolveScope, SessionSelectionRegistry } from './core/session-scope.ts'
 import { KnowbaseService } from './core/service.ts'
+import { ProposalRegistry } from './core/proposals.ts'
 import { resolveVaultRoot } from './core/vault.ts'
 import { installPreStep, queryFrom } from './pre-step.ts'
 import { installLibraryPrompt } from './prompt-map.ts'
 import { KnowbaseRemote } from './remote.ts'
-import { openSessionScopeStore, openStorageDomainStore, type OpenedSessionStore } from './store.ts'
+import { openProposalStore, openSessionScopeStore, openStorageDomainStore, type OpenedProposalStore, type OpenedSessionStore } from './store.ts'
 import { createNodeVaultFs } from './vault-fs.ts'
 import { installKnowledgeTools } from './tools.ts'
 
@@ -48,6 +49,7 @@ export function apply(ctx: Context): void {
 
   const selection = new SessionSelectionRegistry()
   let service: KnowbaseService | undefined
+  const proposals = new ProposalRegistry({ service: () => service, selection })
   let disposed = false
 
   // The retrieval seam. It exists from the first moment and answers `not_ready`
@@ -84,7 +86,7 @@ export function apply(ctx: Context): void {
   })
 
   ctx.inject(['tools'], toolScope => {
-    installKnowledgeTools(toolScope, { service: () => service, selection })
+    installKnowledgeTools(toolScope, { service: () => service, selection, proposals })
   })
 
   installLibraryPrompt(ctx, () => service)
@@ -105,11 +107,19 @@ export function apply(ctx: Context): void {
           throw error
         }
 
+        let openedProposals: OpenedProposalStore | undefined
+        try {
+          openedProposals = await openProposalStore(storageScope.storageDomain)
+        } catch (error) {
+          console.error('[knowbase] proposal storage unavailable; proposals stay memory-only:', error)
+        }
+
         if (disposed) {
           // The plugin was disabled while storage was still opening; release
           // both units rather than leaking what nobody will close.
           await opened.close()
           await openedScopes.close()
+          await openedProposals?.close()
           return
         }
 
@@ -133,6 +143,7 @@ export function apply(ctx: Context): void {
         const summary = await ready.initialize()
         service = ready
         await selection.useStore(openedScopes.store)
+        if (openedProposals !== undefined) await proposals.useStore(openedProposals.store)
 
         // Publishing the Remote service is what makes the settings page able to
         // reach the Host at all. It is created only once storage is open, so a
@@ -143,11 +154,13 @@ export function apply(ctx: Context): void {
           ready,
           selection,
           new OcrResourceManager({ fs: vault, root: vaultRoot }),
+          proposals,
         )
 
         ctx.effect(() => () => {
           void opened.close()
           void openedScopes.close()
+          void openedProposals?.close()
         })
 
         const bases = ready.listKnowledgeBases()
