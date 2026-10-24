@@ -40,47 +40,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - name: 校验 Markdown 编码与相对链接
-        shell: bash
         run: |
-          set -uo pipefail
-          status=0
-
-          mapfile -d '' files < <(find . -name '*.md' -not -path './.git/*' -print0)
-
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "未找到 Markdown 文件，跳过。" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          for f in "${files[@]}"; do
-            # 1) 必须是合法 UTF-8，防止 Windows 下的编码损坏混入仓库
-            if ! iconv -f UTF-8 -t UTF-8 "$f" > /dev/null 2>&1; then
-              echo "::error file=$f::文件不是合法的 UTF-8 编码"
-              status=1
-            fi
-
-            # 2) 站内相对链接必须指向真实存在的路径
-            dir=$(dirname "$f")
-            while IFS= read -r link; do
-              [ -z "$link" ] && continue
-              case "$link" in
-                http://*|https://*|mailto:*|tel:*|'#'*) continue ;;
-              esac
-              target="${link%%#*}"
-              target="${target%%\?*}"
-              [ -z "$target" ] && continue
-              if [ ! -e "$dir/$target" ]; then
-                echo "::error file=$f::相对链接指向不存在的路径：$link"
-                status=1
-              fi
-            done < <(grep -oE '\]\([^)]+\)' "$f" | sed -E 's/^\]\(//; s/\)$//' || true)
-          done
-
-          if [ "$status" -eq 0 ]; then
-            echo "已检查 ${#files[@]} 个 Markdown 文件，编码与相对链接均正常。" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          exit "$status"
+          node --test scripts/check-docs.cases.mjs
+          node scripts/check-docs.mjs
 
   verify:
     name: 构建与测试

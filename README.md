@@ -229,6 +229,8 @@ dsh plugin --profile <profile> add /绝对路径/domitor-syh-dsh-knowbase-0.1.0.
 
 ```bash
 pnpm install
+pnpm test:docs                  # 文档检查器回归
+pnpm docs:check                 # 与 CI 同一脚本：跟踪 Markdown 的 UTF-8 与版本库文件链接
 pnpm typecheck                 # 门禁第一条：它拦得住 CSS 模板串里的语法事故
 pnpm test                      # 单元测试（数量以当前输出为准）
 pnpm test:ci-locale            # 同上，但把 locale 换成非中文，验证排序与机器无关
