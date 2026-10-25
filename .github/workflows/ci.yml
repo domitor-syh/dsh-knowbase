@@ -85,6 +85,11 @@ jobs:
       - name: 单元测试
         run: pnpm run --if-present test
 
+      - name: 合成规模基准脚本检查
+        run: |
+          pnpm run typecheck:benchmarks
+          pnpm run test:benchmarks
+
       - name: 构建
         run: pnpm run --if-present build
 

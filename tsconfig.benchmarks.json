@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "scripts/scale-corpus.ts",
+    "scripts/benchmark-scale.ts",
+    "scripts/benchmark-service-scale.ts",
+    "scripts/probe-fts5.ts"
+  ]
+}

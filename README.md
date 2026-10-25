@@ -231,12 +231,16 @@ dsh plugin --profile <profile> add /绝对路径/domitor-syh-dsh-knowbase-0.1.0.
 pnpm install
 pnpm test:docs                  # 文档检查器回归
 pnpm docs:check                 # 与 CI 同一脚本：跟踪 Markdown 的 UTF-8 与版本库文件链接
+pnpm typecheck:benchmarks       # 独立合成规模与 SQLite 探针脚本类型检查
+pnpm test:benchmarks            # 百级合成语料 + FTS5 兼容断言，不设性能阈值
 pnpm typecheck                 # 门禁第一条：它拦得住 CSS 模板串里的语法事故
 pnpm test                      # 单元测试（数量以当前输出为准）
 pnpm test:ci-locale            # 同上，但把 locale 换成非中文，验证排序与机器无关
 pnpm build                     # tsdown 四 target + 拷贝 3 个 wasm 与第三方许可
 pnpm verify                    # 产物契约：以宿主方式加载两个产物并检查 require 白名单
 ```
+
+O-13 的 [合成规模与 FTS5 评估](<outputs/O-13-合成规模与FTS5评估.md>) 附可复现命令及逐次样本；完整规模测量按需运行，CI 只跑小规模正确性冒烟。当前生产检索保持内存 BM25。
 
 **沙箱 / CI 之外的本地跑测试**建议直接调入口并关掉文件级并行，否则偶发因临时目录 `EPERM` 少收集测试文件：
 

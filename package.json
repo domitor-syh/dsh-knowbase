@@ -42,6 +42,11 @@
     "docs:check": "node scripts/check-docs.mjs",
     "test:docs": "node --test scripts/check-docs.cases.mjs",
     "benchmark:retrieval": "node --experimental-strip-types scripts/benchmark-retrieval.ts",
+    "benchmark:scale": "node --experimental-strip-types scripts/benchmark-scale.ts",
+    "benchmark:service-scale": "node --experimental-strip-types scripts/benchmark-service-scale.ts",
+    "probe:fts5": "node --experimental-strip-types scripts/probe-fts5.ts",
+    "typecheck:benchmarks": "tsc --noEmit -p tsconfig.benchmarks.json",
+    "test:benchmarks": "node scripts/verify-scale.mjs",
     "verify": "node scripts/verify-bundles.mjs"
   },
   "license": "MIT",
