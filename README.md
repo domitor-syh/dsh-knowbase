@@ -240,7 +240,7 @@ pnpm build                     # tsdown 四 target + 拷贝 3 个 wasm 与第三
 pnpm verify                    # 产物契约：以宿主方式加载两个产物并检查 require 白名单
 ```
 
-O-13 的 [合成规模与 FTS5 评估](<outputs/O-13-合成规模与FTS5评估.md>) 附可复现命令及逐次样本；完整规模测量按需运行，CI 只跑小规模正确性冒烟。当前生产检索保持内存 BM25。
+O-13 的 [合成规模与 FTS5 评估](<outputs/O-13-合成规模与FTS5评估.md>) 及后续 [Map 范围统计与候选遍历优化](<outputs/O-13-范围统计与候选遍历优化.md>) 附可复现命令及逐次样本；`pnpm benchmark:compare --output=outputs/自选新文件.json` 对照冻结旧版与当前实现。完整规模测量按需运行，CI 只跑小规模正确性冒烟。当前生产检索保持内存 BM25。
 
 **沙箱 / CI 之外的本地跑测试**建议直接调入口并关掉文件级并行，否则偶发因临时目录 `EPERM` 少收集测试文件：
 

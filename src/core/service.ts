@@ -638,10 +638,7 @@ export class KnowbaseService {
     const hits = this.#index.search(query, {
       limit: options.limit ?? 6,
       minCoverage: options.minCoverage ?? 0,
-      accept: chunkId => {
-        const context = this.#chunks.get(chunkId)
-        return context !== undefined && allowed.has(context.kbId)
-      },
+      groups: scope,
       distinctKey: chunkId => {
         const context = this.#chunks.get(chunkId)!
         // Keep independent sources and differing text; only equivalent text in
@@ -1101,8 +1098,8 @@ export class KnowbaseService {
 
   /** Whether any indexed chunk belongs to one of the allowed knowledge bases. */
   #hasIndexedChunks(allowed: ReadonlySet<string>): boolean {
-    for (const context of this.#chunks.values()) {
-      if (allowed.has(context.kbId)) return true
+    for (const kbId of allowed) {
+      if (this.#index.groupSize(kbId) > 0) return true
     }
     return false
   }
@@ -1127,7 +1124,7 @@ export class KnowbaseService {
       // The knowledge base name is deliberately NOT indexed: it labels a
       // container, so including it would make every chunk match a query for the
       // base's own name.
-      this.#index.add(chunk.id, `${material.title}\n${chunk.text}`)
+      this.#index.add(chunk.id, `${material.title}\n${chunk.text}`, material.kbId)
       this.#chunks.set(chunk.id, {
         kbId: material.kbId,
         materialId: material.id,

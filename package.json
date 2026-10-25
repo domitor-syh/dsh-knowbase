@@ -43,6 +43,7 @@
     "test:docs": "node --test scripts/check-docs.cases.mjs",
     "benchmark:retrieval": "node --experimental-strip-types scripts/benchmark-retrieval.ts",
     "benchmark:scale": "node --experimental-strip-types scripts/benchmark-scale.ts",
+    "benchmark:compare": "node --experimental-strip-types scripts/benchmark-bm25-comparison.ts",
     "benchmark:service-scale": "node --experimental-strip-types scripts/benchmark-service-scale.ts",
     "probe:fts5": "node --experimental-strip-types scripts/probe-fts5.ts",
     "typecheck:benchmarks": "tsc --noEmit -p tsconfig.benchmarks.json",

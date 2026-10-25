@@ -53,6 +53,8 @@ export interface SearchOptions {
    * rule — filter during recall, then re-validate before returning.
    */
   readonly accept?: (id: string) => boolean
+  /** Restrict recall and BM25 statistics to these add-time groups; intersected with accept. */
+  readonly groups?: readonly string[]
   /** Collapse equivalent evidence BEFORE applying limit; best-ranked source wins. */
   readonly distinctKey?: (id: string) => string
 }
@@ -70,6 +72,15 @@ interface IndexedDocument {
   readonly frequencies: ReadonlyMap<string, number>
   readonly hanFrequencies: ReadonlyMap<string, number>
   readonly identifiers: readonly string[]
+  readonly groupId: string | undefined
+}
+
+interface DocumentGroup {
+  readonly documents: Map<string, IndexedDocument>
+  readonly documentFrequencies: Map<string, number>
+  readonly hanDocumentFrequencies: Map<string, number>
+  totalLength: number
+  ordinaryDocumentCount: number
 }
 
 /** Same normalization as tokenize; Han must terminate a Latin/digit run. */
@@ -87,6 +98,7 @@ export class Bm25Index {
   readonly #documents = new Map<string, IndexedDocument>()
   readonly #postings = new Map<string, Map<string, number>>()
   readonly #hanPostings = new Map<string, Map<string, number>>()
+  readonly #groups = new Map<string | undefined, DocumentGroup>()
   #totalLength = 0
   #ordinaryDocumentCount = 0
 
@@ -111,13 +123,18 @@ export class Bm25Index {
     return this.#documents.has(id)
   }
 
+  /** Indexed documents in one named group, including Han-only/empty documents. */
+  groupSize(groupId: string): number {
+    return this.#groups.get(groupId)?.documents.size ?? 0
+  }
+
   /**
    * Add or replace a document.
    *
    * Replacing is the same call as adding, so an edited material does not need a
    * separate code path — and cannot leave stale postings behind.
    */
-  add(id: string, text: string): void {
+  add(id: string, text: string, groupId?: string): void {
     if (this.#documents.has(id)) this.remove(id)
 
     const tokens = tokenize(text, this.#tokenizeOptions)
@@ -129,9 +146,18 @@ export class Bm25Index {
     const hanFrequencies = termFrequencies(Array.from(text.normalize('NFKC').toLowerCase()).filter(character => isHan(character)))
     const identifiers = identifierRuns(text)
     const length = [...frequencies.values()].reduce((sum, frequency) => sum + frequency, 0)
-    this.#documents.set(id, { length, frequencies, hanFrequencies, identifiers })
+    const document = { length, frequencies, hanFrequencies, identifiers, groupId }
+    this.#documents.set(id, document)
     this.#totalLength += length
     if (frequencies.size > 0) this.#ordinaryDocumentCount += 1
+    let group = this.#groups.get(groupId)
+    if (group === undefined) {
+      group = { documents: new Map(), documentFrequencies: new Map(), hanDocumentFrequencies: new Map(), totalLength: 0, ordinaryDocumentCount: 0 }
+      this.#groups.set(groupId, group)
+    }
+    group.documents.set(id, document)
+    group.totalLength += length
+    if (frequencies.size > 0) group.ordinaryDocumentCount += 1
 
     for (const [term, frequency] of frequencies) {
       let posting = this.#postings.get(term)
@@ -140,6 +166,7 @@ export class Bm25Index {
         this.#postings.set(term, posting)
       }
       posting.set(id, frequency)
+      group.documentFrequencies.set(term, (group.documentFrequencies.get(term) ?? 0) + 1)
     }
 
     for (const [term, frequency] of hanFrequencies) {
@@ -149,6 +176,7 @@ export class Bm25Index {
         this.#hanPostings.set(term, posting)
       }
       posting.set(id, frequency)
+      group.hanDocumentFrequencies.set(term, (group.hanDocumentFrequencies.get(term) ?? 0) + 1)
     }
   }
 
@@ -160,8 +188,16 @@ export class Bm25Index {
     this.#documents.delete(id)
     this.#totalLength -= document.length
     if (document.frequencies.size > 0) this.#ordinaryDocumentCount -= 1
+    const group = this.#groups.get(document.groupId)!
+    group.documents.delete(id)
+    group.totalLength -= document.length
+    if (document.frequencies.size > 0) group.ordinaryDocumentCount -= 1
+    if (group.documents.size === 0) this.#groups.delete(document.groupId)
 
     for (const term of document.frequencies.keys()) {
+      const remaining = group.documentFrequencies.get(term)! - 1
+      if (remaining === 0) group.documentFrequencies.delete(term)
+      else group.documentFrequencies.set(term, remaining)
       const posting = this.#postings.get(term)
       if (posting === undefined) continue
       posting.delete(id)
@@ -171,6 +207,9 @@ export class Bm25Index {
       if (posting.size === 0) this.#postings.delete(term)
     }
     for (const term of document.hanFrequencies.keys()) {
+      const remaining = group.hanDocumentFrequencies.get(term)! - 1
+      if (remaining === 0) group.hanDocumentFrequencies.delete(term)
+      else group.hanDocumentFrequencies.set(term, remaining)
       const posting = this.#hanPostings.get(term)
       if (posting === undefined) continue
       posting.delete(id)
@@ -185,6 +224,7 @@ export class Bm25Index {
     this.#documents.clear()
     this.#postings.clear()
     this.#hanPostings.clear()
+    this.#groups.clear()
     this.#totalLength = 0
     this.#ordinaryDocumentCount = 0
   }
@@ -196,7 +236,7 @@ export class Bm25Index {
    * word is not a stronger request for that word.
    */
   search(query: string, options: SearchOptions = {}): SearchHit[] {
-    const { limit = 6, minScore = 0, minCoverage = 0, accept, distinctKey } = options
+    const { limit = 6, minScore = 0, minCoverage = 0, accept, groups, distinctKey } = options
     if (limit <= 0 || this.#documents.size === 0) return []
 
     const normalizedQuery = query.normalize('NFKC').toLowerCase().trim()
@@ -212,30 +252,100 @@ export class Bm25Index {
     const identifierQuery = queryCharacters.length >= 4 &&
       /^[\p{L}\p{N}]+$/u.test(normalizedQuery) && /\d/u.test(normalizedQuery) &&
       !queryCharacters.some(character => isHan(character))
-    const accepted = new Set<string>()
-    let total = 0
-    let totalLength = 0
-    for (const [id, document] of this.#documents) {
-      if (accept !== undefined && !accept(id)) continue
-      accepted.add(id)
-      if (document.frequencies.size > 0) {
-        total += 1
-        totalLength += document.length
+    // Group totals are maintained by add/remove; arbitrary accept stays uncached.
+    let selectedGroups: DocumentGroup[] | undefined
+    let groupIds: Set<string> | undefined
+    let scopeSize = this.#documents.size
+    let total = this.#ordinaryDocumentCount
+    let totalLength = this.#totalLength
+    if (groups !== undefined) {
+      groupIds = new Set(groups)
+      selectedGroups = []
+      scopeSize = 0
+      total = 0
+      totalLength = 0
+      for (const groupId of groupIds) {
+        const group = this.#groups.get(groupId)
+        if (group === undefined) continue
+        selectedGroups.push(group)
+        scopeSize += group.documents.size
+        total += group.ordinaryDocumentCount
+        totalLength += group.totalLength
       }
     }
+    let accepted: Set<string> | undefined
+    if (accept !== undefined) {
+      accepted = new Set()
+      total = 0
+      totalLength = 0
+      const ranges = selectedGroups === undefined || scopeSize === this.#documents.size
+        ? [this.#documents] : selectedGroups.map(group => group.documents)
+      for (const documents of ranges) for (const [id, document] of documents) {
+        if (!accept(id)) continue
+        accepted.add(id)
+        if (document.frequencies.size > 0) {
+          total += 1
+          totalLength += document.length
+        }
+      }
+      scopeSize = accepted.size
+    }
+    if (scopeSize === 0) return []
+    const unfiltered = scopeSize === this.#documents.size
     const average = totalLength / total || 1
     const accumulated = new Map<string, { score: number; matched: Set<string> }>()
+    // Shared identifier grams revisit candidates; memoize only within this query.
+    const identifierMatches = identifierQuery ? new Map<string, boolean>() : undefined
     for (const term of singleHanQuery ? [queryCharacters[0]!] : queryTerms) {
       const hanTerm = Array.from(term).length === 1 && isHan(term)
       const posting = (hanTerm ? this.#hanPostings : this.#postings).get(term)
       if (posting === undefined) continue
-      const documentFrequency = [...posting.keys()].filter(id => accepted.has(id)).length
-      const corpusSize = hanTerm ? accepted.size : total
+      let candidateIds: Iterable<string> = posting.keys()
+      let documentFrequency = posting.size
+      if (accepted !== undefined && !unfiltered) {
+        const intersection: string[] = []
+        if (posting.size <= scopeSize) {
+          for (const id of posting.keys()) if (accepted.has(id)) intersection.push(id)
+        } else {
+          for (const id of accepted) if (posting.has(id)) intersection.push(id)
+        }
+        candidateIds = intersection
+        documentFrequency = intersection.length
+      } else if (!unfiltered) {
+        documentFrequency = 0
+        for (const group of selectedGroups!) {
+          documentFrequency += (hanTerm ? group.hanDocumentFrequencies : group.documentFrequencies).get(term) ?? 0
+        }
+        if (documentFrequency === 0) continue
+        if (documentFrequency !== posting.size) {
+          const intersection: string[] = []
+          if (posting.size <= scopeSize) {
+            for (const id of posting.keys()) {
+              if (groupIds!.has(this.#documents.get(id)!.groupId!)) intersection.push(id)
+            }
+          } else {
+            for (const group of selectedGroups!) for (const id of group.documents.keys()) {
+              if (posting.has(id)) intersection.push(id)
+            }
+          }
+          candidateIds = intersection
+        }
+      }
+      // Scope DF precedes the identifier guard; Han-only documents count only
+      // toward the single-Han corpus size, matching the original denominator.
+      const corpusSize = hanTerm ? scopeSize : total
       const idf = Math.log(1 + (corpusSize - documentFrequency + 0.5) / (documentFrequency + 0.5))
-      for (const [id, frequency] of posting) {
-        if (!accepted.has(id)) continue
+      for (const id of candidateIds) {
+        const frequency = posting.get(id)!
         const document = this.#documents.get(id)!
-        if (identifierQuery && !document.identifiers.some(identifier => identifier.includes(normalizedQuery))) continue
+        if (identifierMatches !== undefined) {
+          let matches = identifierMatches.get(id)
+          if (matches === undefined) {
+            matches = document.identifiers.some(identifier => identifier.includes(normalizedQuery))
+            identifierMatches.set(id, matches)
+          }
+          if (!matches) continue
+        }
         const normalization = frequency + this.#k1 * (1 - this.#b + this.#b * (document.length / average))
         const contribution = (idf * (frequency * (this.#k1 + 1))) / normalization
         const entry = accumulated.get(id) ?? { score: 0, matched: new Set<string>() }

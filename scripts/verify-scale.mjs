@@ -25,6 +25,12 @@ try {
   assert.equal(service.coldCorpus.files, 100)
   assert.equal(service.scans.unchanged.textReads, 0)
   assert.equal(service.scans.changed.textReads, 1)
+  const comparisonOutput = join(temporary, 'comparison.json')
+  run('scripts/benchmark-bm25-comparison.ts', ['--sizes=100', '--runs=1', '--samples=2', '--warmup=1', `--output=${comparisonOutput}`])
+  const comparison = JSON.parse(readFileSync(comparisonOutput, 'utf8'))
+  assert.equal(comparison.results.length, 1)
+  assert.equal(comparison.results[0].baseline.queries.length, 24)
+  assert.equal(comparison.results[0].new.queries.length, 24)
   run('scripts/probe-fts5.ts', ['--check'])
   console.info('Synthetic benchmark smoke passed: scoped retrieval, incremental scans, citations and FTS5 compatibility; no timing thresholds.')
 } finally {
