@@ -30,6 +30,7 @@ describe('knowledge-base page UI contracts', () => {
     expect(html).not.toContain('role="listbox"')
     expect(html).toContain('placeholder="检索测试(不调用模型)，请输入一个问题"')
     expect(html).not.toContain('检索测试（不调用模型）</h2>')
+    expect(html).not.toContain('data-kb-statistics')
   })
 
   it('exposes all-base scope and count while respecting the busy state', () => {

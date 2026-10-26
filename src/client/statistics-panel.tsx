@@ -63,6 +63,11 @@ export function createStatisticsController(getApi: () => StatisticsApi | undefin
 }
 
 const secondary: React.CSSProperties = { color: 'var(--dsw-alias-label-secondary)', margin: '8px 0' }
+const control: React.CSSProperties = {
+  color: 'var(--dsw-alias-label-primary)', background: 'var(--dsw-alias-bg-layer-2)',
+  border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, padding: '5px 10px',
+  font: 'inherit',
+}
 
 /** Loaded view is separate so empty and degraded storage states stay inspectable. */
 export function StatisticsContent({ state, controller }: {
@@ -86,13 +91,13 @@ export function StatisticsContent({ state, controller }: {
           onChange={event => { void controller.setEnabled(event.target.checked) }} />
         {t('statsEnable')}
       </label>
-      <button type="button" className="kb-btn" disabled={state.busy} onClick={() => { void controller.refresh() }}>{t('statsRefresh')}</button>
-      <button type="button" className="kb-btn" disabled={disabled} onClick={controller.requestClear}>{t('statsClear')}</button>
+      <button type="button" style={control} disabled={state.busy} onClick={() => { void controller.refresh() }}>{t('statsRefresh')}</button>
+      <button type="button" style={control} disabled={disabled} onClick={controller.requestClear}>{t('statsClear')}</button>
     </div>
     {state.confirmClear ? <div role="group" aria-label={t('statsConfirmHelp')} style={{ marginTop: 12 }}>
       <p>{t('statsConfirmHelp')}</p>
-      <button type="button" className="kb-btn" disabled={disabled} onClick={() => { void controller.clear() }}>{t('statsConfirm')}</button>{' '}
-      <button type="button" className="kb-btn" disabled={state.busy} onClick={controller.cancelClear}>{t('statsCancel')}</button>
+      <button type="button" style={control} disabled={disabled} onClick={() => { void controller.clear() }}>{t('statsConfirm')}</button>{' '}
+      <button type="button" style={control} disabled={state.busy} onClick={controller.cancelClear}>{t('statsCancel')}</button>
     </div> : null}
     {state.busy ? <p role="status">{t('statsLoading')}</p> : null}
     {state.failed ? <p role="alert">{t('statsFailed')}</p> : null}
@@ -120,8 +125,8 @@ export function StatisticsContent({ state, controller }: {
       </div>}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 10 }}>
         <span style={secondary}>{t('statsTotal')}: {view.total}</span>
-        <button type="button" className="kb-btn" disabled={disabled || view.offset === 0} onClick={() => { void controller.refresh(Math.max(0, view.offset - 50)) }}>{t('statsPrevious')}</button>
-        <button type="button" className="kb-btn" disabled={disabled || view.nextOffset === null} onClick={() => { if (view.nextOffset !== null) void controller.refresh(view.nextOffset) }}>{t('statsNext')}</button>
+        <button type="button" style={control} disabled={disabled || view.offset === 0} onClick={() => { void controller.refresh(Math.max(0, view.offset - 50)) }}>{t('statsPrevious')}</button>
+        <button type="button" style={control} disabled={disabled || view.nextOffset === null} onClick={() => { if (view.nextOffset !== null) void controller.refresh(view.nextOffset) }}>{t('statsNext')}</button>
       </div>
       {view.runtimeDedupOnly ? <p style={secondary}>{t('statsDedup')}</p> : null}
     </>}

@@ -40,6 +40,7 @@ import { ProposalInbox } from './proposal-inbox.tsx'
 import { installPageStyle } from './page-style.ts'
 import { installReader } from './reader.ts'
 import { installTheme } from './theme.ts'
+import { installStatisticsSettings } from './statistics-settings.tsx'
 
 export const name = 'knowbase'
 
@@ -72,6 +73,7 @@ export function apply(ctx: Context): void {
   // component so the rules are in place before the first paint: a page that
   // renders unstyled for one frame and then jumps reads as a host bug.
   installPageStyle()
+  installStatisticsSettings(ctx)
 
   // The material reader: a tab type in the host's right column, so a citation
   // opens the source beside the answer instead of in a modal over it.

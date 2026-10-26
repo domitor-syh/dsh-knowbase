@@ -6,6 +6,7 @@ import type { StatisticsView } from '../src/core/statistics-types.ts'
 import { createKnowbaseApi, KnowbaseRemoteError } from '../src/client/api.ts'
 import { TYPERT_REMOTE } from '../src/client/contribution.ts'
 import { installCitationLocale } from '../src/client/citation-locale.ts'
+import { KnowbaseDiagnostics } from '../src/client/statistics-settings.tsx'
 import { createStatisticsController, StatisticsContent, StatisticsPanel, type StatisticsPanelState } from '../src/client/statistics-panel.tsx'
 
 const view = (patch: Partial<StatisticsView> = {}): StatisticsView => ({
@@ -35,6 +36,10 @@ describe('statistics panel requests', () => {
     const { api, controller } = fixture()
     const interval = vi.spyOn(globalThis, 'setInterval')
     expect(renderToStaticMarkup(<StatisticsPanel />)).toContain('<summary')
+    expect(renderToStaticMarkup(<KnowbaseDiagnostics view="summary" />)).toBe('')
+    const details = renderToStaticMarkup(<KnowbaseDiagnostics view="page" />)
+    expect(details).toContain('data-kb-statistics')
+    expect(details).not.toContain('open=""')
     expect(controller.snapshot()).toMatchObject({ open: false, busy: false })
     await controller.refresh()
     expect(api.getStatistics).not.toHaveBeenCalled()
