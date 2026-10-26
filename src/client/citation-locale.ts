@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { useSyncExternalStore } from 'react'
 
 const zh = {
+  searchResults: '检索结果', closeSearchResults: '关闭检索结果',
   statsTitle: '自动检索统计', statsEnable: '记录自动检索统计', statsRefresh: '刷新', statsClear: '清空统计',
   statsConfirm: '确认清空', statsCancel: '取消', statsConfirmHelp: '清空本地累计统计？此操作无法撤销，统计开关保持不变。',
   statsHelp: '仅统计会话中的自动知识检索；手动检索测试和知识库工具调用不计入。默认关闭，仅本地保存计数，不记录问题或正文。命中率不代表回答正确率。',
@@ -37,6 +38,7 @@ const zh = {
 } as const
 export type CitationText = (key: keyof typeof zh) => string
 const en: Record<keyof typeof zh, string> = {
+  searchResults: 'Search results', closeSearchResults: 'Close search results',
   statsTitle: 'Automatic retrieval statistics', statsEnable: 'Record automatic retrieval statistics', statsRefresh: 'Refresh', statsClear: 'Clear statistics',
   statsConfirm: 'Confirm clear', statsCancel: 'Cancel', statsConfirmHelp: 'Clear the local totals? This cannot be undone. Recording remains unchanged.',
   statsHelp: 'Counts automatic knowledge retrieval in conversations only. Manual search tests and knowledge tool calls are excluded. Off by default. Only local counts are stored, without questions or document text. Hit rate does not measure answer accuracy.',

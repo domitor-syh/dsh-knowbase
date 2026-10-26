@@ -116,8 +116,8 @@ describe('knowledge-base page UI contracts', () => {
   it('bounds standalone retrieval results and places utilities after the main lists', () => {
     const html = renderToStaticMarkup(createElement(KnowbasePage))
     expect(rule('.kb-retrieval-toolbar')).toContain('flex: none')
-    expect(rule('.kb-retrieval-toolbar .kb-report')).toContain('max-height: 280px')
-    expect(rule('.kb-retrieval-toolbar .kb-report')).toContain('overflow-y: auto')
+    expect(rule('.kb-search-results')).toContain('position: fixed')
+    expect(rule('.kb-search-results-body')).toContain('overflow-y: auto')
     expect(rule('.kb-columns')).toContain('min-height: 360px')
     expect(rule('.kb-search-row')).toContain('flex: none')
     expect(rule('.kb-search-row')).not.toContain('flex-wrap')
@@ -130,7 +130,9 @@ describe('knowledge-base page UI contracts', () => {
   it('uses host page spacing and typography without raised main cards', () => {
     expect(rule('.kb-page-content')).toContain('padding: 32px 48px')
     expect(rule('.kb-head-title')).toContain('font-family: inherit')
-    expect(rule('.kb-head-title')).toContain('font-weight: 400')
+    expect(rule('.kb-head-title')).toContain('font-weight: 500')
+    expect(rule('.kb-head-title')).toContain('font-size: 20px')
+    expect(rule('.kb-head-description')).toContain('font-size: 13px')
     expect(rule('.kb-card, .kb-placeholder')).toContain('font-family: inherit')
     expect(rule('.kb-card')).toContain('box-shadow: none')
     expect(rule('.kb-card')).toContain('background: transparent')

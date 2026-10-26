@@ -50,6 +50,7 @@ import { Icon } from './icons.tsx'
 import { OcrHint, OcrSection, useOcrController } from './ocr-panel.tsx'
 import { pageTokens } from './page-style.ts'
 import { ScopePicker } from './scope-picker.tsx'
+import { SearchResultsPopover } from './search-results-popover.tsx'
 import { ScanSummary } from './scan-summary.tsx'
 import { useSpin } from './spin.ts'
 import { useColorScheme } from './theme.ts'
@@ -483,6 +484,12 @@ export function KnowbasePage(): React.ReactElement {
   const [spinning, spin] = useSpin()
 
   const uploadInput = React.useRef<HTMLInputElement | null>(null)
+  const searchRow = React.useRef<HTMLDivElement>(null)
+  const queryInput = React.useRef<HTMLInputElement>(null)
+  const closeResults = React.useCallback((): void => {
+    setReport(undefined)
+    queryInput.current?.focus({ preventScroll: true })
+  }, [])
 
   // The OCR state lives at page level rather than inside the block, because the
   // same controls appear twice: once in the always-visible card and once, when
@@ -857,7 +864,7 @@ export function KnowbasePage(): React.ReactElement {
 
       <div className="kb-retrieval-toolbar">
         <section className="kb-card" data-kb-retrieval-test aria-label="检索测试">
-          <div className="kb-search-row">
+          <div className="kb-search-row" ref={searchRow}>
             <ScopePicker
               value={testAll ? 'all' : 'base'}
               baseCount={bases.length}
@@ -872,6 +879,7 @@ export function KnowbasePage(): React.ReactElement {
               type="text"
               className="kb-input"
               id="kb-test-input"
+              ref={queryInput}
               placeholder="检索测试(不调用模型)，请输入一个问题"
               aria-label="检索测试(不调用模型)，请输入一个问题"
               autoComplete="off"
@@ -881,6 +889,9 @@ export function KnowbasePage(): React.ReactElement {
                 if (event.key === 'Enter') {
                   event.preventDefault()
                   submitTest()
+                } else if (event.key === 'Escape' && report !== undefined) {
+                  event.preventDefault()
+                  closeResults()
                 }
               }}
             />
@@ -895,7 +906,9 @@ export function KnowbasePage(): React.ReactElement {
               检索
             </button>
           </div>
-          {report !== undefined && <Report report={report} scopeNote={testScopeNote} />}
+          {report !== undefined && <SearchResultsPopover anchor={searchRow} onClose={closeResults}>
+            <Report report={report} scopeNote={testScopeNote} />
+          </SearchResultsPopover>}
         </section>
       </div>
 

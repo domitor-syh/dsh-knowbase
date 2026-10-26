@@ -170,9 +170,11 @@ const CSS = `
 
 /* Match the host's flat management pages; controls keep their existing states. */
 .kb-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
-.kb-head-title { margin: 0; font-size: 24px; line-height: 32px; font-weight: 400; font-family: inherit; }
-.kb-head-description { margin: 6px 0 0; color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 1.6; }
-.kb-head .kb-head-add { width: auto; height: 36px; gap: 8px; padding: 0 14px; border-color: var(--brand-border); border-radius: var(--brand-radius); font: inherit; font-size: 13px; white-space: nowrap; }
+.kb-head-title { margin: 0; font-size: 20px; line-height: 28px; font-weight: 500; font-family: inherit; }
+.kb-head-description { margin: 4px 0 0; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px; }
+.kb-head .kb-head-add { width: auto; height: 36px; gap: 8px; padding: 0 14px; border-color: transparent; border-radius: 12px; background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-base); font: inherit; font-size: 13px; white-space: nowrap; }
+.kb-head .kb-head-add:hover:not(:disabled) { background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-base); opacity: 0.9; }
+.kb-head .kb-head-add:active:not(:disabled) { background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-base); opacity: 0.8; }
 .kb-modal, .kb-alert { font-family: var(--brand-font-sans); }
 .kb-card, .kb-placeholder { font-family: inherit; }
 
@@ -186,7 +188,12 @@ const CSS = `
 }
 .kb-retrieval-toolbar { flex: none; min-width: 0; }
 .kb-retrieval-toolbar [data-kb-retrieval-test] { min-width: 0; }
-.kb-retrieval-toolbar .kb-report { max-height: 280px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 16px; padding-top: 16px; }
+.kb-search-results, .kb-search-results * { box-sizing: border-box; }
+.kb-search-results { position: fixed; z-index: 80; display: flex; flex-direction: column; min-height: 0; overflow: hidden; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-overlay); border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--brand-radius-xl); box-shadow: var(--brand-shadow-popover); font-family: inherit; font-size: 13px; line-height: 1.5; }
+.kb-search-results-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex: none; padding: 12px 16px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.kb-search-results-head h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.kb-search-results-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
+.kb-search-results .kb-report { margin: 0; padding: 0; border: 0; }
 .kb-utilities { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 32px; align-items: start; flex: none; min-width: 0; padding-top: 24px; border-top: 1px solid var(--dsw-alias-border-l1); }
 .kb-utilities > :only-child { grid-column: 1 / -1; }
 .kb-utilities [data-kb-ocr-section] { font-size: 12px; }
@@ -404,7 +411,7 @@ const CSS = `
   transition: background-color 160ms ease;
 }
 .kb-lib-row:hover { background: var(--brand-muted); }
-.kb-lib-row.is-selected { background: var(--brand-sidebar-accent); }
+.kb-lib-row.is-selected { background: var(--dsw-alias-bg-layer-2); }
 .kb-lib-select {
   flex: 1;
   min-width: 0;
@@ -430,7 +437,7 @@ const CSS = `
   overflow-wrap: anywhere;
   transition: color 160ms ease;
 }
-.kb-lib-row.is-selected .kb-lib-name { font-weight: 700; color: var(--brand-accent-foreground); }
+.kb-lib-row.is-selected .kb-lib-name { font-weight: 400; color: var(--brand-foreground); }
 .kb-lib-more {
   flex: none;
   display: inline-flex; align-items: center; justify-content: center;
@@ -500,7 +507,7 @@ const CSS = `
 .kb-file-list { list-style: none; margin: 0; padding: 8px 0 0; flex: 1; min-height: 0; overflow-y: auto; }
 /* Preserve the existing inline OCR hint and empty-list behavior. */
 #kb-files-block > .kb-empty, #kb-files-block > .kb-inline-hint { margin-bottom: 16px; }
-.kb-file-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 0; }
+.kb-file-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 5px 0; }
 .kb-file-name { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .kb-file-reason { display: block; font-weight: 400; font-size: 11.5px; line-height: 1.4; color: var(--brand-muted-foreground); }
 .kb-file-main { flex: 1 1 auto; min-width: 0; }
