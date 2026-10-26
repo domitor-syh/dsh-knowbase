@@ -101,6 +101,19 @@ function BookGlyph(props: { size: number }): React.ReactElement {
   )
 }
 
+/** One line box for the icon and the complete label, including an enabled count. */
+export function ComposerToggleContent({ label }: { label: string }): React.ReactElement {
+  return (
+    <span data-kb-toggle-content style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5, height: 14,
+      fontFamily: 'inherit', fontSize: 12, fontWeight: 400, lineHeight: '12px',
+    }}>
+      <BookGlyph size={14} />
+      <span data-kb-toggle-label style={{ display: 'block', lineHeight: '12px' }}>{label}</span>
+    </span>
+  )
+}
+
 /** The search box's magnifier. */
 function SearchGlyph(): React.ReactElement {
   return (
@@ -498,8 +511,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
           transition: 'border-color 120ms, color 120ms, background 120ms',
         }}
       >
-        <BookGlyph size={14} />
-        {scopeLabel(scope, bases)}
+        <ComposerToggleContent label={scopeLabel(scope, bases)} />
       </button>
 
       {open &&

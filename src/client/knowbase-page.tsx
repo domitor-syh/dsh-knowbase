@@ -392,52 +392,52 @@ function RowMenu(props: {
  * *where* it looked — "nothing matched in this one base" and "nothing matched in
  * all seven" are different answers.
  */
-function Report(props: { report: SearchReportView; scopeNote: string }): React.ReactElement {
+export function RetrievalReport(props: { report: SearchReportView; scopeNote: string }): React.ReactElement {
   const { report, scopeNote } = props
-  const note = <p className="kb-report-scope">{scopeNote}</p>
+  const summary = <div className="kb-report-overview">
+    <span className="kb-report-scope">{scopeNote}</span>
+    <span className="kb-report-summary">
+      {report.outcome === 'hits' ? `${report.passages.length} 个片段 · ` : ''}{report.elapsedMs} ms
+    </span>
+  </div>
 
   if (report.outcome !== 'hits') {
     const text: Record<string, string> = {
-      no_match: '未命中：所选知识库中没有相关片段。换个说法或换关键词可能命中。',
+      no_match: '未找到相关片段，试试更换关键词。',
       empty_scope: '所选知识库不存在或为空。',
-      not_ready:
-        '所选知识库里还没有可检索的文件（目前支持 .txt / .md 等纯文本、文本型 PDF 和 PNG/JPG 图片）。',
+      not_ready: '所选知识库还没有可检索的文件。上传资料并完成扫描后再试。',
       error: `检索失败：${report.reason}`,
     }
-    return (
-      <div className="kb-report" data-kb-test-report>
-        {note}
-        <p className="kb-report-summary">
-          {text[report.outcome] ?? report.outcome}（{report.elapsedMs} ms）
-        </p>
-      </div>
-    )
+    return <div className="kb-report" data-kb-test-report>
+      {summary}
+      <p className="kb-report-status">{text[report.outcome] ?? report.outcome}</p>
+    </div>
   }
 
   return (
     <div className="kb-report" data-kb-test-report>
-      {note}
-      <p className="kb-report-summary">
-        命中 {report.passages.length} 个片段，用时 {report.elapsedMs} ms
-      </p>
-      {report.passages.map((passage, index) => (
-        <div key={`${passage.materialTitle}-${passage.locator}-${index}`} className="kb-hit">
-          <div className="kb-hit-head">
-            <span className="kb-hit-src">
-              {index + 1}. {passage.kbName} / {passage.materialTitle} · {passage.locator}
-            </span>
-            <span className="kb-hit-score">
-              score {passage.score.toFixed(2)} · 覆盖 {Math.round(passage.coverage * 100)}%
-            </span>
-          </div>
-          <p className="kb-hit-body" data-kb-report-passage>
-            {passage.text}
-          </p>
-        </div>
-      ))}
-      <p className="kb-report-foot">
-        score 只在同一次提问内可比；覆盖偏低说明命中的查询词少，片段可能只是碰巧重叠。
-      </p>
+      {summary}
+      <ol className="kb-hit-list">
+        {report.passages.map((passage, index) => (
+          <li key={`${passage.materialTitle}-${passage.locator}-${index}`} className="kb-hit">
+            <h3 className="kb-hit-title">{passage.materialTitle}</h3>
+            <p className="kb-hit-source">{passage.kbName} · {passage.locator}</p>
+            <p className="kb-hit-body" data-kb-report-passage>{passage.text}</p>
+          </li>
+        ))}
+      </ol>
+      <details className="kb-report-details">
+        <summary>检索详情</summary>
+        <ul className="kb-report-metrics">
+          {report.passages.map((passage, index) => (
+            <li key={`${passage.materialTitle}-${passage.locator}-${index}`}>
+              <span>{passage.kbName} / {passage.materialTitle} · {passage.locator}</span>
+              <span>score {passage.score.toFixed(2)} · 覆盖 {Math.round(passage.coverage * 100)}%</span>
+            </li>
+          ))}
+        </ul>
+        <p className="kb-report-foot">score 只在同一次提问内可比；覆盖偏低说明命中的查询词少，片段可能只是碰巧重叠。</p>
+      </details>
     </div>
   )
 }
@@ -907,7 +907,7 @@ export function KnowbasePage(): React.ReactElement {
             </button>
           </div>
           {report !== undefined && <SearchResultsPopover anchor={searchRow} onClose={closeResults}>
-            <Report report={report} scopeNote={testScopeNote} />
+            <RetrievalReport report={report} scopeNote={testScopeNote} />
           </SearchResultsPopover>}
         </section>
       </div>

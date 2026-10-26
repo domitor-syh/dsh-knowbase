@@ -118,6 +118,12 @@ describe('knowledge-base page UI contracts', () => {
     expect(rule('.kb-retrieval-toolbar')).toContain('flex: none')
     expect(rule('.kb-search-results')).toContain('position: fixed')
     expect(rule('.kb-search-results-body')).toContain('overflow-y: auto')
+    for (const selector of ['.kb-search-results', '.kb-input, .kb-textarea']) {
+      expect(rule(selector)).toContain('background: var(--brand-card)')
+      expect(rule(selector)).toContain('color: var(--brand-foreground)')
+    }
+    expect(rule('.kb-lib-row:hover')).toContain('background: var(--dsw-alias-bg-layer-2)')
+    expect(rule('.kb-lib-row.is-selected')).toContain('background: var(--dsw-alias-bg-layer-2)')
     expect(rule('.kb-columns')).toContain('min-height: 360px')
     expect(rule('.kb-search-row')).toContain('flex: none')
     expect(rule('.kb-search-row')).not.toContain('flex-wrap')
