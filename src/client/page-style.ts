@@ -22,12 +22,9 @@
  * container rather than on `:root` — the same isolation rule as the selectors —
  * and the container carries either `.kb-theme-light` or `.kb-theme-dark`.
  *
- * Light is the hand-off's literal values, sampled from its token block (itself
- * drawn from a design library, so the numbers are the designer's, not mine).
- * The hand-off only states light; dark is the same semantic roles translated
- * through the palette the composer control already uses in dark (panel
- * `#24262c`, hairline `#34373e`, text `#f2f4f7`, muted `#9aa1ac`), so the page
- * and the control do not disagree about what dark means.
+ * Page geometry follows the host's flat management pages. Legacy --brand-*
+ * values remain unchanged so existing selection, hover, focus and disabled
+ * effects retain their appearance; new section separators use host aliases.
  *
  * @module @domitor-syh/dsh-knowbase/client/page-style
  */
@@ -166,30 +163,37 @@ const CSS = `
   padding: 32px 48px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 28px;
   overflow-y: auto;
   overflow-x: hidden;
 }
 
-/* 仅页头跟随宿主标题排版，卡片正文保持原有字体。 */
-.kb-head { flex: none; }
-.kb-head-title { margin: 0; font-size: 20px; line-height: 28px; font-weight: 400; font-family: inherit; }
-.kb-card, .kb-modal, .kb-alert, .kb-placeholder { font-family: var(--brand-font-sans); }
+/* Match the host's flat management pages; controls keep their existing states. */
+.kb-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.kb-head-title { margin: 0; font-size: 24px; line-height: 32px; font-weight: 400; font-family: inherit; }
+.kb-head-description { margin: 6px 0 0; color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 1.6; }
+.kb-head .kb-head-add { width: auto; height: 36px; gap: 8px; padding: 0 14px; border-color: var(--brand-border); border-radius: var(--brand-radius); font: inherit; font-size: 13px; white-space: nowrap; }
+.kb-modal, .kb-alert { font-family: var(--brand-font-sans); }
+.kb-card, .kb-placeholder { font-family: inherit; }
 
-/* 卡片：无边框，侧阴影（独立卡片观感） */
 .kb-card {
-  background: var(--brand-card);
+  min-width: 0;
+  background: transparent;
   border: 0;
-  border-radius: var(--brand-radius);
-  padding: 16px;
-  box-shadow: var(--brand-shadow-card);
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
 }
-/* 顶部两卡：OCR 窄 / 检索宽（检索测试需要更多空间） */
-.kb-top-grid { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 5fr); gap: 16px; flex: none; }
-.kb-top-grid .kb-card { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-/* OCR 内容决定行高，检索结果不参与网格的固有尺寸计算。 */
-.kb-top-grid [data-kb-retrieval-test] { contain: size; overflow: hidden; }
-.kb-top-grid .kb-report { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 12px; padding-top: 12px; }
+.kb-retrieval-toolbar { flex: none; min-width: 0; }
+.kb-retrieval-toolbar [data-kb-retrieval-test] { min-width: 0; }
+.kb-retrieval-toolbar .kb-report { max-height: 280px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-top: 16px; padding-top: 16px; }
+.kb-utilities { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 32px; align-items: start; flex: none; min-width: 0; padding-top: 24px; border-top: 1px solid var(--dsw-alias-border-l1); }
+.kb-utilities > :only-child { grid-column: 1 / -1; }
+.kb-utilities [data-kb-ocr-section] { font-size: 12px; }
+.kb-utilities .kb-card-title { font-size: 14px; font-weight: 600; }
+.kb-scan-summary { min-width: 0; color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 1.6; }
+.kb-scan-summary > strong { font-size: 14px; font-weight: 600; }
+.kb-scan-summary dl { font-variant-numeric: tabular-nums; }
 
 /* 统一居中模态（添加/重命名/删除知识库、删除文件） */
 .kb-modal-overlay {
@@ -221,9 +225,9 @@ const CSS = `
 .kb-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .kb-modal-actions .kb-btn--danger { color: var(--state-error); border-color: var(--state-error); }
 .kb-block-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-/* 文件块：标题分割线延长到窗口两边；滚动裁切线严格贴合——顶部 = 分割线，底部 = 卡片底边 */
+/* File controls remain in place above the independently scrolling list. */
 #kb-files-block { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: hidden; padding-bottom: 0; }
-#kb-files-block .kb-block-head { margin: 0 -16px; padding: 0 16px 12px; border-bottom: 1px solid var(--brand-border); flex: none; }
+#kb-files-block .kb-block-head { margin: 0; padding: 0 0 16px; border-bottom: 1px solid var(--dsw-alias-border-l1); flex: none; }
 .kb-card-title { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.4; }
 .kb-btn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
@@ -338,28 +342,28 @@ const CSS = `
 .kb-alert--error svg { color: var(--state-error); }
 .kb-alert--notice svg { color: var(--state-success); }
 
-/* 主区两栏：左列表 / 右文件（页面整体固定，仅列表内部滚动） */
-.kb-columns { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: stretch; flex: 1; min-height: 0; }
-.kb-columns > aside.kb-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding-bottom: 0; }
+/* The main lists keep their own scrolling; utilities follow in the outer page. */
+.kb-columns { display: grid; grid-template-columns: 224px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 32px; align-items: stretch; flex: 1 0 360px; min-height: 360px; }
+.kb-columns > aside.kb-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 0 24px 0 0; border-right: 1px solid var(--dsw-alias-border-l1); }
 #kb-lib-empty { margin-bottom: 8px; }
 .kb-right { min-width: 0; min-height: 0; }
 .kb-detail { display: flex; flex-direction: column; gap: 16px; min-width: 0; height: 100%; }
 .kb-placeholder {
   margin: 0;
-  padding: 32px 16px;
+  padding: 72px 24px;
   text-align: center;
   font-size: 13px;
   color: var(--brand-muted-foreground);
-  background: var(--brand-card);
-  border: 1px dashed var(--brand-border);
-  border-radius: var(--brand-radius);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 /* 左栏合一卡。底部留白与顶部一致（列表 \`margin-top: 8px\`）：最后一行贴着卡片
    下边缘，等于把「列表还没完」画成了一个视觉终点。 */
 .kb-left-sec { position: relative; display: flex; flex-direction: column; min-height: 0; flex: 1; padding-bottom: 8px; }
 .kb-sec-label { display: block; margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--brand-muted-foreground); }
-.kb-left-head { display: flex; align-items: center; gap: 4px; margin: 0 -16px 0; padding: 0 16px 6px; border-bottom: 1px solid var(--brand-border); }
+.kb-left-head { display: flex; align-items: center; gap: 4px; min-height: 49px; margin: 0; padding: 0 0 16px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .kb-left-head .kb-sec-label { flex: 1; margin: 0; font-size: 13px; color: var(--brand-foreground); }
 .kb-left-head .kb-sec-label .kb-sec-count { font-weight: 400; color: var(--brand-muted-foreground); }
 .kb-icon-btn {
@@ -490,12 +494,13 @@ const CSS = `
 .kb-field-label { font-size: 12px; font-weight: 600; color: var(--brand-muted-foreground); }
 
 /* 文件块 */
-.kb-title-group { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.kb-title-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+.kb-title-group .kb-card-title { overflow-wrap: anywhere; }
 .kb-files-size { font-size: 12px; color: var(--brand-muted-foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.kb-file-list { list-style: none; margin: 0; padding: 0; flex: 1; min-height: 0; overflow-y: auto; }
-/* 非滚动状态时补充卡片底部留白（滚动时由卡片底边直接裁切） */
+.kb-file-list { list-style: none; margin: 0; padding: 8px 0 0; flex: 1; min-height: 0; overflow-y: auto; }
+/* Preserve the existing inline OCR hint and empty-list behavior. */
 #kb-files-block > .kb-empty, #kb-files-block > .kb-inline-hint { margin-bottom: 16px; }
-.kb-file-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 0; }
+.kb-file-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 0; }
 .kb-file-name { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .kb-file-reason { display: block; font-weight: 400; font-size: 11.5px; line-height: 1.4; color: var(--brand-muted-foreground); }
 .kb-file-main { flex: 1 1 auto; min-width: 0; }
@@ -584,8 +589,9 @@ const CSS = `
 .kb-scope-option:disabled { opacity: 0.45; cursor: not-allowed; }
 .kb-scope-option svg { display: block; flex: none; }
 .kb-search-row { display: flex; align-items: center; gap: 8px; flex: none; }
+.kb-search-row .kb-input { height: 40px; }
 .kb-search-row input.kb-input { flex: 1 1 auto; min-width: 0; }
-.kb-search-row .kb-btn { flex: none; }
+.kb-search-row .kb-btn { flex: none; height: 40px; }
 .kb-report { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--brand-border); font-size: 13px; }
 .kb-report:empty { display: none; }
 .kb-report-scope { margin: 0 0 8px; font-weight: 600; }
@@ -617,16 +623,17 @@ const CSS = `
 .kb-icon-btn:has(.kb-icon-spin):disabled { opacity: 1; }
 
 @media (max-width: 1120px) {
-  .kb-top-grid { grid-template-columns: minmax(0, 1fr); }
-  .kb-top-grid [data-kb-retrieval-test] { height: 220px; }
-  .kb-columns { flex: none; min-height: 320px; }
-  .kb-file-list { max-height: 360px; }
-  .kb-lib-list { max-height: 320px; }
+  .kb-utilities { grid-template-columns: minmax(0, 1fr); gap: 24px; }
 }
 @media (max-width: 860px) {
-  .kb-columns { grid-template-columns: minmax(0, 1fr); }
-  .kb-columns > aside.kb-card { overflow: visible; }
-  .kb-lib-list { max-height: 320px; overflow-y: auto; }
+  .kb-page-content { padding: 24px; gap: 24px; }
+  .kb-head { flex-wrap: wrap; gap: 16px; }
+  .kb-columns { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; gap: 24px; flex: none; min-height: 0; }
+  .kb-columns > aside.kb-card { overflow: visible; border-right: 0; padding: 0; }
+  .kb-lib-list { max-height: 240px; overflow-y: auto; }
+  .kb-right { min-height: 320px; }
+  .kb-detail { min-height: 320px; }
+  .kb-file-list { max-height: 360px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

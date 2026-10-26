@@ -12,11 +12,7 @@ export function ScanSummary({ report }: { report?: ScanReport }): React.ReactEle
     [t('scanDeleted'), report.deleted], [t('scanRebuilt'), report.rebuilt],
     [t('scanSkipped'), report.skipped], [t('scanUnsearchable'), report.unsearchable],
   ] as const
-  return <section data-kb-scan-report aria-label={t('scanTitle')} style={{
-    margin: '0 0 16px', padding: 12, borderRadius: 6,
-    border: '1px solid var(--dsw-alias-border-l1)', background: 'var(--dsw-alias-bg-layer-2)',
-    color: 'var(--dsw-alias-label-primary)', fontSize: 12,
-  }}>
+  return <section className="kb-scan-summary" data-kb-scan-report aria-label={t('scanTitle')}>
     <strong>{t('scanTitle')}</strong>
     {report === undefined ? <p>{t('scanNone')}</p> : <>
       <p style={{ margin: '6px 0', color: 'var(--dsw-alias-label-secondary)' }}>

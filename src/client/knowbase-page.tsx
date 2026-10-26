@@ -20,13 +20,10 @@
  *
  * ## Shape
  *
- * The hand-off's layout, top to bottom: a title, a two-card grid (OCR packs,
- * retrieval test), a floating notice, then two columns — the base list on the
- * left, the selected base's files on the right. Everything destructive goes
- * through one centred modal rather than the inline two-step confirm this page
- * used to carry, because there are now four of them (add, rename, delete base,
- * delete file) and four different inline confirmations is four different
- * behaviours to learn.
+ * The layout follows the host's management pages: title and add action, a
+ * full-width retrieval toolbar, then the base list and selected base's files.
+ * Scan diagnostics and OCR follow in a separate utility area. Existing menus,
+ * controls and the centred confirmation modals keep their original behavior.
  *
  * Styling is a stylesheet (`./page-style.ts`), not inline objects: the hand-off
  * states hover, focus, disabled and reduced-motion behaviour, and a page this
@@ -837,14 +834,28 @@ export function KnowbasePage(): React.ReactElement {
     >
       <div className="kb-page-content">
       <header className="kb-head">
-        <h1 className="kb-head-title">知识库</h1>
+        <div>
+          <h1 className="kb-head-title">知识库</h1>
+          <p className="kb-head-description">管理本地资料，在会话中检索和引用。</p>
+        </div>
+        <button
+          type="button"
+          className="kb-icon-btn kb-icon-btn--add kb-head-add"
+          id="kb-new-toggle"
+          data-kb-new-base
+          aria-label="添加知识库"
+          title="添加知识库"
+          aria-haspopup="dialog"
+          aria-expanded={dialog?.kind === 'new' ? 'true' : 'false'}
+          disabled={busy}
+          onClick={() => openDialog({ kind: 'new' }, '')}
+        >
+          <Icon name="plus" />
+          添加知识库
+        </button>
       </header>
 
-      <div className="kb-top-grid">
-        {/* Packs are per installation, not per base, so this belongs to the page
-            rather than to the detail pane below. */}
-        <OcrSection controller={ocr} disabled={busy} />
-
+      <div className="kb-retrieval-toolbar">
         <section className="kb-card" data-kb-retrieval-test aria-label="检索测试">
           <div className="kb-search-row">
             <ScopePicker
@@ -906,20 +917,6 @@ export function KnowbasePage(): React.ReactElement {
                 onClick={() => rescan('')}
               >
                 <Icon name="refresh" spinning={spinning} />
-              </button>
-              <button
-                type="button"
-                className="kb-icon-btn kb-icon-btn--add"
-                id="kb-new-toggle"
-                data-kb-new-base
-                aria-label="添加知识库"
-                title="添加知识库"
-                aria-haspopup="dialog"
-                aria-expanded={dialog?.kind === 'new' ? 'true' : 'false'}
-                disabled={busy}
-                onClick={() => openDialog({ kind: 'new' }, '')}
-              >
-                <Icon name="plus" />
               </button>
             </div>
 
@@ -1023,7 +1020,6 @@ export function KnowbasePage(): React.ReactElement {
                   </div>
                 </div>
 
-                <ScanSummary report={selected.lastScan} />
                 <ul className="kb-file-list" id="kb-file-list">
                   {materials.map(material => (
                     <li key={material.id} className="kb-file-row" data-kb-file-row={material.id}>
@@ -1066,6 +1062,11 @@ export function KnowbasePage(): React.ReactElement {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="kb-utilities">
+        {selected === undefined ? null : <ScanSummary report={selected.lastScan} />}
+        <OcrSection controller={ocr} disabled={busy} />
       </div>
 
       </div>

@@ -113,21 +113,27 @@ describe('knowledge-base page UI contracts', () => {
     expect(rule('.kb-modal-body .kb-delete-note')).toContain('color: var(--state-warning)')
   })
 
-  it('isolates report size from the OCR-driven grid height and scrolls results', () => {
-    expect(rule('.kb-top-grid [data-kb-retrieval-test]')).toContain('contain: size')
-    expect(rule('.kb-top-grid [data-kb-retrieval-test]')).toContain('overflow: hidden')
-    expect(rule('.kb-top-grid .kb-report')).toContain('min-height: 0')
-    expect(rule('.kb-top-grid .kb-report')).toContain('overflow-y: auto')
+  it('bounds standalone retrieval results and places utilities after the main lists', () => {
+    const html = renderToStaticMarkup(createElement(KnowbasePage))
+    expect(rule('.kb-retrieval-toolbar')).toContain('flex: none')
+    expect(rule('.kb-retrieval-toolbar .kb-report')).toContain('max-height: 280px')
+    expect(rule('.kb-retrieval-toolbar .kb-report')).toContain('overflow-y: auto')
+    expect(rule('.kb-columns')).toContain('min-height: 360px')
     expect(rule('.kb-search-row')).toContain('flex: none')
     expect(rule('.kb-search-row')).not.toContain('flex-wrap')
-    expect(styles).toContain('[data-kb-retrieval-test] { height: 220px; }')
+    expect(html.indexOf('class="kb-utilities"')).toBeGreaterThan(html.indexOf('class="kb-columns"'))
+    expect(html.match(/data-kb-new-base/g)).toHaveLength(1)
+    expect(html.match(/data-kb-ocr-section/g)).toHaveLength(1)
+    expect(styles).not.toContain('contain: size')
   })
 
-  it('uses wider inner padding and host typography only for the main heading', () => {
+  it('uses host page spacing and typography without raised main cards', () => {
     expect(rule('.kb-page-content')).toContain('padding: 32px 48px')
     expect(rule('.kb-head-title')).toContain('font-family: inherit')
     expect(rule('.kb-head-title')).toContain('font-weight: 400')
-    expect(rule('.kb-card, .kb-modal, .kb-alert, .kb-placeholder')).toContain('font-family: var(--brand-font-sans)')
+    expect(rule('.kb-card, .kb-placeholder')).toContain('font-family: inherit')
+    expect(rule('.kb-card')).toContain('box-shadow: none')
+    expect(rule('.kb-card')).toContain('background: transparent')
   })
 
   it('optically centers the composer book icon without moving the whole button', () => {
