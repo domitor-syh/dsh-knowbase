@@ -364,8 +364,11 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
 
   // Anchor the popover to the button while open; follow layout shifts so the
   // panel does not drift away from its control.
-  React.useEffect(() => {
-    if (!open) return
+  React.useLayoutEffect(() => {
+    if (!open) {
+      setAnchor(undefined)
+      return
+    }
     const update = (): void => {
       const rect = root.current?.getBoundingClientRect()
       if (rect === undefined) return
@@ -433,8 +436,8 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
 
   const panel: React.CSSProperties = {
     position: 'fixed',
-    left: anchor?.left ?? 0,
-    bottom: anchor?.bottom ?? 0,
+    left: anchor?.left,
+    bottom: anchor?.bottom,
     zIndex: 80,
     width: PANEL_WIDTH,
     border: `1px solid ${palette.panelBorder}`,
@@ -514,7 +517,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
         <ComposerToggleContent label={scopeLabel(scope, bases)} />
       </button>
 
-      {open &&
+      {open && anchor !== undefined &&
         createPortal(
           <div ref={popover} role="dialog" aria-label="知识库" style={panel}>
             <div style={{ padding: 10 }}>

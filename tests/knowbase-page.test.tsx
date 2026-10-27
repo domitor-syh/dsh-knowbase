@@ -152,6 +152,13 @@ describe('knowledge-base page UI contracts', () => {
     expect(composer).toContain('<BookGlyph size={14} />')
   })
 
+  it('does not paint the composer panel before its anchor is measured', () => {
+    expect(composer).toContain('React.useLayoutEffect(() => {')
+    expect(composer).toContain('open && anchor !== undefined &&')
+    expect(composer).not.toContain('anchor?.left ?? 0')
+    expect(composer).not.toContain('anchor?.bottom ?? 0')
+  })
+
   it('shows only material totals in the composer knowledge-base popover', () => {
     expect(composer).toContain(": `${base.materialCount} 个文件`")
     expect(composer).not.toContain('个文件 / ${base.indexedCount} 可检索')

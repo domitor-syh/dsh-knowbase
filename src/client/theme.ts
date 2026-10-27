@@ -8,12 +8,9 @@
  * instead of a hardcoded light widget dropped into a dark shell — the plugin
  * used to carry one set of light colours and simply looked wrong in dark.
  *
- * The dark values are the design hand-off's, sampled out of the mockups rather
- * than eyeballed. The light values defer to the host's own tokens, so they
- * follow whatever the app's light palette is — including a third-party theme's
- * alias overrides — instead of being a second opinion about what light means.
- * The accent is the design's in both schemes: it is the one colour the hand-off
- * states outright, and the host has no token that equals it.
+ * Composer surfaces use the host's neutral aliases in both schemes. Fallbacks
+ * only apply when an older host does not provide a token. The accent remains
+ * the existing blue used to communicate selection.
  *
  * @module @domitor-syh/dsh-knowbase/client/theme
  */
@@ -56,31 +53,21 @@ export interface Palette {
   readonly idleTextHover: string
 }
 
-/**
- * Dark: the hand-off's values verbatim.
- *
- * Sampled from the mockups' pixels — the panel is `#24262c`, the hairline that
- * serves as both panel border and section divider is `#34373e`, the search
- * field is `#2a2d33`, the off switch is `#131315` inside a `#2e3336` outline.
- *
- * The interaction washes are the host's own `--dsw-alias-interactive-bg-*`
- * tokens rather than values of my own: hovering the pill should look like
- * hovering anything else in the app, and only the host knows what that is.
- */
+/** Host-owned neutral surfaces; selection accent and existing interaction washes remain. */
 const DARK: Palette = {
   accent: '#4285f4',
   accentWash: 'rgba(66, 133, 244, 0.10)',
-  panel: '#24262c',
-  panelBorder: '#34373e',
-  divider: '#34373e',
-  field: '#2a2d33',
-  fieldBorder: '#34373e',
-  text: '#f2f4f7',
-  muted: '#9aa1ac',
-  trackOff: '#131315',
-  trackOffBorder: '#2e3336',
+  panel: 'var(--dsw-alias-bg-layer-1, #2b2b2b)',
+  panelBorder: 'var(--dsw-alias-border-l1, #3a3a3a)',
+  divider: 'var(--dsw-alias-border-l1, #3a3a3a)',
+  field: 'var(--dsw-alias-bg-layer-2, #333333)',
+  fieldBorder: 'var(--dsw-alias-border-l1, #3a3a3a)',
+  text: 'var(--dsw-alias-label-primary, #f2f2f2)',
+  muted: 'var(--dsw-alias-label-secondary, #a0a0a0)',
+  trackOff: 'var(--dsw-alias-bg-base, #212121)',
+  trackOffBorder: 'var(--dsw-alias-border-l2, #444444)',
   knobOn: '#ffffff',
-  knobOff: '#2e3336',
+  knobOff: 'var(--dsw-alias-label-secondary, #a0a0a0)',
   shadow: '0 10px 28px rgba(0, 0, 0, 0.55)',
   idleText: '#9aa1ab',
   idleBorder: '#35383f',
@@ -109,10 +96,10 @@ const DARK: Palette = {
 const LIGHT: Palette = {
   accent: '#4285f4',
   accentWash: 'rgba(66, 133, 244, 0.10)',
-  panel: 'var(--dsw-alias-bg-layer-2, #ffffff)',
+  panel: 'var(--dsw-alias-bg-layer-1, #ffffff)',
   panelBorder: 'var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))',
   divider: 'var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))',
-  field: 'var(--dsw-static-neutral-bluish-75, #f1f3f5)',
+  field: 'var(--dsw-alias-bg-layer-2, #f5f5f5)',
   fieldBorder: 'var(--dsw-alias-border-l2, rgba(0, 0, 0, 0.10))',
   text: 'var(--dsw-alias-label-primary, #0f1115)',
   muted: 'var(--dsw-alias-label-tertiary, #979da6)',
