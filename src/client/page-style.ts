@@ -194,7 +194,7 @@ const CSS = `
 .kb-search-results-head h2 { margin: 0; font-size: 14px; font-weight: 500; }
 .kb-search-results-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 12px; }
 .kb-search-results .kb-report { margin: 0; padding: 0; border: 0; }
-.kb-utilities { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 32px; align-items: start; flex: none; min-width: 0; padding-top: 24px; border-top: 1px solid var(--dsw-alias-border-l1); }
+.kb-utilities { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 32px; align-items: start; flex: none; min-width: 0; padding-top: 0; }
 .kb-utilities > :only-child { grid-column: 1 / -1; }
 .kb-utilities [data-kb-ocr-section] { font-size: 12px; }
 .kb-utilities .kb-card-title { font-size: 14px; font-weight: 600; }
@@ -350,7 +350,7 @@ const CSS = `
 .kb-alert--notice svg { color: var(--state-success); }
 
 /* The main lists keep their own scrolling; utilities follow in the outer page. */
-.kb-columns { display: grid; grid-template-columns: 224px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 32px; align-items: stretch; flex: 1 0 360px; min-height: 360px; }
+.kb-columns { display: grid; grid-template-columns: 224px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 32px; align-items: stretch; flex: 1 0 360px; min-height: 360px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
 .kb-columns > aside.kb-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 0 24px 0 0; border-right: 1px solid var(--dsw-alias-border-l1); }
 #kb-lib-empty { margin-bottom: 8px; }
 .kb-right { min-width: 0; min-height: 0; }
@@ -504,13 +504,20 @@ const CSS = `
 .kb-title-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
 .kb-title-group .kb-card-title { overflow-wrap: anywhere; }
 .kb-files-size { font-size: 12px; color: var(--brand-muted-foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.kb-file-list { list-style: none; margin: 0; padding: 8px 0 0; flex: 1; min-height: 0; overflow-y: auto; }
+.kb-file-list { list-style: none; margin: 0; padding: 8px 12px 0 0; flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 /* Preserve the existing inline OCR hint and empty-list behavior. */
 #kb-files-block > .kb-empty, #kb-files-block > .kb-inline-hint { margin-bottom: 16px; }
 .kb-file-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 5px 0; }
 .kb-file-name { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .kb-file-reason { display: block; font-weight: 400; font-size: 11.5px; line-height: 1.4; color: var(--brand-muted-foreground); }
 .kb-file-main { flex: 1 1 auto; min-width: 0; }
+.kb-file-meta { display: flex; flex: none; align-items: center; gap: 8px; }
+.kb-file-status { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 20px; flex: none; cursor: help; }
+.kb-file-status svg { display: block; }
+.kb-file-status--searchable { color: var(--state-success); }
+.kb-file-status--unsupported { color: var(--brand-muted-foreground); }
+.kb-file-status--unsearchable { color: var(--state-warning); }
+.kb-file-status:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 2px; border-radius: 4px; }
 .kb-file-size {
   flex: none;
   width: 64px;

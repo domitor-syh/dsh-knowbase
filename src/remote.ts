@@ -37,6 +37,7 @@ import type { SessionSelectionRegistry } from './core/session-scope.ts'
 import type { KnowbaseService, ScanReport } from './core/service.ts'
 import { revealFolder, shellInfo } from './core/shell.ts'
 import { promptLabel } from './prompt-map.ts'
+import { isIndexable } from './core/model.ts'
 import { installRemoteMarkers } from './remote-methods.ts'
 
 /** Cordis service key, wire namespace, and registry key. */
@@ -72,6 +73,9 @@ export interface KnowledgeBaseView {
   readonly lastScan?: ScanReport
 }
 
+/** A completed scan's outcome, not a guarantee of extraction accuracy. */
+export type MaterialIndexStatus = 'searchable' | 'unsupported' | 'unsearchable'
+
 /** One file inside a knowledge base, as the list needs it. */
 export interface MaterialView {
   readonly id: string
@@ -85,6 +89,8 @@ export interface MaterialView {
   readonly mtimeMs: number
   /** Why there is no searchable text, when there should be; `''` otherwise. */
   readonly note: string
+  /** Present only for a committed scan snapshot; optional for older Hosts. */
+  readonly indexStatus?: MaterialIndexStatus
 }
 
 /** One file with its extracted text, for the reading pane. */
@@ -378,6 +384,8 @@ export class KnowbaseRemote extends TypertRemoteService {
         indexed: material.indexed,
         mtimeMs: material.mtimeMs,
         note: material.note,
+        indexStatus: material.indexed ? 'searchable' as const
+          : isIndexable(material.fileName) ? 'unsearchable' as const : 'unsupported' as const,
       }))
   }
 
@@ -460,7 +468,9 @@ export class KnowbaseRemote extends TypertRemoteService {
    * drop a document into the base's folder, press this, and it appears.
    */
   async rescan(kbId: string): Promise<boolean> {
-    await deps().service.rescan(kbId === '' ? undefined : kbId)
+    // Explicit UI rescans also catch external replacements that preserve size/mtime.
+    // Background/service callers retain incremental scanning by default.
+    await deps().service.rescan(kbId === '' ? undefined : kbId, { force: true })
     return true
   }
 

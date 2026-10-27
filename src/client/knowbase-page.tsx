@@ -51,6 +51,7 @@ import { OcrHint, OcrSection, useOcrController } from './ocr-panel.tsx'
 import { pageTokens } from './page-style.ts'
 import { ScopePicker } from './scope-picker.tsx'
 import { SearchResultsPopover } from './search-results-popover.tsx'
+import { MaterialStatus } from './material-status.tsx'
 import { ScanSummary } from './scan-summary.tsx'
 import { useSpin } from './spin.ts'
 import { useColorScheme } from './theme.ts'
@@ -1046,9 +1047,12 @@ export function KnowbasePage(): React.ReactElement {
                           </span>
                         )}
                       </div>
-                      <span className="kb-file-size" data-kb-file-size>
-                        {formatBytes(material.bytes)}
-                      </span>
+                      <div className="kb-file-meta">
+                        <MaterialStatus material={material} />
+                        <span className="kb-file-size" data-kb-file-size>
+                          {formatBytes(material.bytes)}
+                        </span>
+                      </div>
                       <div className="kb-file-actions">
                         <button
                           type="button"

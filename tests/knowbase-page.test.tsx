@@ -133,6 +133,17 @@ describe('knowledge-base page UI contracts', () => {
     expect(styles).not.toContain('contain: size')
   })
 
+  it('groups the scan icon before size and gives file controls room beside the scrollbar', () => {
+    const metadata = page.slice(page.indexOf('<div className="kb-file-meta">'), page.indexOf('<div className="kb-file-actions">'))
+    expect(metadata.indexOf('<MaterialStatus')).toBeGreaterThan(0)
+    expect(metadata.indexOf('<MaterialStatus')).toBeLessThan(metadata.indexOf('data-kb-file-size'))
+    expect(rule('.kb-file-list')).toContain('padding: 8px 12px 0 0')
+    expect(rule('.kb-file-list')).toContain('scrollbar-gutter: stable')
+    expect(rule('.kb-columns')).toContain('border-bottom: 1px solid var(--dsw-alias-border-l1)')
+    expect(rule('.kb-utilities')).not.toContain('border-top')
+    expect(rule('.kb-file-status')).not.toContain('opacity: 0')
+  })
+
   it('uses host page spacing and typography without raised main cards', () => {
     expect(rule('.kb-page-content')).toContain('padding: 32px 48px')
     expect(rule('.kb-head-title')).toContain('font-family: inherit')
