@@ -144,6 +144,25 @@ describe('knowledge-base page UI contracts', () => {
     expect(rule('.kb-file-status')).not.toContain('opacity: 0')
   })
 
+  it('keeps the two rescan spinners independent and shows long-operation progress', () => {
+    expect(page).toContain('const [rescanAllSpinning, spinAll] = useSpin()')
+    expect(page).toContain('const [rescanCurrentSpinning, spinCurrent] = useSpin()')
+    expect(page).toContain('spinning={rescanAllSpinning}')
+    expect(page).toContain('spinning={rescanCurrentSpinning}')
+    expect(page).toContain('正在上传并扫描')
+    expect(page).toContain('正在扫描全部知识库')
+    expect(page).toContain('正在扫描当前知识库')
+    expect(page).toContain('<ProgressOverlay text={progressText} />')
+    expect(rule('.kb-progress-overlay')).toContain('position: absolute')
+    expect(rule('.kb-progress-dialog')).toContain('border-radius: var(--brand-radius-xl)')
+  })
+
+  it('uses a body-level rounded tooltip for immediate file-status feedback', () => {
+    expect(styles).toContain('.kb-file-status-tooltip {')
+    expect(styles).toContain('position: fixed')
+    expect(styles).toContain('border-radius: var(--brand-radius)')
+  })
+
   it('uses host page spacing and typography without raised main cards', () => {
     expect(rule('.kb-page-content')).toContain('padding: 32px 48px')
     expect(rule('.kb-head-title')).toContain('font-family: inherit')

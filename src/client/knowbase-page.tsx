@@ -150,6 +150,18 @@ function Alert(props: { text: string; kind: 'notice' | 'error'; revision: number
   )
 }
 
+function ProgressOverlay(props: { text: string }): React.ReactElement | null {
+  if (props.text === '') return null
+  return (
+    <div className="kb-progress-overlay" data-kb-progress role="status" aria-live="polite" aria-busy="true">
+      <div className="kb-progress-dialog">
+        <Icon name="loader" spinning />
+        <span>{props.text}</span>
+      </div>
+    </div>
+  )
+}
+
 /**
  * The centred modal every destructive step goes through.
  *
@@ -463,6 +475,7 @@ export function KnowbasePage(): React.ReactElement {
     if (text !== '') setFeedbackRevision(value => value + 1)
   }, [])
   const [busy, setBusy] = React.useState(false)
+  const [progressText, setProgressText] = React.useState('')
   const [vaultRoot, setVaultRoot] = React.useState('')
   const [shell, setShell] = React.useState<ShellInfoView | undefined>(undefined)
 
@@ -482,7 +495,8 @@ export function KnowbasePage(): React.ReactElement {
    * the element it was opened from.
    */
   const [menu, setMenu] = React.useState<{ id: string; anchor: HTMLElement } | undefined>(undefined)
-  const [spinning, spin] = useSpin()
+  const [rescanAllSpinning, spinAll] = useSpin()
+  const [rescanCurrentSpinning, spinCurrent] = useSpin()
 
   const uploadInput = React.useRef<HTMLInputElement | null>(null)
   const searchRow = React.useRef<HTMLDivElement>(null)
@@ -501,7 +515,7 @@ export function KnowbasePage(): React.ReactElement {
   const [ocrHint, setOcrHint] = React.useState(false)
 
   /** Run one Host call with shared busy handling; the sentence it returns is the alert. */
-  const run = React.useCallback(async (action: () => Promise<Outcome>): Promise<void> => {
+  const run = React.useCallback(async (action: () => Promise<Outcome>, progress?: string): Promise<void> => {
     const current = knowbaseApi()
     if (current === undefined) {
       setNotice('')
@@ -509,6 +523,7 @@ export function KnowbasePage(): React.ReactElement {
       return
     }
     setBusy(true)
+    if (progress !== undefined) setProgressText(progress)
     setError('')
     setNotice('')
     try {
@@ -518,6 +533,7 @@ export function KnowbasePage(): React.ReactElement {
     } catch (failure) {
       setError(messageOf(failure))
     } finally {
+      if (progress !== undefined) setProgressText('')
       setBusy(false)
     }
   }, [])
@@ -549,17 +565,17 @@ export function KnowbasePage(): React.ReactElement {
         setError('知识库通道尚未就绪，请稍候重试。')
         return
       }
-      const tooBig: string[] = []
-      const accepted: { name: string; bytes: Uint8Array }[] = []
-      for (const file of files) {
-        if (file.size > MAX_UPLOAD_BYTES) {
-          tooBig.push(file.name)
-          continue
-        }
-        accepted.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })
-      }
-
       await run(async () => {
+        const tooBig: string[] = []
+        const accepted: { name: string; bytes: Uint8Array }[] = []
+        for (const file of files) {
+          if (file.size > MAX_UPLOAD_BYTES) {
+            tooBig.push(file.name)
+            continue
+          }
+          accepted.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })
+        }
+
         if (accepted.length === 0) {
           throw new Error(
             `有 ${tooBig.length} 个文件过大（超过 ${formatBytes(MAX_UPLOAD_BYTES)}），请把它们直接放进知识库文件夹。`,
@@ -585,7 +601,7 @@ export function KnowbasePage(): React.ReactElement {
         return tooBig.length > 0 || result.rejected.length > 0
           ? problem(sentence)
           : note(sentence)
-      })
+      }, `正在上传并扫描 ${files.length} 个文件…`)
     },
     [ocr.refresh, refreshBases, run, selectedId],
   )
@@ -726,16 +742,18 @@ export function KnowbasePage(): React.ReactElement {
 
   /** Re-read one base — or every base — from the disk. */
   const rescan = (kbId: string): void => {
-    spin(async () => {
+    const all = kbId === ''
+    const start = all ? spinAll : spinCurrent
+    start(async () => {
       await run(async () => {
         const current = knowbaseApi()!
         await current.rescan(kbId)
         await refreshBases()
-        if (kbId === '' || kbId === selectedId) {
-          setMaterials(await current.listMaterials(kbId === '' ? selectedId : kbId))
+        if (all || kbId === selectedId) {
+          setMaterials(await current.listMaterials(all ? selectedId : kbId))
         }
-        return note(kbId === '' ? '已重新扫描全部知识库。' : '已重新扫描该知识库。')
-      })
+        return note(all ? '已重新扫描全部知识库。' : '已重新扫描该知识库。')
+      }, all ? '正在扫描全部知识库…' : '正在扫描当前知识库…')
     })
   }
 
@@ -930,7 +948,7 @@ export function KnowbasePage(): React.ReactElement {
                 disabled={busy}
                 onClick={() => rescan('')}
               >
-                <Icon name="refresh" spinning={spinning} />
+                <Icon name="refresh" spinning={rescanAllSpinning} />
               </button>
             </div>
 
@@ -1028,7 +1046,7 @@ export function KnowbasePage(): React.ReactElement {
                       disabled={busy}
                       onClick={() => rescan(selected.id)}
                     >
-                      <Icon name="refresh" spinning={spinning} />
+                      <Icon name="refresh" spinning={rescanCurrentSpinning} />
                       重扫
                     </button>
                   </div>
@@ -1087,6 +1105,7 @@ export function KnowbasePage(): React.ReactElement {
       </div>
 
       </div>
+      <ProgressOverlay text={progressText} />
       <Alert text={alertText} kind={error !== '' ? 'error' : 'notice'} revision={feedbackRevision} />
 
       {/* Outside the columns, and rendered into `document.body` — see `RowMenu`

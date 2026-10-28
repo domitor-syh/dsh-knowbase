@@ -348,6 +348,9 @@ const CSS = `
 .kb-alert svg { flex: none; }
 .kb-alert--error svg { color: var(--state-error); }
 .kb-alert--notice svg { color: var(--state-success); }
+.kb-progress-overlay { position: absolute; inset: 0; z-index: 120; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--brand-overlay) 42%, transparent); pointer-events: auto; }
+.kb-progress-dialog { display: inline-flex; align-items: center; gap: 10px; min-width: 180px; max-width: min(360px, 100%); padding: 12px 16px; border: 1px solid var(--brand-border); border-radius: var(--brand-radius-xl); background: var(--brand-card); box-shadow: var(--brand-shadow-popover); color: var(--brand-foreground); font-size: 13px; line-height: 1.5; }
+.kb-progress-dialog svg { flex: none; color: var(--brand-primary); }
 
 /* The main lists keep their own scrolling; utilities follow in the outer page. */
 .kb-columns { display: grid; grid-template-columns: 224px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 32px; align-items: stretch; flex: 1 0 360px; min-height: 360px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
@@ -518,6 +521,7 @@ const CSS = `
 .kb-file-status--unsupported { color: var(--brand-muted-foreground); }
 .kb-file-status--unsearchable { color: var(--state-warning); }
 .kb-file-status:focus-visible { outline: 2px solid var(--brand-ring); outline-offset: 2px; border-radius: 4px; }
+.kb-file-status-tooltip { position: fixed; z-index: 160; box-sizing: border-box; max-width: min(280px, calc(100vw - 16px)); padding: 7px 10px; border: 1px solid var(--brand-border); border-radius: var(--brand-radius); background: var(--brand-popover); box-shadow: var(--brand-shadow-popover); color: var(--brand-foreground); font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; pointer-events: none; }
 .kb-file-size {
   flex: none;
   width: 64px;
