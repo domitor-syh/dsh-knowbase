@@ -73,7 +73,7 @@ export interface OcrController {
    * Returns what it read so a caller that needs the answer in the same breath
    * (an upload deciding whether to show the hint) does not have to ask twice.
    */
-  refresh(): Promise<OcrStatusView | undefined>
+  refresh(options?: { throwOnError: boolean }): Promise<OcrStatusView | undefined>
   /** Begin the download of whatever is missing. */
   start(): Promise<void>
   /** Stop it and delete what it wrote. */
@@ -94,15 +94,20 @@ export function useOcrController(): OcrController {
   const [download, setDownload] = React.useState<OcrDownloadStateView>()
   const [error, setError] = React.useState('')
 
-  const refresh = React.useCallback(async (): Promise<OcrStatusView | undefined> => {
+  const refresh = React.useCallback(async (options?: { throwOnError: boolean }): Promise<OcrStatusView | undefined> => {
     const api = knowbaseApi()
-    if (api === undefined) return undefined
+    if (api === undefined) {
+      if (options?.throwOnError) throw new Error('知识库通道尚未就绪，请稍候重试。')
+      return undefined
+    }
     try {
       const next = await api.getOcrStatus()
       setStatus(next)
+      setError('')
       return next
     } catch (failure) {
       setError(messageOf(failure))
+      if (options?.throwOnError) throw failure
       return undefined
     }
   }, [])
@@ -199,6 +204,7 @@ function Progress(props: {
 function Controls(props: {
   controller: OcrController
   disabled: boolean
+  onDetect: () => Promise<void>
   scope: ControlsScope
 }): React.ReactElement {
   const { controller, disabled, scope } = props
@@ -216,8 +222,8 @@ function Controls(props: {
           type="button"
           className="kb-btn"
           {...{ [`data-kb-${scope}-detect`]: '' }}
-          disabled={disabled || running}
-          onClick={() => spin(() => controller.refresh())}
+          disabled={disabled || running || checking}
+          onClick={() => spin(props.onDetect)}
         >
           <Icon name="refresh" spinning={checking} />
           检测
@@ -290,6 +296,7 @@ function statusLine(status: OcrStatusView | undefined): {
 export function OcrSection(props: {
   controller: OcrController
   disabled: boolean
+  onDetect: () => Promise<void>
 }): React.ReactElement {
   const { controller, disabled } = props
   const line = statusLine(controller.status)
@@ -315,7 +322,7 @@ export function OcrSection(props: {
         <span>{line.text}</span>
       </p>
       <div className="kb-ocr-actions">
-        <Controls controller={controller} disabled={disabled} scope="ocr" />
+        <Controls controller={controller} disabled={disabled} onDetect={props.onDetect} scope="ocr" />
       </div>
       {result !== '' && (
         <p className={`kb-msg${tone === '' ? '' : ` kb-msg--${tone}`}`} data-kb-ocr-hint>
@@ -347,6 +354,7 @@ export function OcrSection(props: {
 export function OcrHint(props: {
   controller: OcrController
   disabled: boolean
+  onDetect: () => Promise<void>
 }): React.ReactElement {
   const { controller, disabled } = props
   const message = controller.download?.message ?? ''
@@ -356,7 +364,7 @@ export function OcrHint(props: {
         刚上传的图片要等 OCR 语言包就绪后才能检索；下载完点上面的「重扫」就会入库
         （约 4.5 MB，在你本机识别，图片不会上传）。
       </p>
-      <Controls controller={controller} disabled={disabled} scope="files" />
+      <Controls controller={controller} disabled={disabled} onDetect={props.onDetect} scope="files" />
       {message !== '' && controller.running !== true && <p>{message}</p>}
     </div>
   )

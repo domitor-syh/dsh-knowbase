@@ -157,6 +157,16 @@ describe('knowledge-base page UI contracts', () => {
     expect(rule('.kb-progress-dialog')).toContain('border-radius: var(--brand-radius-xl)')
   })
 
+  it('reports explicit OCR checks and shows deletion progress through shared feedback', () => {
+    expect(page).toContain('<OcrSection controller={ocr} disabled={busy} onDetect={detectOcr} />')
+    expect(page).toContain('<OcrHint controller={ocr} disabled={busy} onDetect={detectOcr} />')
+    expect(page).toContain('ocr.refresh({ throwOnError: true })')
+    expect(page).toContain('检测完成：OCR 语言包已就绪')
+    expect(page).toContain('检测完成：缺少')
+    expect(page).toContain("}, '正在删除知识库…')")
+    expect(page).toContain("}, '正在删除文件…')")
+  })
+
   it('uses a body-level rounded tooltip for immediate file-status feedback', () => {
     expect(styles).toContain('.kb-file-status-tooltip {')
     expect(styles).toContain('position: fixed')

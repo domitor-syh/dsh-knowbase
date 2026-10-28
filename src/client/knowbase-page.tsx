@@ -538,6 +538,16 @@ export function KnowbasePage(): React.ReactElement {
     }
   }, [])
 
+  const detectOcr = React.useCallback(async (): Promise<void> => {
+    await run(async () => {
+      const status = await ocr.refresh({ throwOnError: true })
+      if (status === undefined) throw new Error('知识库通道尚未就绪，请稍候重试。')
+      return note(status.ready
+        ? '检测完成：OCR 语言包已就绪，图片可以离线识别。'
+        : `检测完成：缺少 ${status.missing.join('、')} 语言包，请点击「下载语言包」。`)
+    })
+  }, [ocr.refresh, run])
+
   const refreshBases = React.useCallback(async (): Promise<void> => {
     const current = knowbaseApi()
     if (current === undefined) return
@@ -824,7 +834,7 @@ export function KnowbasePage(): React.ReactElement {
         return note(
           `已把「${target.name}」的文件夹移入 _回收站（没有销毁，需要时可在资源管理器里拖回来）。`,
         )
-      })
+      }, '正在删除知识库…')
       return
     }
 
@@ -838,7 +848,7 @@ export function KnowbasePage(): React.ReactElement {
       setMaterials(await current.listMaterials(kbId))
       await refreshBases()
       return note(`已把「${target.fileName}」移入 _回收站。`)
-    })
+    }, '正在删除文件…')
   }
 
   const dialogConfirmDisabled = (): boolean => {
@@ -1091,7 +1101,7 @@ export function KnowbasePage(): React.ReactElement {
                   还没有文件。用「上传文件」加入，或者把文件直接放进上面那个文件夹再点「重扫」。
                 </p>
                 {ocrHint && ocr.status?.ready !== true && (
-                  <OcrHint controller={ocr} disabled={busy} />
+                  <OcrHint controller={ocr} disabled={busy} onDetect={detectOcr} />
                 )}
               </section>
             </div>
@@ -1101,7 +1111,7 @@ export function KnowbasePage(): React.ReactElement {
 
       <div className="kb-utilities">
         {selected === undefined ? null : <ScanSummary report={selected.lastScan} />}
-        <OcrSection controller={ocr} disabled={busy} />
+        <OcrSection controller={ocr} disabled={busy} onDetect={detectOcr} />
       </div>
 
       </div>
