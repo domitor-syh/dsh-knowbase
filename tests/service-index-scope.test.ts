@@ -15,24 +15,28 @@ function checkRecall(service: KnowbaseService, scopes: readonly (readonly string
   for (const scope of scopes) for (const query of ['设备参数', '税', '𠀀', 'ethernet', 'ZX2048', 'ZX2099', 'unfindableword']) {
     const allowed = new Set(scope)
     const hits = reference.search(query, {
-      limit: 6,
+      limit: Number.MAX_SAFE_INTEGER,
       accept: id => allowed.has(contexts.get(id)!.material.kbId),
-      distinctKey: id => {
-        const { material, chunk } = contexts.get(id)!
-        return JSON.stringify([material.kbId, material.id, chunk.text.normalize('NFKC').replace(/\s+/gu, ' ').trim()])
-      },
     })
-    const expected = hits.map(hit => {
+    const evidenceKey = (kbId: string, materialId: string, text: string) =>
+      JSON.stringify([kbId, materialId, text.normalize('NFKC').replace(/\s+/gu, ' ').trim()])
+    const expected = new Map(hits.map(hit => {
       const { material, chunk } = contexts.get(hit.id)!
-      return {
-        citationId: createCitationId({ kbId: material.kbId, materialId: material.id, ordinal: chunk.ordinal, locator: chunk.locator, text: chunk.text }),
-        kbId: material.kbId, materialId: material.id, ordinal: chunk.ordinal, locator: chunk.locator,
-        text: chunk.text, score: hit.score, coverage: hit.coverage,
-      }
-    })
+      return [evidenceKey(material.kbId, material.id, chunk.text), { score: hit.score, coverage: hit.coverage }] as const
+    }))
+    // This fixture has fewer than six distinct bodies. Selection must preserve
+    // all evidence and frozen-reference scores, while order may now diversify.
+    expect(expected.size).toBeLessThanOrEqual(6)
     const result = service.retrieve(query, scope)
-    const actual = result.kind === 'hits' ? result.passages.map(({ citationId, kbId, materialId, ordinal, locator, text, score, coverage }) =>
-      ({ citationId, kbId, materialId, ordinal, locator, text, score, coverage })) : []
+    const actual = new Map((result.kind === 'hits' ? result.passages : []).map(passage => {
+      const material = service.getMaterial(passage.kbId!, passage.materialId!)!
+      const chunk = material.chunks.find(candidate => candidate.ordinal === passage.ordinal)!
+      expect(passage.text).toBe(chunk.text)
+      expect(passage.locator).toBe(chunk.locator)
+      expect(passage.citationId).toBe(createCitationId({ kbId: material.kbId, materialId: material.id,
+        ordinal: chunk.ordinal, locator: chunk.locator, text: chunk.text }))
+      return [evidenceKey(material.kbId, material.id, chunk.text), { score: passage.score, coverage: passage.coverage }] as const
+    }))
     expect(actual, `${scope.join(',')}/${query}`).toStrictEqual(expected)
   }
 }

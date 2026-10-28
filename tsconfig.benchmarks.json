@@ -7,6 +7,7 @@
     "scripts/benchmark-scale.ts",
     "scripts/benchmark-bm25-comparison.ts",
     "scripts/benchmark-service-scale.ts",
-    "scripts/probe-fts5.ts"
+    "scripts/probe-fts5.ts",
+    "scripts/evaluate-retrieval-diversity.ts"
   ]
 }

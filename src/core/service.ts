@@ -40,6 +40,7 @@ import {
   type Material,
   type StoredKnowledgeBase,
 } from './model.ts'
+import { selectEvidence } from './select-evidence.ts'
 import { compareText } from './order.ts'
 import { isSafeTextProposalName } from './proposal-name.ts'
 import { TextReadError } from './text.ts'
@@ -639,13 +640,10 @@ export class KnowbaseService {
       limit: options.limit ?? 6,
       minCoverage: options.minCoverage ?? 0,
       groups: scope,
-      distinctKey: chunkId => {
+      select: (candidates, limit) => selectEvidence(candidates, limit, chunkId => {
         const context = this.#chunks.get(chunkId)!
-        // Keep independent sources and differing text; only equivalent text in
-        // the same material shares one context-budget slot. No fixed overfetch.
-        return JSON.stringify([context.kbId, context.materialId,
-          context.text.normalize('NFKC').replace(/\s+/gu, ' ').trim()])
-      },
+        return { key: JSON.stringify([context.kbId, context.materialId]), ordinal: context.ordinal, text: context.text }
+      }),
     })
 
     const passages: RetrievedPassage[] = []

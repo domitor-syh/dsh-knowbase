@@ -57,6 +57,8 @@ export interface SearchOptions {
   readonly groups?: readonly string[]
   /** Collapse equivalent evidence BEFORE applying limit; best-ranked source wins. */
   readonly distinctKey?: (id: string) => string
+  /** Owns sorting/dedup/limit over all filtered hits; supersedes distinctKey. */
+  readonly select?: (hits: readonly SearchHit[], limit: number) => SearchHit[]
 }
 
 /** Tunables, exposed for calibration against a real question set. */
@@ -362,6 +364,7 @@ export class Bm25Index {
       hits.push({ id, score: entry.score, coverage, matchedTerms: singleHanQuery ? [queryCharacters[0]!] : queryTerms.filter(term => entry.matched.has(term)) })
     }
 
+    if (options.select !== undefined) return options.select(hits, limit)
     hits.sort((left, right) => right.score - left.score || compareId(left.id, right.id))
     if (distinctKey === undefined) return hits.slice(0, limit)
     const distinct: SearchHit[] = []
