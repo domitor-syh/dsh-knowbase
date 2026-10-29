@@ -818,7 +818,7 @@ export function KnowbasePage(): React.ReactElement {
         await knowbaseApi()!.renameKnowledgeBase(open.id, name)
         await refreshBases()
         setReport(undefined)
-        return note('已保存（文件夹也一起改名了）。')
+        return note('重命名成功(文件夹名同改)')
       })
       return
     }

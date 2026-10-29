@@ -170,7 +170,7 @@ export function apply(ctx: Context): void {
   // the turn actually carried passages.
   ctx.slots.inject('conversation.chat.assistant-actions', () =>
     ctx.slots.register(
-      { name: 'conversation.chat.assistant-actions', id: 'knowbase-sources', order: 30 },
+      { name: 'conversation.chat.assistant-actions', id: 'knowbase-sources', order: 50 },
       KnowbaseSourceAction,
     ),
   )

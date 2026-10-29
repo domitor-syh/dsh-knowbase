@@ -17,7 +17,8 @@
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { KnowbaseSourceAction } from '../src/client/citation-button.tsx'
+import { KnowbaseSourceAction, KnowbaseSourceOverlay } from '../src/client/citation-button.tsx'
+import { closeSources, showSources } from '../src/client/citation-dialog.ts'
 
 const PASSAGE = {
   kbName: '产品资料1',
@@ -69,6 +70,8 @@ describe('KnowbaseSourceAction render', () => {
       createElement(KnowbaseSourceAction, { messageId: 'm-1', ...liveKit }),
     )
     expect(html).toContain('知识库来源')
+    expect(html).toContain('data-kb-source-icon')
+    expect(html).toContain('aria-label="知识库来源 1"')
   })
 
   it('numbers the button with the passage count', () => {
@@ -167,5 +170,25 @@ describe('KnowbaseSourceAction status badge', () => {
     const html = renderToString(createElement(KnowbaseSourceAction, { messageId: 'm-1', ...kit }))
     expect(html).toContain('知识库来源')
     expect(html).not.toContain('未检索到相关知识')
+  })
+})
+
+describe('KnowbaseSourceOverlay layout', () => {
+  it('uses the compact official-style surface and omits redundant citation metadata', () => {
+    const owner = {}
+    showSources({ owner, passages: [
+      PASSAGE,
+      { ...PASSAGE, materialTitle: '安装手册', locator: '第 2 段', text: '请先断开电源。' },
+    ], restoreFocus: null })
+    try {
+      const html = renderToString(createElement(KnowbaseSourceOverlay))
+      expect(html).toContain('data-kb-source-dialog')
+      expect(html).toContain('data-kb-source-filter')
+      expect(html).toContain('border-radius:12px')
+      expect(html).not.toContain('引用 ID:')
+      expect(html).not.toContain('编号与回答中的')
+    } finally {
+      closeSources(owner)
+    }
   })
 })

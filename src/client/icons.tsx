@@ -39,6 +39,8 @@ const PATHS = {
   lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   'folder-open':
     '<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/>',
+  'knowledge-base':
+    '<path d="M12 6.5C10 5 7.5 4.5 5 4.5v13c2.5 0 5 .5 7 2"/><path d="M12 6.5c2-1.5 4.5-2 7-2v13c-2.5 0-5 .5-7 2"/><path d="M12 6.5v13"/>',
 } as const
 
 /** One icon name. */

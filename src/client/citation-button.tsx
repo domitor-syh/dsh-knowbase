@@ -4,17 +4,29 @@ import { openMaterialInReader } from './reader.ts'
 import { closeSources, showSources, sourceDialogActive, useSourceDialog } from './citation-dialog.ts'
 import { useCitationText } from './citation-locale.ts'
 import { citationCopyText, citationLabel, copyCitation, sourceGroups, validCitationId, type CopyResult } from './citation-view.ts'
+import { Icon } from './icons.tsx'
 
 const COLORS = {
-  border: 'var(--dsw-alias-border-l1)', muted: 'var(--dsw-alias-label-secondary)',
-  text: 'var(--dsw-alias-label-primary)', accent: 'var(--dsw-alias-brand-primary)',
-  danger: 'var(--dsw-alias-state-error-primary)', surface: 'var(--dsw-alias-bg-overlay)',
-  subtle: 'var(--dsw-alias-bg-layer-2)', warn: 'var(--dsw-alias-state-warn-primary)',
+  border: 'var(--dsw-alias-border-l1)',
+  text: 'var(--dsw-alias-label-primary)',
+  muted: 'var(--dsw-alias-label-secondary)',
+  accent: 'var(--dsw-alias-brand-primary)',
+  danger: 'var(--dsw-alias-state-error-primary)',
+  surface: 'var(--dsw-alias-bg-layer-1)',
+  card: 'var(--dsw-alias-bg-layer-2)',
 } as const
+
 const control: React.CSSProperties = {
-  border: `1px solid ${COLORS.border}`, borderRadius: 5, padding: '4px 8px',
-  background: COLORS.surface, color: COLORS.text, fontSize: 12, cursor: 'pointer',
+  border: `1px solid ${COLORS.border}`,
+  borderRadius: 6,
+  padding: '5px 9px',
+  background: 'transparent',
+  color: COLORS.text,
+  fontSize: 12,
+  lineHeight: 1.2,
+  cursor: 'pointer',
 }
+
 interface Props { readonly messageId?: unknown; readonly useSession?: unknown; readonly useChat?: unknown }
 
 function PassageRow({ passage, index, onOpened }: {
@@ -29,10 +41,10 @@ function PassageRow({ passage, index, onOpened }: {
   const text = citationCopyText(passage, index, {
     base: t('base'), file: t('file'), location: t('location'), id: t('id'), legacy: t('legacy'), hidden: t('hidden'),
   })
-  const label = (value: string) => citationLabel(value, t('hidden'))
   const onCopy = async (): Promise<void> => {
     if (busy.current) return
-    busy.current = true; setCopy('busy')
+    busy.current = true
+    setCopy('busy')
     let result: CopyResult
     try { result = await copyCitation(text, globalThis.navigator?.clipboard) }
     catch { result = 'failed' }
@@ -43,36 +55,44 @@ function PassageRow({ passage, index, onOpened }: {
     if (passage.kbId === undefined || passage.materialId === undefined) return
     try {
       const problem = openMaterialInReader({
-        kbId: passage.kbId, materialId: passage.materialId,
-        ...(passage.ordinal === undefined ? {} : { chunk: passage.ordinal }), title: passage.materialTitle,
+        kbId: passage.kbId,
+        materialId: passage.materialId,
+        ...(passage.ordinal === undefined ? {} : { chunk: passage.ordinal }),
+        title: passage.materialTitle,
       })
       if (problem === undefined) onOpened()
       else setFailure(true)
     } catch { setFailure(true) }
   }
   return (
-    <div data-kb-passage style={{ border: `1px solid ${COLORS.border}`, borderRadius: 6, background: COLORS.subtle, padding: 10, marginTop: 8, overflowWrap: 'anywhere' }}>
-      <div data-kb-passage-header style={{ fontSize: 12, color: COLORS.accent }}>
-        [{index + 1}] {label(passage.kbName)} / {label(passage.materialTitle)} · {label(passage.locator)}
+    <article data-kb-passage data-kb-passage-index={index + 1} style={{
+      border: `1px solid ${COLORS.border}`, borderRadius: 8, background: COLORS.card,
+      padding: '10px 12px', marginTop: 8, overflowWrap: 'anywhere',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <span data-kb-passage-header style={{ minWidth: 0, fontSize: 12, color: COLORS.muted, overflowWrap: 'anywhere' }}>
+          [{index + 1}] · {citationLabel(passage.locator, t('hidden'))}
+        </span>
+        <div style={{ display: 'flex', flex: 'none', gap: 6 }}>
+          <button type="button" style={control} onClick={() => { void onCopy() }} disabled={copy === 'busy'}>
+            {copy === 'busy' ? t('copying') : t('copy')}
+          </button>
+          {passage.kbId !== undefined && passage.materialId !== undefined ? (
+            <button type="button" data-kb-open-in-reader title={t('openHint')} style={control} onClick={onOpen}>{t('open')}</button>
+          ) : null}
+        </div>
       </div>
-      <div style={{ fontSize: 11, color: COLORS.muted, margin: '4px 0', overflowWrap: 'anywhere' }}>
-        {validCitationId(passage.citationId) ? `${t('id')}: ${passage.citationId}` : t('legacy')}
+      <div data-kb-passage-text style={{ marginTop: 8, fontSize: 13, lineHeight: 1.65, whiteSpace: 'pre-wrap', color: COLORS.text }}>
+        {passage.text}
       </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '8px 0' }}>
-        <button type="button" style={control} onClick={() => { void onCopy() }} disabled={copy === 'busy'}>{copy === 'busy' ? t('copying') : t('copy')}</button>
-        {passage.kbId !== undefined && passage.materialId !== undefined ? (
-          <button type="button" data-kb-open-in-reader title={t('openHint')} style={control} onClick={onOpen}>{t('open')}</button>
-        ) : null}
-      </div>
-      <div role="status" aria-live="polite" style={{ color: COLORS.muted, fontSize: 12 }}>
+      <div role="status" aria-live="polite" style={{ color: COLORS.muted, fontSize: 11, marginTop: copy === undefined || copy === 'busy' ? 0 : 6 }}>
         {copy === undefined || copy === 'busy' ? null : t(copy)}
       </div>
       {copy === 'failed' || copy === 'unavailable' ? (
-        <textarea aria-label={t('manual')} readOnly value={text} rows={6} onFocus={event => event.currentTarget.select()} style={{ ...control, width: '100%', boxSizing: 'border-box', cursor: 'text', marginTop: 6 }} />
+        <textarea aria-label={t('manual')} readOnly value={text} rows={4} onFocus={event => event.currentTarget.select()} style={{ ...control, width: '100%', boxSizing: 'border-box', cursor: 'text', marginTop: 6 }} />
       ) : null}
-      <div data-kb-passage-text style={{ fontSize: 13, whiteSpace: 'pre-wrap', color: COLORS.text }}>{passage.text}</div>
       {failure ? <div role="alert" style={{ fontSize: 12, color: COLORS.danger, marginTop: 6 }}>{t('openFailed')}</div> : null}
-    </div>
+    </article>
   )
 }
 
@@ -90,7 +110,7 @@ function SourceOverlay({ passages, onClose, owner }: { passages: readonly Source
       if (!sourceDialogActive(owner)) return
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
       if (event.key !== 'Tab' || root === null) return
-      const items = [...root.querySelectorAll<HTMLElement>('button:not(:disabled), select, textarea, summary')].filter(item => item.getClientRects().length > 0)
+      const items = [...root.querySelectorAll<HTMLElement>('button:not(:disabled), select, textarea')].filter(item => item.getClientRects().length > 0)
       const first = items[0], last = items[items.length - 1]
       if (first === undefined || last === undefined) { event.preventDefault(); root.focus(); return }
       if (event.shiftKey && (document.activeElement === first || document.activeElement === root)) { event.preventDefault(); last.focus() }
@@ -104,29 +124,51 @@ function SourceOverlay({ passages, onClose, owner }: { passages: readonly Source
     return () => { document.removeEventListener('keydown', onKeyDown, true); document.removeEventListener('focusin', onFocus) }
   }, [onClose, owner])
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'color-mix(in srgb, var(--dsw-alias-bg-base) 65%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, pointerEvents: 'auto' }} onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={t('sources')} tabIndex={-1} ref={dialog} onClick={event => event.stopPropagation()} style={{ color: COLORS.text, background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 10, width: '100%', maxWidth: 720, maxHeight: '85vh', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: 16, borderBottom: `1px solid ${COLORS.border}` }}>
-          <strong>{t('sources')} ({passages.length})</strong>
-          <button type="button" onClick={onClose} style={control}>{t('close')}</button>
-        </div>
-        <div style={{ padding: '12px 16px' }}>
-          <label style={{ fontSize: 12 }}>{t('filter')}<select value={selected} onChange={event => setSelected(event.currentTarget.value)} style={{ ...control, display: 'block', width: '100%', marginTop: 6 }}>
-            <option value="">{t('all')}</option>
-            {groups.map((group, i) => <option key={group.key} value={group.key}>{i + 1}. {citationLabel(group.kbName, t('hidden'))} / {citationLabel(group.materialTitle, t('hidden'))} ({group.entries.length})</option>)}
-          </select></label>
-        </div>
-        <div style={{ padding: '0 16px 16px', overflowY: 'auto', minHeight: 0 }}>
-          {visible.map(group => <details key={group.key} open style={{ borderTop: `1px solid ${COLORS.border}`, padding: '10px 0' }}>
-            <summary style={{ cursor: 'pointer', fontSize: 13, overflowWrap: 'anywhere' }}>{citationLabel(group.kbName, t('hidden'))} / {citationLabel(group.materialTitle, t('hidden'))} ({group.entries.length})</summary>
-            {group.entries.map(({ passage, index }) => <PassageRow key={index} passage={passage} index={index} onOpened={onClose} />)}
-          </details>)}
-          <p style={{ fontSize: 12, color: COLORS.muted }}>{t('note')}</p>
+    <div data-kb-source-overlay style={{
+      position: 'fixed', inset: 0, zIndex: 90, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20, background: 'color-mix(in srgb, var(--dsw-alias-bg-base) 68%, transparent)', pointerEvents: 'auto',
+    }} onClick={onClose}>
+      <div data-kb-source-dialog role="dialog" aria-modal="true" aria-label={t('sources')} tabIndex={-1} ref={dialog} onClick={event => event.stopPropagation()} style={{
+        color: COLORS.text, background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 12,
+        width: '100%', maxWidth: 720, maxHeight: '82vh', display: 'flex', flexDirection: 'column', minHeight: 0,
+        overflow: 'hidden', boxShadow: '0 12px 32px color-mix(in srgb, var(--dsw-alias-bg-base) 35%, transparent)',
+      }}>
+        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', borderBottom: `1px solid ${COLORS.border}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <strong style={{ fontSize: 15, fontWeight: 600 }}>{t('sources')}</strong>
+            <span style={{ color: COLORS.muted, fontSize: 12 }}>{passages.length}</span>
+          </div>
+          <button type="button" aria-label={t('close')} title={t('close')} onClick={onClose} style={{ ...control, width: 28, height: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="x" size={15} />
+          </button>
+        </header>
+        {groups.length > 1 ? (
+          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${COLORS.border}` }}>
+            <select data-kb-source-filter aria-label={t('filter')} value={selected} onChange={event => setSelected(event.currentTarget.value)} style={{ ...control, width: '100%', background: COLORS.card }}>
+              <option value="">{t('all')} · {passages.length}</option>
+              {groups.map(group => <option key={group.key} value={group.key}>{citationLabel(group.materialTitle, t('hidden'))} · {group.entries.length}</option>)}
+            </select>
+          </div>
+        ) : null}
+        <div data-kb-source-list style={{ padding: '4px 16px 16px', overflowY: 'auto', minHeight: 0 }}>
+          {visible.map(group => (
+            <section key={group.key} data-kb-source-group aria-label={`${citationLabel(group.materialTitle, t('hidden'))} ${group.entries.length}`}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, padding: '12px 0 2px' }}>
+                <div style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                  <strong style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>{citationLabel(group.materialTitle, t('hidden'))}</strong>
+                  <span style={{ display: 'block', marginTop: 2, color: COLORS.muted, fontSize: 11 }}>{citationLabel(group.kbName, t('hidden'))}</span>
+                </div>
+                <span style={{ flex: 'none', color: COLORS.muted, fontSize: 11 }}>{group.entries.length}</span>
+              </div>
+              {group.entries.map(({ passage, index }) => <PassageRow key={`${group.key}-${index}`} passage={passage} index={index} onOpened={onClose} />)}
+            </section>
+          ))}
         </div>
       </div>
     </div>
   )
 }
+
 const dismissSources = () => closeSources()
 export function KnowbaseSourceOverlay(): React.ReactElement | null {
   const state = useSourceDialog()
@@ -149,7 +191,7 @@ function StatusBadge({ outcome }: { outcome: AnswerOutcome }): React.ReactElemen
   const base = known ? t(`${status.outcome}Hint` as 'no_matchHint') : text
   const hint = status.reason === '' ? base : `${base}（${citationLabel(status.reason, t('hidden'))}）`
   return <span title={hint} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', fontSize: 12, color: COLORS.muted }}>
-    <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 3, background: COLORS.warn }} />{text}
+    <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 3, background: 'var(--dsw-alias-state-warn-primary)' }} />{text}
   </span>
 }
 
@@ -166,7 +208,15 @@ export function KnowbaseSourceAction(props: Props): React.ReactElement | null {
   const outcome = typeof messageId === 'string' ? outcomeForAnswer(chat, messageId) : undefined
   if (outcome === undefined) return null
   if (outcome.passages.length === 0) return <StatusBadge outcome={outcome} />
-  return <button type="button" title={t('view')} onClick={event => showSources({ owner: owner.current, passages: outcome.passages, restoreFocus: event.currentTarget })} style={{ border: 'none', background: 'transparent', padding: '2px 6px', fontSize: 12, color: COLORS.muted, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-    <span aria-hidden="true" style={{ padding: '0 5px', borderRadius: 4, border: `1px solid ${COLORS.border}`, fontSize: 11, color: COLORS.accent }}>{outcome.passages.length}</span>{t('sources')}
+  return <button
+    type="button"
+    data-kb-source-action
+    aria-label={`${t('sources')} ${outcome.passages.length}`}
+    title={t('view')}
+    onClick={event => showSources({ owner: owner.current, passages: outcome.passages, restoreFocus: event.currentTarget })}
+    style={{ border: 0, borderRadius: 6, background: 'transparent', padding: '3px 5px', color: COLORS.muted, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, lineHeight: 1 }}
+  >
+    <span data-kb-source-icon style={{ display: 'inline-flex', alignItems: 'center', color: 'currentColor' }}><Icon name="knowledge-base" size={15} /></span>
+    <span>{outcome.passages.length}</span>
   </button>
 }
