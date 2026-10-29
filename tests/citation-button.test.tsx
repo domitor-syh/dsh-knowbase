@@ -71,6 +71,9 @@ describe('KnowbaseSourceAction render', () => {
     )
     expect(html).toContain('知识库来源')
     expect(html).toContain('data-kb-source-icon')
+    expect(html).toContain('width="24" height="24"')
+    expect(html).toContain('data-kb-source-count')
+    expect(html).toContain('class="kb-source-action"')
     expect(html).toContain('aria-label="知识库来源 1"')
   })
 
@@ -184,7 +187,9 @@ describe('KnowbaseSourceOverlay layout', () => {
       const html = renderToString(createElement(KnowbaseSourceOverlay))
       expect(html).toContain('data-kb-source-dialog')
       expect(html).toContain('data-kb-source-filter')
-      expect(html).toContain('border-radius:12px')
+      expect(html).toContain('border-radius:24px')
+      expect(html).toContain('aria-haspopup="listbox"')
+      expect(html).not.toContain('<select')
       expect(html).not.toContain('引用 ID:')
       expect(html).not.toContain('编号与回答中的')
     } finally {

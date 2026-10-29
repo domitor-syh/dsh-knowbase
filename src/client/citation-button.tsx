@@ -5,6 +5,7 @@ import { closeSources, showSources, sourceDialogActive, useSourceDialog } from '
 import { useCitationText } from './citation-locale.ts'
 import { citationCopyText, citationLabel, copyCitation, sourceGroups, validCitationId, type CopyResult } from './citation-view.ts'
 import { Icon } from './icons.tsx'
+import { SourceFilter } from './source-filter.tsx'
 
 const COLORS = {
   border: 'var(--dsw-alias-border-l1)',
@@ -108,9 +109,12 @@ function SourceOverlay({ passages, onClose, owner }: { passages: readonly Source
     root?.focus()
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!sourceDialogActive(owner)) return
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
+      if (event.key === 'Escape') {
+        if (root?.querySelector('[data-kb-source-filter] [aria-expanded="true"]')) return
+        event.preventDefault(); event.stopPropagation(); onClose(); return
+      }
       if (event.key !== 'Tab' || root === null) return
-      const items = [...root.querySelectorAll<HTMLElement>('button:not(:disabled), select, textarea')].filter(item => item.getClientRects().length > 0)
+      const items = [...root.querySelectorAll<HTMLElement>('button:not(:disabled), textarea, [role="listbox"]')].filter(item => item.getClientRects().length > 0)
       const first = items[0], last = items[items.length - 1]
       if (first === undefined || last === undefined) { event.preventDefault(); root.focus(); return }
       if (event.shiftKey && (document.activeElement === first || document.activeElement === root)) { event.preventDefault(); last.focus() }
@@ -129,7 +133,7 @@ function SourceOverlay({ passages, onClose, owner }: { passages: readonly Source
       padding: 20, background: 'color-mix(in srgb, var(--dsw-alias-bg-base) 68%, transparent)', pointerEvents: 'auto',
     }} onClick={onClose}>
       <div data-kb-source-dialog role="dialog" aria-modal="true" aria-label={t('sources')} tabIndex={-1} ref={dialog} onClick={event => event.stopPropagation()} style={{
-        color: COLORS.text, background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 12,
+        color: COLORS.text, background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 24, outline: 'none',
         width: '100%', maxWidth: 720, maxHeight: '82vh', display: 'flex', flexDirection: 'column', minHeight: 0,
         overflow: 'hidden', boxShadow: '0 12px 32px color-mix(in srgb, var(--dsw-alias-bg-base) 35%, transparent)',
       }}>
@@ -143,11 +147,11 @@ function SourceOverlay({ passages, onClose, owner }: { passages: readonly Source
           </button>
         </header>
         {groups.length > 1 ? (
-          <div style={{ padding: '10px 16px', borderBottom: `1px solid ${COLORS.border}` }}>
-            <select data-kb-source-filter aria-label={t('filter')} value={selected} onChange={event => setSelected(event.currentTarget.value)} style={{ ...control, width: '100%', background: COLORS.card }}>
-              <option value="">{t('all')} · {passages.length}</option>
-              {groups.map(group => <option key={group.key} value={group.key}>{citationLabel(group.materialTitle, t('hidden'))} · {group.entries.length}</option>)}
-            </select>
+          <div style={{ flex: 'none', position: 'relative', zIndex: 1, padding: '10px 16px', borderBottom: `1px solid ${COLORS.border}` }}>
+            <SourceFilter label={t('filter')} value={selected} onChange={setSelected} options={[
+              { value: '', label: `${t('all')} · ${passages.length}` },
+              ...groups.map(group => ({ value: group.key, label: `${citationLabel(group.materialTitle, t('hidden'))} · ${group.entries.length}` })),
+            ]} />
           </div>
         ) : null}
         <div data-kb-source-list style={{ padding: '4px 16px 16px', overflowY: 'auto', minHeight: 0 }}>
@@ -214,9 +218,9 @@ export function KnowbaseSourceAction(props: Props): React.ReactElement | null {
     aria-label={`${t('sources')} ${outcome.passages.length}`}
     title={t('view')}
     onClick={event => showSources({ owner: owner.current, passages: outcome.passages, restoreFocus: event.currentTarget })}
-    style={{ border: 0, borderRadius: 6, background: 'transparent', padding: '3px 5px', color: COLORS.muted, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, lineHeight: 1 }}
+    className="kb-source-action"
   >
-    <span data-kb-source-icon style={{ display: 'inline-flex', alignItems: 'center', color: 'currentColor' }}><Icon name="knowledge-base" size={15} /></span>
-    <span>{outcome.passages.length}</span>
+    <span data-kb-source-icon><Icon name="knowledge-base" size={24} /></span>
+    <span data-kb-source-count>{outcome.passages.length}</span>
   </button>
 }
