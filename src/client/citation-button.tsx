@@ -220,7 +220,7 @@ export function KnowbaseSourceAction(props: Props): React.ReactElement | null {
     onClick={event => showSources({ owner: owner.current, passages: outcome.passages, restoreFocus: event.currentTarget })}
     className="kb-source-action"
   >
-    <span data-kb-source-icon><Icon name="knowledge-base" size={18} /></span>
+    <span data-kb-source-icon><Icon name="knowledge-base" size={17} /></span>
     <span data-kb-source-count>{outcome.passages.length}</span>
   </button>
 }

@@ -16,7 +16,7 @@ export const SOURCE_CSS = `
 .kb-source-action { box-sizing: border-box; flex: none; height: calc(28px + var(--dsh-content-font-delta, 0px)); padding: 2px 5px; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; font: inherit; line-height: 1; }
 .kb-source-action:hover, .kb-source-action:focus-visible { background: var(--dsw-alias-border-l1); }
 .kb-source-action:focus-visible { outline: 1px solid var(--dsw-alias-label-secondary); outline-offset: 2px; }
-.kb-source-action [data-kb-source-icon] { display: inline-flex; align-items: center; width: calc(18px + var(--dsh-content-font-delta, 0px)); height: calc(18px + var(--dsh-content-font-delta, 0px)); }
+.kb-source-action [data-kb-source-icon] { display: inline-flex; align-items: center; width: calc(17px + var(--dsh-content-font-delta, 0px)); height: calc(17px + var(--dsh-content-font-delta, 0px)); }
 .kb-source-action [data-kb-source-icon] svg { width: 100%; height: 100%; }
 .kb-source-action [data-kb-source-count] { padding: 1px 5px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 4px; font-size: calc(11px + var(--dsh-content-font-delta, 0px)); line-height: 16px; font-variant-numeric: tabular-nums; }
 /* Host extraActions is before Branch, not a fully ordered toolbar. Move only

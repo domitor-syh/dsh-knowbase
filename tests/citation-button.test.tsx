@@ -71,7 +71,7 @@ describe('KnowbaseSourceAction render', () => {
     )
     expect(html).toContain('知识库来源')
     expect(html).toContain('data-kb-source-icon')
-    expect(html).toContain('width="18" height="18"')
+    expect(html).toContain('width="17" height="17"')
     expect(html).toContain('data-kb-source-count')
     expect(html).toContain('class="kb-source-action"')
     expect(html).toContain('aria-label="知识库来源 1"')
