@@ -132,7 +132,7 @@ export function apply(ctx: Context): void {
 
   ctx.slots.inject('sidebar.panellist', () =>
     ctx.slots.register(
-      { name: 'sidebar.panellist', id: PANEL_ID, order: 50, label: () => '知识库' },
+      { name: 'sidebar.panellist', id: PANEL_ID, order: 11, label: () => '知识库' },
       KnowbasePanelIcon,
     ),
   )
