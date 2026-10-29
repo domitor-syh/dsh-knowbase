@@ -2,12 +2,12 @@ import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { pageTokens } from './page-style.ts'
 import { useColorScheme } from './theme.ts'
-import { useUiText } from './ui-locale.ts'
+import { uiLanguage, useUiText } from './ui-locale.ts'
 
 export type TestScope = 'base' | 'all'
 
 const OPTIONS = [
-  { value: 'base', label: ['当前库', 'Current base'] },
+  { value: 'base', label: ['当前库', 'Current'] },
   { value: 'all', label: ['全部库', 'All bases'] },
 ] as const
 
@@ -132,7 +132,7 @@ export function ScopePicker(props: {
   }
 
   return (
-    <div className="kb-scope-picker">
+    <div className="kb-scope-picker" lang={uiLanguage()}>
       <button
         ref={trigger}
         type="button"
@@ -157,7 +157,7 @@ export function ScopePicker(props: {
           }
         }}
       >
-        <span id={`${id}-value`}>{value === 'all' ? tx('全部库', 'All bases') : tx('当前库', 'Current base')}</span>
+        <span id={`${id}-value`}>{value === 'all' ? tx('全部库', 'All bases') : tx('当前库', 'Current')}</span>
         <span className="kb-scope-chevron" aria-hidden="true">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" focusable="false">
             <path d="m6 9 6 6 6-6" />
