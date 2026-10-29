@@ -177,9 +177,12 @@ export function titleOfParams(params: unknown): string | undefined {
  * obviously provisional: a truncated id reads as "not loaded yet", where an
  * empty chip reads as a bug.
  */
+import { uiText } from './ui-locale.ts'
+
 export function provisionalTitle(address: string): string {
+
   const parts = parseReaderAddress(address)
-  if (parts === undefined) return '知识库文件'
+  if (parts === undefined) return uiText('知识库文件', 'Knowledge base file')
   // A material id is a relative path now, so the chip shows the file's own name
   // rather than the first characters of a folder it may sit under.
   const segments = parts.materialId.split('/')

@@ -1,5 +1,6 @@
 import * as React from 'react'
 import type { ScanReport } from '../core/service.ts'
+import { uiLanguage } from './ui-locale.ts'
 import { useCitationText } from './citation-locale.ts'
 
 /** Read-only presentation of the service's last committed scan snapshot. */
@@ -15,7 +16,7 @@ export function ScanSummary({ report }: { report?: ScanReport }): React.ReactEle
     <strong>{t('scanTitle')}</strong>
     {report === undefined ? <p>{t('scanNone')}</p> : <>
       <p style={{ margin: '6px 0', color: 'var(--dsw-alias-label-secondary)' }}>
-        {report.mode === 'force' ? t('scanForce') : t('scanIncremental')} · {t('scanTime')}: {new Date(report.completedAt).toLocaleString()} · {t('scanDuration')}: {Math.round(report.elapsedMs)} ms
+        {report.mode === 'force' ? t('scanForce') : t('scanIncremental')} · {t('scanTime')}: {new Date(report.completedAt).toLocaleString(uiLanguage() === 'en' ? 'en-US' : 'zh-CN')} · {t('scanDuration')}: {Math.round(report.elapsedMs)} ms
       </p>
       <dl style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 18px', margin: '8px 0' }}>
         {counts.map(([label, value]) => <div key={label} style={{ display: 'flex', gap: 6 }}>

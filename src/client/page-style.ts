@@ -551,6 +551,7 @@ const CSS = `
 
 /* 检索测试 */
 .kb-scope-picker { flex: 0 0 90px; width: 90px; }
+.kb-scope-picker:lang(en) { flex-basis: 122px; width: 122px; }
 .kb-scope-trigger {
   display: flex;
   align-items: center;

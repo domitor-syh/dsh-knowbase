@@ -5,6 +5,7 @@ import { closeSources, showSources, sourceDialogActive, useSourceDialog } from '
 import { useCitationText } from './citation-locale.ts'
 import { citationCopyText, citationLabel, copyCitation, sourceGroups, validCitationId, type CopyResult } from './citation-view.ts'
 import { Icon } from './icons.tsx'
+import { localizeError, localizeLocator, uiText } from './ui-locale.ts'
 import { SourceFilter } from './source-filter.tsx'
 
 const COLORS = {
@@ -72,7 +73,7 @@ function PassageRow({ passage, index, onOpened }: {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <span data-kb-passage-header style={{ minWidth: 0, fontSize: 12, color: COLORS.muted, overflowWrap: 'anywhere' }}>
-          [{index + 1}] · {citationLabel(passage.locator, t('hidden'))}
+          [{index + 1}] · {citationLabel(localizeLocator(passage.locator), t('hidden'))}
         </span>
         <div style={{ display: 'flex', flex: 'none', gap: 6 }}>
           <button type="button" style={control} onClick={() => { void onCopy() }} disabled={copy === 'busy'}>
@@ -193,7 +194,8 @@ function StatusBadge({ outcome }: { outcome: AnswerOutcome }): React.ReactElemen
   const known = ['no_match', 'not_ready', 'no_selection', 'empty_scope', 'error'].includes(status.outcome)
   const text = known ? t(status.outcome as 'no_match') : status.outcome
   const base = known ? t(`${status.outcome}Hint` as 'no_matchHint') : text
-  const hint = status.reason === '' ? base : `${base}（${citationLabel(status.reason, t('hidden'))}）`
+  const reason = citationLabel(localizeError(status.reason), t('hidden'))
+  const hint = status.reason === '' ? base : uiText(`${base}（${reason}）`, `${base} (${reason})`)
   return <span title={hint} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 6px', fontSize: 12, color: COLORS.muted }}>
     <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 3, background: 'var(--dsw-alias-state-warn-primary)' }} />{text}
   </span>

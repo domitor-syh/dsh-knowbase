@@ -75,8 +75,12 @@ const en: Record<keyof typeof zh, string> = {
 let translate: CitationText = key => zh[key]
 let revision = 0
 const listeners = new Set<() => void>()
-const subscribe = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn) } }
-const snapshot = () => revision
+export const subscribeUiLocale = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn) } }
+export const uiLocaleSnapshot = () => revision
+let activeLanguage: () => string = () => 'zh'
+export const currentUiLanguage = (): 'en' | 'zh' => activeLanguage().toLowerCase().startsWith('zh') ? 'zh' : 'en'
+const subscribe = subscribeUiLocale
+const snapshot = uiLocaleSnapshot
 const publish = () => { revision++; listeners.forEach(fn => fn()) }
 
 export function useCitationText(): CitationText {
@@ -88,16 +92,19 @@ export function installCitationLocale(ctx: Context): void {
     register(ns: string, locale: string, dict: Record<string, string>): () => void
     bind(ns: string): (key: string) => string
     subscribe(fn: () => void): () => void
+    getLocale(): { active: string }
   } }).locale
   ctx.effect(() => {
     const offZh = locale.register('knowbase-citations', 'zh', { ...zh })
     const offEn = locale.register('knowbase-citations', 'en', { ...en })
     const bound = locale.bind('knowbase-citations')
+    activeLanguage = () => locale.getLocale().active
     translate = key => bound(key)
     const offChange = locale.subscribe(publish)
     publish()
     return () => {
       offChange(); offEn(); offZh()
+      activeLanguage = () => 'zh'
       translate = key => zh[key]
       publish()
     }

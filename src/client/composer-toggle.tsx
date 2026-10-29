@@ -54,6 +54,7 @@ import {
   toggleBaseSelection,
 } from './labels.ts'
 import { usePalette } from './theme.ts'
+import { useUiText, localizeError } from './ui-locale.ts'
 
 /** Props the seat composes: the inject face supplies the session. */
 interface Props {
@@ -311,6 +312,7 @@ function BaseRow(props: {
 
 /** The composer pill and its popover. */
 export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
+  const tx = useUiText()
   const { sessionId } = props
   const palette = usePalette()
   const [scope, setScope] = React.useState<SessionScopeView | undefined>(undefined)
@@ -519,7 +521,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
 
       {open && anchor !== undefined &&
         createPortal(
-          <div ref={popover} role="dialog" aria-label="知识库" style={panel}>
+          <div ref={popover} role="dialog" aria-label={tx('知识库', 'Knowledge bases')} style={panel}>
             <div style={{ padding: 10 }}>
               <span style={{ position: 'relative', display: 'block' }}>
                 <SearchGlyph />
@@ -527,8 +529,8 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
                   data-kb-search
                   type="text"
                   value={query}
-                  placeholder="搜索知识库"
-                  aria-label="搜索知识库"
+                  placeholder={tx('搜索知识库', 'Search knowledge bases')}
+                  aria-label={tx('搜索知识库', 'Search knowledge bases')}
                   onChange={event => setQuery(event.target.value)}
                   style={{
                     width: '100%',
@@ -551,7 +553,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
 
             <div
               role="group"
-              aria-label="检索范围"
+              aria-label={tx('检索范围', 'Search scope')}
               style={{
                 padding: '2px 10px 8px',
                 maxHeight: 264,
@@ -565,8 +567,8 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
                   name={base.name}
                   detail={
                     base.materialCount === 0
-                      ? '暂无文件'
-                      : `${base.materialCount} 个文件`
+                      ? tx('暂无文件', 'No files yet')
+                      : tx(`${base.materialCount} 个文件`, `${base.materialCount} files`)
                   }
                   checked={isBaseSelected(scope, base.id)}
                   disabled={busy || !ready}
@@ -581,17 +583,17 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
               ))}
 
               {bases.length === 0 && (
-                <p style={warning}>还没有知识库。点左侧栏的「知识库」图标去新建一个。</p>
+                <p style={warning}>{tx('还没有知识库。点左侧栏的「知识库」图标去新建一个。', 'No knowledge bases yet. Use the Knowledge bases icon in the sidebar to create one.')}</p>
               )}
               {bases.length > 0 && visible.length === 0 && (
-                <p style={warning}>没有匹配的知识库。</p>
+                <p style={warning}>{tx('没有匹配的知识库。', 'No matching knowledge bases.')}</p>
               )}
               {missing.length > 0 && (
                 <p style={{ ...warning, color: '#e5484d' }}>
-                  原来选择的知识库已被删除，请重新选择（不会自动改为全部）。
+                  {tx('原来选择的知识库已被删除，请重新选择（不会自动改为全部）。', 'A previously selected knowledge base was deleted. Select again; the scope will not automatically switch to all bases.')}
                 </p>
               )}
-              {error !== '' && <p style={{ ...warning, color: '#e5484d' }}>{error}</p>}
+              {error !== '' && <p style={{ ...warning, color: '#e5484d' }}>{localizeError(error)}</p>}
             </div>
 
             <div
@@ -607,9 +609,9 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
               }}
             >
               <span data-kb-count style={{ fontSize: 12, color: palette.muted }}>
-                开启{' '}
+                {tx('开启', 'Enabled')}{' '}
                 <strong style={{ color: palette.text, fontWeight: 600 }}>{count}</strong>/
-                {bases.length} 个知识库
+                {bases.length} {tx('个知识库', 'knowledge bases')}
               </span>
               <button
                 type="button"
@@ -632,7 +634,7 @@ export function ComposerKnowbaseToggle(props: Props): React.ReactElement {
                   opacity: bases.length === 0 ? 0.5 : 1,
                 }}
               >
-                {everything ? '全部关闭' : '全部开启'}
+                {everything ? tx('全部关闭', 'Disable all') : tx('全部开启', 'Enable all')}
               </button>
             </div>
           </div>,

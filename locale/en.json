@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Knowledge bases",
+    "description": "Manage local documents, retrieve relevant passages in conversations, and inspect their sources. Text recognition runs locally; no external vector service is required."
+  }
+}

@@ -40,6 +40,7 @@ import type { Context } from '@deepseek-ai/cordis'
 // loaded by the type program. Erased at emit by `verbatimModuleSyntax`.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { knowbaseResourceOfAddress, provisionalTitle, readerAddress } from './reader-address.ts'
+import { localizeError } from './ui-locale.ts'
 import { ReaderPanel, ReaderTitle } from './reader-panel.tsx'
 
 /** Resource type segment, and the key both the protocol and the params map use. */
@@ -71,7 +72,7 @@ let unavailable: string | undefined
  * does nothing is the hardest kind of bug to report.
  */
 export function readerUnavailableReason(): string | undefined {
-  return openTarget === undefined ? (unavailable ?? '资料阅读器尚未就绪，请稍后重试。') : undefined
+  return openTarget === undefined ? localizeError(unavailable ?? '资料阅读器尚未就绪，请稍后重试。') : undefined
 }
 
 /**

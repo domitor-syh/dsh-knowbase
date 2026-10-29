@@ -108,7 +108,8 @@ describe('knowledge-base page UI contracts', () => {
   })
 
   it('separates both recycle-bin explanations as small warning paragraphs', () => {
-    expect(page.match(/<p className="kb-delete-note">删除 = 移入 _回收站，不销毁。<\/p>/g)).toHaveLength(2)
+    expect(page.match(/<p className="kb-delete-note">/g)).toHaveLength(2)
+    expect(page).toContain('Deleting moves items to _回收站; they can be restored.')
     expect(rule('.kb-modal-body .kb-delete-note')).toContain('font-size: 12px')
     expect(rule('.kb-modal-body .kb-delete-note')).toContain('color: var(--state-warning)')
   })
@@ -152,7 +153,7 @@ describe('knowledge-base page UI contracts', () => {
     expect(page).toContain('正在上传并扫描')
     expect(page).toContain('正在扫描全部知识库')
     expect(page).toContain('正在扫描当前知识库')
-    expect(page).toContain('<ProgressOverlay text={progressText} />')
+    expect(page).toContain('<ProgressOverlay text={renderPageMessage(progressText, tx)} />')
     expect(rule('.kb-progress-overlay')).toContain('position: absolute')
     expect(rule('.kb-progress-dialog')).toContain('border-radius: var(--brand-radius-xl)')
   })
@@ -163,8 +164,8 @@ describe('knowledge-base page UI contracts', () => {
     expect(page).toContain('ocr.refresh({ throwOnError: true })')
     expect(page).toContain('检测完成：OCR 语言包已就绪')
     expect(page).toContain('检测完成：缺少')
-    expect(page).toContain("}, '正在删除知识库…')")
-    expect(page).toContain("}, '正在删除文件…')")
+    expect(page).toContain("pageMessage('正在删除知识库…', 'Deleting knowledge base…')")
+    expect(page).toContain("pageMessage('正在删除文件…', 'Deleting file…')")
   })
 
   it('uses a body-level rounded tooltip for immediate file-status feedback', () => {
@@ -200,7 +201,7 @@ describe('knowledge-base page UI contracts', () => {
   })
 
   it('shows only material totals in the composer knowledge-base popover', () => {
-    expect(composer).toContain(": `${base.materialCount} 个文件`")
+    expect(composer).toContain('tx(`${base.materialCount} 个文件`,')
     expect(composer).not.toContain('个文件 / ${base.indexedCount} 可检索')
   })
 

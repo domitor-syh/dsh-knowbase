@@ -30,6 +30,7 @@ import * as React from 'react'
 import type { MaterialDetailView, PassageView } from '../remote.ts'
 import { knowbaseApi, knowbaseChannelError } from './api.ts'
 import { chunkOfParams, parseReaderAddress, provisionalTitle, titleOfParams } from './reader-address.ts'
+import { useUiText, localizeError, localizeLocator } from './ui-locale.ts'
 
 const COLORS = {
   border: '#dce3ed',
@@ -209,6 +210,7 @@ function Notice(props: { children: React.ReactNode }): React.ReactElement {
 
 /** The passage the navigation named, shown whole when it cannot be located inline. */
 function HitCallout(props: { hit: Hit }): React.ReactElement {
+  const tx = useUiText()
   const { passage } = props.hit
   return (
     <div
@@ -224,8 +226,8 @@ function HitCallout(props: { hit: Hit }): React.ReactElement {
       }}
     >
       <div style={{ color: COLORS.warn, marginBottom: 4 }}>
-        命中片段（原文中未能精确定位，可能已被编辑）
-        {passage.locator === '' ? '' : ` · ${passage.locator}`}
+        {tx('命中片段（原文中未能精确定位，可能已被编辑）', 'Matching passage (could not locate it precisely in the source; the document may have been edited)')}
+        {passage.locator === '' ? '' : ` · ${localizeLocator(passage.locator)}`}
       </div>
       <div style={{ whiteSpace: 'pre-wrap', color: COLORS.text }}>{passage.text}</div>
     </div>
@@ -239,6 +241,7 @@ function HitCallout(props: { hit: Hit }): React.ReactElement {
  * viewed twenty images would otherwise hold twenty decoded blobs.
  */
 function ImagePreview(props: { kbId: string; materialId: string; extension: string }): React.ReactElement {
+  const tx = useUiText()
   const { kbId, materialId, extension } = props
   const [url, setUrl] = React.useState<string | undefined>(undefined)
   const [failure, setFailure] = React.useState('')
@@ -275,8 +278,12 @@ function ImagePreview(props: { kbId: string; materialId: string; extension: stri
     }
   }, [kbId, materialId, extension])
 
-  if (failure !== '') return <Notice>{failure}</Notice>
-  if (url === undefined) return <Notice>正在读取图片…</Notice>
+  if (failure !== '') return <Notice>{failure === '文件已不存在，或它太大，无法在这里预览。'
+    ? tx('文件已不存在，或它太大，无法在这里预览。', 'The file no longer exists, or it is too large to preview here.')
+    : failure === '知识库通道尚未就绪。'
+      ? tx('知识库通道尚未就绪。', 'The knowledge base channel is not ready yet.')
+      : localizeError(failure)}</Notice>
+  if (url === undefined) return <Notice>{tx('正在读取图片…', 'Loading image…')}</Notice>
   return (
     <img
       data-kb-reader-image
@@ -304,6 +311,7 @@ export function ReaderView(props: {
   kbId: string
   materialId: string
 }): React.ReactElement {
+  const tx = useUiText()
   const { heading, material, hit, revision, kbId, materialId } = props
   const hitRef = React.useRef<HTMLElement | null>(null)
 
@@ -322,7 +330,7 @@ export function ReaderView(props: {
     return (
       <div>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{heading}</div>
-        <Notice>这份文件已经不存在了，可能已被删除或改名。请回到对话重新检索。</Notice>
+        <Notice>{tx('这份文件已经不存在了，可能已被删除或改名。请回到对话重新检索。', 'This file no longer exists. It may have been deleted or renamed. Return to the conversation and search again.')}</Notice>
       </div>
     )
   }
@@ -342,9 +350,10 @@ export function ReaderView(props: {
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{heading}</div>
         <Notice>
           {material.note === ''
-            ? `这个文件（${material.extension === '' ? '未知格式' : `.${material.extension}`}）暂时无法在应用内预览，` +
-              '插件也还不能从它里面提取可检索的文字。文件本身已保存在知识库文件夹里，可以用系统自带的方式打开。'
-            : material.note}
+            ? tx(`这个文件（${material.extension === '' ? '未知格式' : `.${material.extension}`}）暂时无法在应用内预览，` +
+              '插件也还不能从它里面提取可检索的文字。文件本身已保存在知识库文件夹里，可以用系统自带的方式打开。',
+              `This file (${material.extension === '' ? 'unknown format' : `.${material.extension}`}) cannot be previewed in the app or have searchable text extracted yet. It is saved in the knowledge base folder and can be opened with a system application.`)
+            : localizeError(material.note)}
         </Notice>
       </div>
     )
@@ -379,7 +388,7 @@ export function ReaderView(props: {
       </div>
       {hit !== undefined && range !== undefined ? (
         <div style={{ fontSize: 11, color: COLORS.accent }}>
-          已定位到片段{hit.passage.locator === '' ? '' : ` · ${hit.passage.locator}`}
+          {tx('已定位到片段', 'Passage located')}{hit.passage.locator === '' ? '' : ` · ${localizeLocator(hit.passage.locator)}`}
         </div>
       ) : null}
     </div>
@@ -429,6 +438,7 @@ type LoadState =
  * (`inject: { hooks: { tabInfo } }` becomes `useTabInfo`).
  */
 export function ReaderPanel(props: Record<string, unknown>): React.ReactElement {
+  const tx = useUiText()
   const { address, chunk, title: paramTitle, revision } = useReaderTab(props.useTabInfo)
   const parts = parseReaderAddress(address)
   const kbId = parts?.kbId ?? ''
@@ -457,11 +467,13 @@ export function ReaderPanel(props: Record<string, unknown>): React.ReactElement 
     }
   }, [kbId, materialId, attempt])
 
-  if (state.kind === 'loading') return <Notice>正在读取文件…</Notice>
+  if (state.kind === 'loading') return <Notice>{tx('正在读取文件…', 'Loading file…')}</Notice>
   if (state.kind === 'error') {
     return (
       <div>
-        <Notice>{state.message}</Notice>
+        <Notice>{state.message === '这个标签页没有指向任何文件。'
+          ? tx('这个标签页没有指向任何文件。', 'This tab does not point to a file.')
+          : localizeError(state.message)}</Notice>
         <button
           type="button"
           data-kb-reader-retry
@@ -475,7 +487,7 @@ export function ReaderPanel(props: Record<string, unknown>): React.ReactElement 
             cursor: 'pointer',
           }}
         >
-          重试
+          {tx('重试', 'Retry')}
         </button>
       </div>
     )
@@ -502,6 +514,7 @@ export function ReaderPanel(props: Record<string, unknown>): React.ReactElement 
  * falls back to the loaded material for a tab restored from a saved layout.
  */
 export function ReaderTitle(props: Record<string, unknown>): React.ReactElement {
+  useUiText()
   const { address, title: paramTitle } = useReaderTab(props.useTabInfo)
   const parts = parseReaderAddress(address)
   const kbId = parts?.kbId

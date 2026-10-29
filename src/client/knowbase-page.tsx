@@ -55,6 +55,8 @@ import { MaterialStatus } from './material-status.tsx'
 import { ScanSummary } from './scan-summary.tsx'
 import { useSpin } from './spin.ts'
 import { useColorScheme } from './theme.ts'
+import { localizeError, localizeLocator, useUiText } from './ui-locale.ts'
+import { pageMessage, pageFileManager, pageFormat, renderPageMessage, type PageMessage } from './page-locale.ts'
 
 /**
  * Largest file the browser may push through the Remote channel.
@@ -103,17 +105,17 @@ function formatBytes(bytes: number): string {
  * hand-off colours that as a failure.
  */
 interface Outcome {
-  readonly text: string
+  readonly text: PageMessage
   readonly kind: 'notice' | 'error'
 }
 
 /** A sentence that reports success. */
-function note(text: string): Outcome {
+function note(text: PageMessage): Outcome {
   return { text, kind: 'notice' }
 }
 
 /** A sentence that reports something the user should look at. */
-function problem(text: string): Outcome {
+function problem(text: PageMessage): Outcome {
   return { text, kind: 'error' }
 }
 
@@ -128,13 +130,14 @@ type Dialog =
 function Alert(props: { text: string; kind: 'notice' | 'error'; revision: number }): React.ReactElement {
   const [shown, setShown] = React.useState(false)
   const { text, kind, revision } = props
+  const hasText = text !== ''
 
   React.useEffect(() => {
-    setShown(text !== '')
-    if (text === '') return
+    setShown(hasText)
+    if (!hasText) return
     const timer = window.setTimeout(() => setShown(false), 3000)
     return () => window.clearTimeout(timer)
-  }, [text, kind, revision])
+  }, [hasText, kind, revision])
 
   return (
     <div
@@ -179,6 +182,7 @@ function Modal(props: {
   onClose: () => void
   children?: React.ReactNode
 }): React.ReactElement {
+  const tx = useUiText()
   return (
     <div
       className="kb-modal-overlay"
@@ -196,7 +200,7 @@ function Modal(props: {
         </div>
         <div className="kb-modal-actions">
           <button type="button" className="kb-btn" data-kb-modal-cancel onClick={props.onClose}>
-            取消
+            {tx('取消', 'Cancel')}
           </button>
           <button
             type="button"
@@ -330,6 +334,7 @@ function RowMenu(props: {
   onReveal: () => void
   onDelete: () => void
 }): React.ReactElement {
+  const tx = useUiText()
   const { anchor, items } = props
   const scheme = useColorScheme()
   const [at, setAt] = React.useState<MenuAt>(() => menuPosition(anchor, items))
@@ -365,7 +370,7 @@ function RowMenu(props: {
         onClick={props.onRename}
       >
         <Icon name="pencil" />
-        <span>重命名</span>
+        <span>{tx('重命名', 'Rename')}</span>
       </button>
       {/* Offered only where the desktop has something to open it with; the
           sentence that follows a click is the file manager's own name, so it is
@@ -379,7 +384,7 @@ function RowMenu(props: {
           onClick={props.onReveal}
         >
           <Icon name="folder-open" />
-          <span>从{props.fileManager}打开</span>
+          <span>{pageFormat(tx('从{manager}打开', 'Open in {manager}'), { manager: pageFileManager(props.fileManager, tx) })}</span>
         </button>
       )}
       <button
@@ -390,7 +395,7 @@ function RowMenu(props: {
         onClick={props.onDelete}
       >
         <Icon name="trash" />
-        <span>删除知识库</span>
+        <span>{tx('删除知识库', 'Delete knowledge base')}</span>
       </button>
     </div>,
     document.body,
@@ -406,20 +411,21 @@ function RowMenu(props: {
  * all seven" are different answers.
  */
 export function RetrievalReport(props: { report: SearchReportView; scopeNote: string }): React.ReactElement {
+  const tx = useUiText()
   const { report, scopeNote } = props
   const summary = <div className="kb-report-overview">
     <span className="kb-report-scope">{scopeNote}</span>
     <span className="kb-report-summary">
-      {report.outcome === 'hits' ? `${report.passages.length} 个片段 · ` : ''}{report.elapsedMs} ms
+      {report.outcome === 'hits' ? pageFormat(tx('{count} 个片段 · ', report.passages.length === 1 ? '{count} passage · ' : '{count} passages · '), { count: String(report.passages.length) }) : ''}{report.elapsedMs} ms
     </span>
   </div>
 
   if (report.outcome !== 'hits') {
     const text: Record<string, string> = {
-      no_match: '未找到相关片段，试试更换关键词。',
-      empty_scope: '所选知识库不存在或为空。',
-      not_ready: '所选知识库还没有可检索的文件。上传资料并完成扫描后再试。',
-      error: `检索失败：${report.reason}`,
+      no_match: tx('未找到相关片段，试试更换关键词。', 'No relevant passages found. Try different keywords.'),
+      empty_scope: tx('所选知识库不存在或为空。', 'The selected knowledge bases are missing or empty.'),
+      not_ready: tx('所选知识库还没有可检索的文件。上传资料并完成扫描后再试。', 'The selected knowledge bases have no searchable files yet. Upload materials and complete a scan, then try again.'),
+      error: pageFormat(tx('检索失败：{reason}', 'Search failed: {reason}'), { reason: localizeError(report.reason ?? '') }),
     }
     return <div className="kb-report" data-kb-test-report>
       {summary}
@@ -434,22 +440,22 @@ export function RetrievalReport(props: { report: SearchReportView; scopeNote: st
         {report.passages.map((passage, index) => (
           <li key={`${passage.materialTitle}-${passage.locator}-${index}`} className="kb-hit">
             <h3 className="kb-hit-title">{passage.materialTitle}</h3>
-            <p className="kb-hit-source">{passage.kbName} · {passage.locator}</p>
+            <p className="kb-hit-source">{passage.kbName} · {localizeLocator(passage.locator)}</p>
             <p className="kb-hit-body" data-kb-report-passage>{passage.text}</p>
           </li>
         ))}
       </ol>
       <details className="kb-report-details">
-        <summary>检索详情</summary>
+        <summary>{tx('检索详情', 'Search details')}</summary>
         <ul className="kb-report-metrics">
           {report.passages.map((passage, index) => (
             <li key={`${passage.materialTitle}-${passage.locator}-${index}`}>
-              <span>{passage.kbName} / {passage.materialTitle} · {passage.locator}</span>
-              <span>score {passage.score.toFixed(2)} · 覆盖 {Math.round(passage.coverage * 100)}%</span>
+              <span>{passage.kbName} / {passage.materialTitle} · {localizeLocator(passage.locator)}</span>
+              <span>{pageFormat(tx('score {score} · 覆盖 {coverage}%', 'score {score} · coverage {coverage}%'), { score: passage.score.toFixed(2), coverage: String(Math.round(passage.coverage * 100)) })}</span>
             </li>
           ))}
         </ul>
-        <p className="kb-report-foot">score 只在同一次提问内可比；覆盖偏低说明命中的查询词少，片段可能只是碰巧重叠。</p>
+        <p className="kb-report-foot">{tx('score 只在同一次提问内可比；覆盖偏低说明命中的查询词少，片段可能只是碰巧重叠。', 'Scores are comparable only within the same query. Low coverage means few query terms matched; the overlap may be coincidental.')}</p>
       </details>
     </div>
   )
@@ -457,25 +463,26 @@ export function RetrievalReport(props: { report: SearchReportView; scopeNote: st
 
 /** The knowledge base page body. */
 export function KnowbasePage(): React.ReactElement {
+  const tx = useUiText()
   const scheme = useColorScheme()
 
   const [bases, setBases] = React.useState<readonly KnowledgeBaseView[]>([])
   const [selectedId, setSelectedId] = React.useState<string>('')
   const [materials, setMaterials] = React.useState<readonly MaterialView[]>([])
   const [report, setReport] = React.useState<SearchReportView | undefined>(undefined)
-  const [error, setErrorState] = React.useState('')
-  const [notice, setNoticeState] = React.useState('')
+  const [error, setErrorState] = React.useState<PageMessage>('')
+  const [notice, setNoticeState] = React.useState<PageMessage>('')
   const [feedbackRevision, setFeedbackRevision] = React.useState(0)
-  const setError = React.useCallback((text: string): void => {
-    setErrorState(text)
+  const setError = React.useCallback((text: PageMessage): void => {
+    setErrorState(() => text)
     if (text !== '') setFeedbackRevision(value => value + 1)
   }, [])
-  const setNotice = React.useCallback((text: string): void => {
-    setNoticeState(text)
+  const setNotice = React.useCallback((text: PageMessage): void => {
+    setNoticeState(() => text)
     if (text !== '') setFeedbackRevision(value => value + 1)
   }, [])
   const [busy, setBusy] = React.useState(false)
-  const [progressText, setProgressText] = React.useState('')
+  const [progressText, setProgressText] = React.useState<PageMessage>('')
   const [vaultRoot, setVaultRoot] = React.useState('')
   const [shell, setShell] = React.useState<ShellInfoView | undefined>(undefined)
 
@@ -515,15 +522,15 @@ export function KnowbasePage(): React.ReactElement {
   const [ocrHint, setOcrHint] = React.useState(false)
 
   /** Run one Host call with shared busy handling; the sentence it returns is the alert. */
-  const run = React.useCallback(async (action: () => Promise<Outcome>, progress?: string): Promise<void> => {
+  const run = React.useCallback(async (action: () => Promise<Outcome>, progress?: PageMessage): Promise<void> => {
     const current = knowbaseApi()
     if (current === undefined) {
       setNotice('')
-      setError('知识库通道尚未就绪，请稍候重试。')
+      setError(pageMessage('知识库通道尚未就绪，请稍候重试。', 'The knowledge base connection is not ready. Please try again shortly.'))
       return
     }
     setBusy(true)
-    if (progress !== undefined) setProgressText(progress)
+    if (progress !== undefined) setProgressText(() => progress)
     setError('')
     setNotice('')
     try {
@@ -543,8 +550,8 @@ export function KnowbasePage(): React.ReactElement {
       const status = await ocr.refresh({ throwOnError: true })
       if (status === undefined) throw new Error('知识库通道尚未就绪，请稍候重试。')
       return note(status.ready
-        ? '检测完成：OCR 语言包已就绪，图片可以离线识别。'
-        : `检测完成：缺少 ${status.missing.join('、')} 语言包，请点击「下载语言包」。`)
+        ? pageMessage('检测完成：OCR 语言包已就绪，图片可以离线识别。', 'Check complete: OCR language packs are ready for offline image recognition.')
+        : pageMessage(`检测完成：缺少 ${status.missing.join('、')} 语言包，请点击「下载语言包」。`, `Check complete: missing ${status.missing.join(', ')} language packs. Select “Download language packs”.`))
     })
   }, [ocr.refresh, run])
 
@@ -572,7 +579,7 @@ export function KnowbasePage(): React.ReactElement {
       const current = knowbaseApi()
       if (current === undefined) {
         setNotice('')
-        setError('知识库通道尚未就绪，请稍候重试。')
+        setError(pageMessage('知识库通道尚未就绪，请稍候重试。', 'The knowledge base connection is not ready. Please try again shortly.'))
         return
       }
       await run(async () => {
@@ -587,9 +594,10 @@ export function KnowbasePage(): React.ReactElement {
         }
 
         if (accepted.length === 0) {
-          throw new Error(
+          return problem(pageMessage(
             `有 ${tooBig.length} 个文件过大（超过 ${formatBytes(MAX_UPLOAD_BYTES)}），请把它们直接放进知识库文件夹。`,
-          )
+            `${tooBig.length} ${tooBig.length === 1 ? 'file exceeds' : 'files exceed'} ${formatBytes(MAX_UPLOAD_BYTES)}. Add them directly to the knowledge base folder.`,
+          ))
         }
         const result = await current.addFiles(kbId, accepted)
         setMaterials(await current.listMaterials(kbId))
@@ -601,17 +609,19 @@ export function KnowbasePage(): React.ReactElement {
           // `stat` calls — and never a download.
           setOcrHint((await ocr.refresh())?.ready !== true)
         }
-        const parts = [`已加入 ${result.added} 个文件`]
-        if (result.rejected.length > 0) parts.push(`${result.rejected.length} 个被拒绝`)
-        for (const file of tooBig) parts.push(`「${file}」太大，未上传`)
-        const sentence = `${parts.join('，')}。`
+        const sentence: PageMessage = tx => {
+          const parts = [pageFormat(tx('已加入 {count} 个文件', result.added === 1 ? '{count} file added' : '{count} files added'), { count: String(result.added) })]
+          if (result.rejected.length > 0) parts.push(pageFormat(tx('{count} 个被拒绝', '{count} rejected'), { count: String(result.rejected.length) }))
+          for (const file of tooBig) parts.push(pageFormat(tx('「{name}」太大，未上传', '“{name}” is too large and was not uploaded'), { name: file }))
+          return parts.join(tx('，', ', ')) + tx('。', '.')
+        }
         // A mixed result is coloured as a failure: the hand-off's own reading is
         // that a file the user chose did not go in, and that is worth looking at
         // even though the rest succeeded.
         return tooBig.length > 0 || result.rejected.length > 0
           ? problem(sentence)
           : note(sentence)
-      }, `正在上传并扫描 ${files.length} 个文件…`)
+      }, pageMessage(`正在上传并扫描 ${files.length} 个文件…`, `Uploading and scanning ${files.length} ${files.length === 1 ? 'file' : 'files'}…`))
     },
     [ocr.refresh, refreshBases, run, selectedId],
   )
@@ -652,7 +662,7 @@ export function KnowbasePage(): React.ReactElement {
       const failure = knowbaseChannelError()
       if (failure !== undefined) {
         window.clearInterval(timer)
-        setError(`知识库通道挂载失败：${failure}`)
+        setError(tx => pageFormat(tx('知识库通道挂载失败：{reason}', 'Knowledge base connection failed to mount: {reason}'), { reason: localizeError(failure) }))
         return
       }
       if (knowbaseApi() !== undefined) {
@@ -729,9 +739,12 @@ export function KnowbasePage(): React.ReactElement {
     : selected === undefined
       ? []
       : [selected.id]
+  const testFileCount = testAll
+    ? bases.reduce((sum, item) => sum + item.indexedCount, 0)
+    : selected?.indexedCount ?? 0
   const testScopeNote = testAll
-    ? `检索范围：全部 ${bases.length} 个知识库，共 ${bases.reduce((sum, item) => sum + item.indexedCount, 0)} 个可检索文件`
-    : `检索范围：「${selected?.name ?? ''}」，共 ${selected?.indexedCount ?? 0} 个可检索文件`
+    ? pageFormat(tx('检索范围：全部 {count} 个知识库，共 {files} 个可检索文件', `Scope: all {count} knowledge ${bases.length === 1 ? 'base' : 'bases'}, {files} searchable ${testFileCount === 1 ? 'file' : 'files'}`), { count: String(bases.length), files: String(testFileCount) })
+    : pageFormat(tx('检索范围：「{name}」，共 {files} 个可检索文件', `Scope: “{name}”, {files} searchable ${testFileCount === 1 ? 'file' : 'files'}`), { name: selected?.name ?? '', files: String(testFileCount) })
 
   /** Run the retrieval test over the chosen scope, without calling the model. */
   const submitTest = (): void => {
@@ -762,8 +775,8 @@ export function KnowbasePage(): React.ReactElement {
         if (all || kbId === selectedId) {
           setMaterials(await current.listMaterials(all ? selectedId : kbId))
         }
-        return note(all ? '已重新扫描全部知识库。' : '已重新扫描该知识库。')
-      }, all ? '正在扫描全部知识库…' : '正在扫描当前知识库…')
+        return note(all ? pageMessage('已重新扫描全部知识库。', 'All knowledge bases rescanned.') : pageMessage('已重新扫描该知识库。', 'Knowledge base rescanned.'))
+      }, all ? pageMessage('正在扫描全部知识库…', 'Scanning all knowledge bases…') : pageMessage('正在扫描当前知识库…', 'Scanning the current knowledge base…'))
     })
   }
 
@@ -773,7 +786,7 @@ export function KnowbasePage(): React.ReactElement {
     void run(async () => {
       const result = await knowbaseApi()!.revealBaseFolder(kbId)
       if (!result.ok) throw new Error(result.message)
-      return note(`已在${result.fileManager}中打开：${result.path}`)
+      return note(tx => pageFormat(tx('已在{manager}中打开：{path}', 'Opened in {manager}: {path}'), { manager: pageFileManager(result.fileManager, tx), path: result.path }))
     })
   }
 
@@ -804,7 +817,7 @@ export function KnowbasePage(): React.ReactElement {
         await refreshBases()
         setSelectedId(created.id)
         setReport(undefined)
-        return note(`已创建「${created.name}」，文件夹：${created.folderName}。`)
+        return note(pageMessage(`已创建「${created.name}」，文件夹：${created.folderName}。`, `Created “${created.name}”; folder: ${created.folderName}.`))
       })
       return
     }
@@ -818,7 +831,7 @@ export function KnowbasePage(): React.ReactElement {
         await knowbaseApi()!.renameKnowledgeBase(open.id, name)
         await refreshBases()
         setReport(undefined)
-        return note('重命名成功(文件夹名同改)')
+        return note(pageMessage('重命名成功(文件夹名同改)', 'Renamed successfully (including the folder).'))
       })
       return
     }
@@ -832,9 +845,9 @@ export function KnowbasePage(): React.ReactElement {
         await refreshBases()
         setReport(undefined)
         return note(
-          `已把「${target.name}」的文件夹移入 _回收站（没有销毁，需要时可在资源管理器里拖回来）。`,
+          pageMessage(`已把「${target.name}」的文件夹移入 _回收站（没有销毁，需要时可在资源管理器里拖回来）。`, `Moved the folder for “${target.name}” to _回收站. You can restore it using your file manager.`),
         )
-      }, '正在删除知识库…')
+      }, pageMessage('正在删除知识库…', 'Deleting knowledge base…'))
       return
     }
 
@@ -847,8 +860,8 @@ export function KnowbasePage(): React.ReactElement {
       await current.deleteMaterial(kbId, target.id)
       setMaterials(await current.listMaterials(kbId))
       await refreshBases()
-      return note(`已把「${target.fileName}」移入 _回收站。`)
-    }, '正在删除文件…')
+      return note(pageMessage(`已把「${target.fileName}」移入 _回收站。`, `Moved “${target.fileName}” to _回收站.`))
+    }, pageMessage('正在删除文件…', 'Deleting file…'))
   }
 
   const dialogConfirmDisabled = (): boolean => {
@@ -858,7 +871,7 @@ export function KnowbasePage(): React.ReactElement {
     return false
   }
 
-  const alertText = error !== '' ? error : notice
+  const alertText = renderPageMessage(error !== '' ? error : notice, tx)
 
   return (
     <div
@@ -871,28 +884,28 @@ export function KnowbasePage(): React.ReactElement {
       <div className="kb-page-content">
       <header className="kb-head">
         <div>
-          <h1 className="kb-head-title">知识库</h1>
-          <p className="kb-head-description">管理本地资料，在会话中检索和引用。</p>
+          <h1 className="kb-head-title">{tx('知识库', 'Knowledge bases')}</h1>
+          <p className="kb-head-description">{tx('管理本地资料，在会话中检索和引用。', 'Manage local materials to search and cite in conversations.')}</p>
         </div>
         <button
           type="button"
           className="kb-icon-btn kb-icon-btn--add kb-head-add"
           id="kb-new-toggle"
           data-kb-new-base
-          aria-label="添加知识库"
-          title="添加知识库"
+          aria-label={tx('添加知识库', 'Add knowledge base')}
+          title={tx('添加知识库', 'Add knowledge base')}
           aria-haspopup="dialog"
           aria-expanded={dialog?.kind === 'new' ? 'true' : 'false'}
           disabled={busy}
           onClick={() => openDialog({ kind: 'new' }, '')}
         >
           <Icon name="plus" />
-          添加知识库
+          {tx('添加知识库', 'Add knowledge base')}
         </button>
       </header>
 
       <div className="kb-retrieval-toolbar">
-        <section className="kb-card" data-kb-retrieval-test aria-label="检索测试">
+        <section className="kb-card" data-kb-retrieval-test aria-label={tx('检索测试', 'Search test')}>
           <div className="kb-search-row" ref={searchRow}>
             <ScopePicker
               value={testAll ? 'all' : 'base'}
@@ -909,8 +922,8 @@ export function KnowbasePage(): React.ReactElement {
               className="kb-input"
               id="kb-test-input"
               ref={queryInput}
-              placeholder="检索测试(不调用模型)，请输入一个问题"
-              aria-label="检索测试(不调用模型)，请输入一个问题"
+              placeholder={tx('检索测试(不调用模型)，请输入一个问题', 'Enter a question to test retrieval (no model call)')}
+              aria-label={tx('检索测试(不调用模型)，请输入一个问题', 'Enter a question to test retrieval (no model call)')}
               autoComplete="off"
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -932,7 +945,7 @@ export function KnowbasePage(): React.ReactElement {
               onClick={submitTest}
             >
               <Icon name="search" />
-              检索
+              {tx('检索', 'Search')}
             </button>
           </div>
           {report !== undefined && <SearchResultsPopover anchor={searchRow} onClose={closeResults}>
@@ -942,19 +955,19 @@ export function KnowbasePage(): React.ReactElement {
       </div>
 
       <div className="kb-columns">
-        <aside className="kb-card" aria-label="知识库列表">
+        <aside className="kb-card" aria-label={tx('知识库列表', 'Knowledge base list')}>
           <div className="kb-left-sec">
             <div className="kb-left-head">
               <p className="kb-sec-label">
-                全部知识库 <span className="kb-sec-count" id="kb-lib-count">({bases.length})</span>
+                {tx('全部知识库', 'All knowledge bases')} <span className="kb-sec-count" id="kb-lib-count">({bases.length})</span>
               </p>
               <button
                 type="button"
                 className="kb-icon-btn"
                 id="kb-rescan-all"
                 data-kb-rescan-all
-                aria-label="重扫全部知识库"
-                title="重扫全部知识库"
+                aria-label={tx('重扫全部知识库', 'Rescan all knowledge bases')}
+                title={tx('重扫全部知识库', 'Rescan all knowledge bases')}
                 disabled={busy}
                 onClick={() => rescan('')}
               >
@@ -985,7 +998,7 @@ export function KnowbasePage(): React.ReactElement {
                         type="button"
                         className="kb-lib-more"
                         data-kb-lib-more
-                        aria-label={`「${item.name}」更多操作`}
+                        aria-label={pageFormat(tx('「{name}」更多操作', 'More actions for “{name}”'), { name: item.name })}
                         aria-haspopup="menu"
                         aria-expanded={open ? 'true' : 'false'}
                         disabled={busy}
@@ -1001,7 +1014,7 @@ export function KnowbasePage(): React.ReactElement {
               })}
             </ul>
             <p className="kb-empty" id="kb-lib-empty" hidden={bases.length > 0}>
-              还没有知识库。
+              {tx('还没有知识库。', 'No knowledge bases yet.')}
             </p>
           </div>
         </aside>
@@ -1009,18 +1022,18 @@ export function KnowbasePage(): React.ReactElement {
         <div className="kb-right">
           {selected === undefined ? (
             <p className="kb-placeholder" id="kb-placeholder">
-              左侧选择或新建一个知识库。
+              {tx('左侧选择或新建一个知识库。', 'Select or create a knowledge base on the left.')}
             </p>
           ) : (
             <div className="kb-detail" id="kb-detail">
-              <section className="kb-card" id="kb-files-block" aria-label="文件">
+              <section className="kb-card" id="kb-files-block" aria-label={tx('文件', 'Files')}>
                 <div className="kb-block-head">
                   <div className="kb-title-group">
                     <h2 className="kb-card-title" id="kb-files-title" data-kb-files-title>
-                      {selected.name}的文件（{materials.length}）
+                      {pageFormat(tx('{name}的文件（{count}）', 'Files in {name} ({count})'), { name: selected.name, count: String(materials.length) })}
                     </h2>
                     <span className="kb-files-size" data-kb-files-size>
-                      总大小 {formatBytes(selected.bytes)}
+                      {pageFormat(tx('总大小 {size}', 'Total size {size}'), { size: formatBytes(selected.bytes) })}
                     </span>
                   </div>
                   <div className="kb-btn-row">
@@ -1030,7 +1043,7 @@ export function KnowbasePage(): React.ReactElement {
                       data-kb-upload
                     >
                       <Icon name="upload" />
-                      上传文件…
+                      {tx('上传文件…', 'Upload files…')}
                       <input
                         id="kb-file-input"
                         ref={uploadInput}
@@ -1057,7 +1070,7 @@ export function KnowbasePage(): React.ReactElement {
                       onClick={() => rescan(selected.id)}
                     >
                       <Icon name="refresh" spinning={rescanCurrentSpinning} />
-                      重扫
+                      {tx('重扫', 'Rescan')}
                     </button>
                   </div>
                 </div>
@@ -1071,7 +1084,7 @@ export function KnowbasePage(): React.ReactElement {
                         </span>
                         {material.note === '' ? null : (
                           <span className="kb-file-reason" data-kb-file-reason>
-                            {material.note}
+                            {localizeError(material.note)}
                           </span>
                         )}
                       </div>
@@ -1086,8 +1099,8 @@ export function KnowbasePage(): React.ReactElement {
                           type="button"
                           className="kb-btn kb-icon-only kb-btn--danger"
                           data-kb-file-delete
-                          aria-label={`删除「${material.fileName}」`}
-                          title="删除"
+                          aria-label={pageFormat(tx('删除「{name}」', 'Delete “{name}”'), { name: material.fileName })}
+                          title={tx('删除', 'Delete')}
                           disabled={busy}
                           onClick={() => openDialog({ kind: 'deleteFile', id: material.id }, '')}
                         >
@@ -1098,7 +1111,7 @@ export function KnowbasePage(): React.ReactElement {
                   ))}
                 </ul>
                 <p className="kb-empty" id="kb-file-empty" hidden={materials.length > 0}>
-                  还没有文件。用「上传文件」加入，或者把文件直接放进上面那个文件夹再点「重扫」。
+                  {tx('还没有文件。用「上传文件」加入，或者把文件直接放进上面那个文件夹再点「重扫」。', 'No files yet. Upload files, or add them directly to the knowledge base folder and select “Rescan”.')}
                 </p>
                 {ocrHint && ocr.status?.ready !== true && (
                   <OcrHint controller={ocr} disabled={busy} onDetect={detectOcr} />
@@ -1115,7 +1128,7 @@ export function KnowbasePage(): React.ReactElement {
       </div>
 
       </div>
-      <ProgressOverlay text={progressText} />
+      <ProgressOverlay text={renderPageMessage(progressText, tx)} />
       <Alert text={alertText} kind={error !== '' ? 'error' : 'notice'} revision={feedbackRevision} />
 
       {/* Outside the columns, and rendered into `document.body` — see `RowMenu`
@@ -1124,7 +1137,7 @@ export function KnowbasePage(): React.ReactElement {
         <RowMenu
           anchor={menu.anchor}
           items={shell?.canReveal === false ? 2 : 3}
-          fileManager={shell?.fileManager ?? '文件资源管理器'}
+          fileManager={shell?.fileManager ?? tx('文件资源管理器', 'File Explorer')}
           canReveal={shell?.canReveal !== false}
           onRename={() => {
             const target = bases.find(item => item.id === menu.id)
@@ -1139,19 +1152,19 @@ export function KnowbasePage(): React.ReactElement {
         <Modal
           title={
             dialog.kind === 'new'
-              ? '添加知识库'
+              ? tx('添加知识库', 'Add knowledge base')
               : dialog.kind === 'rename'
-                ? '重命名知识库'
+                ? tx('重命名知识库', 'Rename knowledge base')
                 : dialog.kind === 'deleteBase'
-                  ? '删除知识库'
-                  : '删除文件'
+                  ? tx('删除知识库', 'Delete knowledge base')
+                  : tx('删除文件', 'Delete file')
           }
           confirmText={
             dialog.kind === 'new'
-              ? '确认添加'
+              ? tx('确认添加', 'Add')
               : dialog.kind === 'rename'
-                ? '确认修改'
-                : '确认删除'
+                ? tx('确认修改', 'Save changes')
+                : tx('确认删除', 'Delete')
           }
           danger={dialog.kind === 'deleteBase' || dialog.kind === 'deleteFile'}
           confirmDisabled={dialogConfirmDisabled()}
@@ -1161,9 +1174,9 @@ export function KnowbasePage(): React.ReactElement {
           {dialog.kind === 'new' && (
             <NameField
               id="kb-new-input"
-              label="新知识库名称"
+              label={tx('新知识库名称', 'New knowledge base name')}
               showLabel={false}
-              placeholder="新知识库名称"
+              placeholder={tx('新知识库名称', 'New knowledge base name')}
               value={draftName}
               onChange={setDraftName}
               onEnter={confirmDialog}
@@ -1172,7 +1185,7 @@ export function KnowbasePage(): React.ReactElement {
           {dialog.kind === 'rename' && (
             <NameField
               id="kb-rename-input"
-              label="知识库名称"
+              label={tx('知识库名称', 'Knowledge base name')}
               value={draftName}
               onChange={setDraftName}
               onEnter={confirmDialog}
@@ -1180,14 +1193,14 @@ export function KnowbasePage(): React.ReactElement {
           )}
           {dialog.kind === 'deleteBase' && (
             <>
-              <p>确认删除「{bases.find(item => item.id === dialog.id)?.name ?? ''}」？</p>
-              <p className="kb-delete-note">删除 = 移入 _回收站，不销毁。</p>
+              <p>{pageFormat(tx('确认删除「{name}」？', 'Delete “{name}”?'), { name: bases.find(item => item.id === dialog.id)?.name ?? '' })}</p>
+              <p className="kb-delete-note">{tx('删除 = 移入 _回收站，不销毁。', 'Deleting moves items to _回收站; they can be restored.')}</p>
             </>
           )}
           {dialog.kind === 'deleteFile' && (
             <>
-              <p>确认删除「{materials.find(item => item.id === dialog.id)?.fileName ?? ''}」？</p>
-              <p className="kb-delete-note">删除 = 移入 _回收站，不销毁。</p>
+              <p>{pageFormat(tx('确认删除「{name}」？', 'Delete “{name}”?'), { name: materials.find(item => item.id === dialog.id)?.fileName ?? '' })}</p>
+              <p className="kb-delete-note">{tx('删除 = 移入 _回收站，不销毁。', 'Deleting moves items to _回收站; they can be restored.')}</p>
             </>
           )}
         </Modal>

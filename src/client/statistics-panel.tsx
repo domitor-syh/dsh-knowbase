@@ -1,6 +1,7 @@
 import * as React from 'react'
 import type { StatisticsView } from '../core/statistics-types.ts'
 import { knowbaseApi, type KnowbaseApi } from './api.ts'
+import { uiLanguage } from './ui-locale.ts'
 import { useCitationText } from './citation-locale.ts'
 
 type StatisticsApi = Pick<KnowbaseApi, 'getStatistics' | 'setStatisticsEnabled' | 'clearStatistics'>
@@ -106,7 +107,7 @@ export function StatisticsContent({ state, controller }: {
       {view.persistenceError ? <p role="status">{t('statsPersistence')}</p> : null}
       {view.dropped > 0 ? <p role="status">{t('statsDropped')}: {view.dropped}</p> : null}
       {!view.enabled ? <p style={secondary}>{t('statsOff')}</p> : null}
-      <p style={secondary}>{t('statsSince')}: {view.since === 0 ? t('statsNever') : new Date(view.since).toLocaleString()} · {t('statsRetention')}: {view.retentionDays}</p>
+      <p style={secondary}>{t('statsSince')}: {view.since === 0 ? t('statsNever') : new Date(view.since).toLocaleString(uiLanguage() === 'en' ? 'en-US' : 'zh-CN')} · {t('statsRetention')}: {view.retentionDays}</p>
       <dl style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 20px', margin: '12px 0' }}>
         {counts.map(([label, value]) => <div key={label} style={{ display: 'flex', gap: 6 }}>
           <dt style={{ color: 'var(--dsw-alias-label-secondary)' }}>{label}</dt><dd style={{ margin: 0 }}>{value}</dd>

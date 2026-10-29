@@ -1,3 +1,4 @@
+import { localizeLocator } from './ui-locale.ts'
 import type { SourcePassage } from './citation-scan.ts'
 
 export function validCitationId(value: unknown): value is string {
@@ -40,7 +41,7 @@ export function citationCopyText(passage: SourcePassage, index: number, labels: 
     `[${index + 1}]`,
     `${labels.base}: ${citationLabel(passage.kbName, labels.hidden)}`,
     `${labels.file}: ${citationLabel(passage.materialTitle, labels.hidden)}`,
-    `${labels.location}: ${citationLabel(passage.locator, labels.hidden)}`,
+    `${labels.location}: ${citationLabel(localizeLocator(passage.locator), labels.hidden)}`,
     validCitationId(passage.citationId) ? `${labels.id}: ${passage.citationId}` : labels.legacy,
   ].join('\n')
 }

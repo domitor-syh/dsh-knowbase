@@ -35,6 +35,7 @@ import type { OcrDownloadStateView, OcrStatusView } from '../remote.ts'
 import { knowbaseApi } from './api.ts'
 import { Icon, type IconName } from './icons.tsx'
 import { useSpin } from './spin.ts'
+import { useUiText, uiText, localizeError } from './ui-locale.ts'
 
 /**
  * How often the page asks where the download is.
@@ -177,6 +178,7 @@ function Progress(props: {
   download: OcrDownloadStateView
   scope: ControlsScope
 }): React.ReactElement {
+  const tx = useUiText()
   const { download, scope } = props
   const percent =
     download.totalBytes > 0
@@ -193,8 +195,8 @@ function Progress(props: {
         <div className="kb-progress-fill" style={{ width: `${percent}%` }} />
       </div>
       <p className="kb-progress-text">
-        {formatBytes(download.downloadedBytes)} / {formatBytes(download.totalBytes)}（{percent}%）
-        {download.lang === '' ? '' : ` · 正在下载 ${download.lang}`}
+        {formatBytes(download.downloadedBytes)} / {formatBytes(download.totalBytes)} ({percent}%)
+        {download.lang === '' ? '' : tx(` · 正在下载 ${download.lang}`, ` · Downloading ${download.lang}`)}
       </p>
     </div>
   )
@@ -207,6 +209,7 @@ function Controls(props: {
   onDetect: () => Promise<void>
   scope: ControlsScope
 }): React.ReactElement {
+  const tx = useUiText()
   const { controller, disabled, scope } = props
   const ready = controller.status?.ready === true
   const running = controller.running
@@ -226,7 +229,7 @@ function Controls(props: {
           onClick={() => spin(props.onDetect)}
         >
           <Icon name="refresh" spinning={checking} />
-          检测
+          {tx('检测', 'Check')}
         </button>
         {/* Hidden rather than unmounted while a download runs — the hand-off's own
             state machine, and it keeps the row from reflowing mid-download. */}
@@ -239,7 +242,7 @@ function Controls(props: {
           onClick={() => void controller.start()}
         >
           <Icon name="download" />
-          {ready ? '语言包已就绪' : '下载语言包'}
+          {ready ? tx('语言包已就绪', 'Language packs ready') : tx('下载语言包', 'Download language packs')}
         </button>
         <button
           type="button"
@@ -250,7 +253,7 @@ function Controls(props: {
           onClick={() => void controller.cancel()}
         >
           <Icon name="x" />
-          取消下载
+          {tx('取消下载', 'Cancel download')}
         </button>
       </div>
       {running && controller.download !== undefined && (
@@ -267,21 +270,23 @@ function statusLine(status: OcrStatusView | undefined): {
   text: string
 } {
   if (status === undefined) {
-    return { state: 'reading', icon: 'loader', text: '正在读取本地语言包状态…' }
+    return { state: 'reading', icon: 'loader', text: uiText('正在读取本地语言包状态…', 'Reading local language pack status…') }
   }
   if (status.ready) {
     return {
       state: 'ready',
       icon: 'check-circle',
-      text: `语言包已就绪（${status.packs
+      text: uiText(`语言包已就绪（${status.packs
         .map(pack => `${pack.lang} ${formatBytes(pack.bytes)}`)
-        .join(' · ')}），图片可以离线识别。`,
+        .join(' · ')}），图片可以离线识别。`, `Language packs ready (${status.packs
+        .map(pack => `${pack.lang} ${formatBytes(pack.bytes)}`)
+        .join(' · ')}). Images can be recognized offline.`),
     }
   }
   return {
     state: 'missing',
     icon: 'alert-triangle',
-    text: `缺少 ${status.missing.join('、')} 语言包，需要下载约 ${formatBytes(status.fetchBytes)}。`,
+    text: uiText(`缺少 ${status.missing.join('、')} 语言包，需要下载约 ${formatBytes(status.fetchBytes)}。`, `Missing language packs: ${status.missing.join(', ')}. About ${formatBytes(status.fetchBytes)} needs to be downloaded.`),
   }
 }
 
@@ -298,6 +303,7 @@ export function OcrSection(props: {
   disabled: boolean
   onDetect: () => Promise<void>
 }): React.ReactElement {
+  const tx = useUiText()
   const { controller, disabled } = props
   const line = statusLine(controller.status)
   const download = controller.download
@@ -312,7 +318,7 @@ export function OcrSection(props: {
   return (
     <section className="kb-card" data-kb-ocr-section aria-labelledby="kb-ocr-title">
       <h2 className="kb-card-title" id="kb-ocr-title">
-        图片文字识别（OCR）
+        {tx('图片文字识别（OCR）', 'Image text recognition (OCR)')}
       </h2>
       <p
         className={`kb-status kb-status--${line.state}`}
@@ -327,16 +333,16 @@ export function OcrSection(props: {
       {result !== '' && (
         <p className={`kb-msg${tone === '' ? '' : ` kb-msg--${tone}`}`} data-kb-ocr-hint>
           <Icon name={tone === 'ok' ? 'check' : tone === 'warn' ? 'alert-triangle' : 'info'} />
-          <span>{result}</span>
+          <span>{localizeError(result)}</span>
         </p>
       )}
       {controller.status !== undefined && (
-        <p className="kb-ocr-dir">语言包目录：{controller.status.dir}</p>
+        <p className="kb-ocr-dir">{tx('语言包目录：', 'Language pack directory: ')}{controller.status.dir}</p>
       )}
       {controller.status?.ready === true && (
         <p className="kb-ocr-privacy">
           <Icon name="lock" />
-          <span>识别在你的电脑上完成，图片不会被上传；语言包只在点「下载语言包」时从 CDN 取一次。</span>
+          <span>{tx('识别在你的电脑上完成，图片不会被上传；语言包只在点「下载语言包」时从 CDN 取一次。', 'Recognition runs on your computer and images are never uploaded. Language packs are fetched once from a CDN when you click “Download language packs”.')}</span>
         </p>
       )}
     </section>
@@ -356,16 +362,16 @@ export function OcrHint(props: {
   disabled: boolean
   onDetect: () => Promise<void>
 }): React.ReactElement {
+  const tx = useUiText()
   const { controller, disabled } = props
   const message = controller.download?.message ?? ''
   return (
     <div className="kb-inline-hint" data-kb-files-hint>
       <p>
-        刚上传的图片要等 OCR 语言包就绪后才能检索；下载完点上面的「重扫」就会入库
-        （约 4.5 MB，在你本机识别，图片不会上传）。
+        {tx('刚上传的图片要等 OCR 语言包就绪后才能检索；下载完点上面的「重扫」就会入库（约 4.5 MB，在你本机识别，图片不会上传）。', 'Uploaded images become searchable after the OCR language packs are ready. After downloading, click “Rescan” above to index them (about 4.5 MB; recognition runs locally and images are never uploaded).')}
       </p>
       <Controls controller={controller} disabled={disabled} onDetect={props.onDetect} scope="files" />
-      {message !== '' && controller.running !== true && <p>{message}</p>}
+      {message !== '' && controller.running !== true && <p>{localizeError(message)}</p>}
     </div>
   )
 }

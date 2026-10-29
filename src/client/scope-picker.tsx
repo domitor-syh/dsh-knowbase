@@ -2,12 +2,13 @@ import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { pageTokens } from './page-style.ts'
 import { useColorScheme } from './theme.ts'
+import { useUiText } from './ui-locale.ts'
 
 export type TestScope = 'base' | 'all'
 
 const OPTIONS = [
-  { value: 'base', label: '当前库' },
-  { value: 'all', label: '全部库' },
+  { value: 'base', label: ['当前库', 'Current base'] },
+  { value: 'all', label: ['全部库', 'All bases'] },
 ] as const
 
 interface PopupAt {
@@ -24,6 +25,7 @@ export function ScopePicker(props: {
   currentAvailable: boolean
   disabled: boolean
 }): React.ReactElement {
+  const tx = useUiText()
   const { value, onChange, baseCount, currentAvailable, disabled } = props
   const scheme = useColorScheme()
   const id = React.useId()
@@ -138,7 +140,7 @@ export function ScopePicker(props: {
         data-kb-test-scope-select
         data-kb-base-count={baseCount}
         value={value}
-        aria-label="检索范围"
+        aria-label={tx('检索范围', 'Search scope')}
         aria-describedby={`${id}-value`}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -155,7 +157,7 @@ export function ScopePicker(props: {
           }
         }}
       >
-        <span id={`${id}-value`}>{value === 'all' ? '全部库' : '当前库'}</span>
+        <span id={`${id}-value`}>{value === 'all' ? tx('全部库', 'All bases') : tx('当前库', 'Current base')}</span>
         <span className="kb-scope-chevron" aria-hidden="true">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" focusable="false">
             <path d="m6 9 6 6 6-6" />
@@ -168,7 +170,7 @@ export function ScopePicker(props: {
           id={`${id}-options`}
           className="kb-scope-menu"
           role="listbox"
-          aria-label="检索范围选项"
+          aria-label={tx('检索范围选项', 'Search scope options')}
           tabIndex={-1}
           style={{ ...pageTokens(scheme), ...at }}
           onKeyDown={onMenuKeyDown}
@@ -187,7 +189,7 @@ export function ScopePicker(props: {
               disabled={unavailable(index)}
               onClick={() => choose(index)}
             >
-              <span>{option.label}</span>
+              <span>{tx(option.label[0], option.label[1])}</span>
               {value === option.value && (
                 <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" focusable="false">
                   <path d="m5 12 4 4 10-10" />

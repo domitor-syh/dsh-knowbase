@@ -32,6 +32,7 @@ import {
 } from './api.ts'
 import { KnowbaseSourceAction, KnowbaseSourceOverlay } from './citation-button.tsx'
 import { closeSources } from './citation-dialog.ts'
+import { uiText } from './ui-locale.ts'
 import { installCitationLocale } from './citation-locale.ts'
 import { ComposerKnowbaseToggle } from './composer-toggle.tsx'
 import { TYPERT_REMOTE } from './contribution.ts'
@@ -132,7 +133,7 @@ export function apply(ctx: Context): void {
 
   ctx.slots.inject('sidebar.panellist', () =>
     ctx.slots.register(
-      { name: 'sidebar.panellist', id: PANEL_ID, order: 11, label: () => '知识库' },
+      { name: 'sidebar.panellist', id: PANEL_ID, order: 11, label: () => uiText('知识库', 'Knowledge bases') },
       KnowbasePanelIcon,
     ),
   )

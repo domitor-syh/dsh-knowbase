@@ -2,6 +2,7 @@ import * as React from 'react'
 import type { ProposalView } from '../remote.ts'
 import { knowbaseApi } from './api.ts'
 import { usePalette } from './theme.ts'
+import { useUiText, localizeError } from './ui-locale.ts'
 
 interface Props { readonly sessionId: string }
 
@@ -16,6 +17,7 @@ function formatBytes(bytes: number): string {
 
 /** User-only review surface for model-generated write proposals. */
 export function ProposalInbox({ sessionId }: Props): React.ReactElement | null {
+  const tx = useUiText()
   const palette = usePalette()
   const [proposals, setProposals] = React.useState<readonly ProposalView[]>([])
   const [open, setOpen] = React.useState(false)
@@ -68,18 +70,18 @@ export function ProposalInbox({ sessionId }: Props): React.ReactElement | null {
   return (
     <details open={open} onToggle={event => setOpen(event.currentTarget.open)} style={{ position: 'relative' }}>
       <summary
-        aria-label="待确认的知识库提案"
+        aria-label={tx('待确认的知识库提案', 'Pending knowledge base proposals')}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer',
           border, borderRadius: 999, padding: '5px 9px', background: palette.panel,
           color: palette.text, fontSize: 12, listStyle: 'none',
         }}
       >
-        <span aria-hidden="true">✎</span>待确认提案{proposals.length > 0 ? ` · ${proposals.length}` : ''}
+        <span aria-hidden="true">✎</span>{tx('待确认提案', 'Pending proposals')}{proposals.length > 0 ? ` · ${proposals.length}` : ''}
       </summary>
       <div
         role="dialog"
-        aria-label="知识库写入提案"
+        aria-label={tx('知识库写入提案', 'Knowledge base write proposals')}
         style={{
           position: 'fixed', left: 12, bottom: 52, zIndex: 90, width: 360, maxWidth: 'calc(100vw - 24px)',
           boxSizing: 'border-box', border, borderRadius: 12, padding: 12,
@@ -89,30 +91,32 @@ export function ProposalInbox({ sessionId }: Props): React.ReactElement | null {
         {proposals.map(proposal => (
           <ProposalCard key={proposal.id} proposal={proposal} busy={busy === proposal.id} onAction={action => void act(proposal, action)} palette={palette} />
         ))}
-        {error !== '' && <p role="alert" style={{ color: palette.accent, fontSize: 12, margin: '8px 0 0' }}>{error}</p>}
+        {error !== '' && <p role="alert" style={{ color: palette.accent, fontSize: 12, margin: '8px 0 0' }}>{error === '提案操作失败。' ? tx('提案操作失败。', 'The proposal action failed.') : localizeError(error)}</p>}
       </div>
     </details>
   )
 }
 
-function ProposalCard(props: {
+/** Loaded proposal content, also usable without the asynchronous inbox shell. */
+export function ProposalCard(props: {
   readonly proposal: ProposalView
   readonly busy: boolean
   readonly onAction: (action: 'approve' | 'reject') => void
   readonly palette: ReturnType<typeof usePalette>
 }): React.ReactElement {
+  const tx = useUiText()
   const { proposal, busy, onAction, palette } = props
   return (
     <article style={{ borderBottom: `1px solid ${palette.divider}`, paddingBottom: 10, marginBottom: 10 }}>
       <strong style={{ display: 'block', fontSize: 13 }}>{proposal.kbName} / {proposal.fileName}</strong>
       <span style={{ display: 'block', color: palette.muted, fontSize: 11, marginTop: 3 }}>
-        {formatBytes(proposal.contentBytes)} · revision {proposal.baseRevision}
+        {formatBytes(proposal.contentBytes)} · {tx('版本', 'revision')} {proposal.baseRevision}
       </span>
       {proposal.reason !== '' && <p style={{ fontSize: 12, margin: '7px 0' }}>{proposal.reason}</p>}
       <pre style={{ maxHeight: 180, overflow: 'auto', whiteSpace: 'pre-wrap', margin: '7px 0', padding: 8, borderRadius: 6, background: palette.field, fontSize: 11 }}>{proposal.content}</pre>
       <div style={{ display: 'flex', gap: 7, justifyContent: 'flex-end' }}>
-        <button type="button" disabled={busy} onClick={() => onAction('reject')} style={buttonStyle(palette, false)}>拒绝</button>
-        <button type="button" disabled={busy} onClick={() => onAction('approve')} style={buttonStyle(palette, true)}>{busy ? '处理中…' : '批准写入'}</button>
+        <button type="button" disabled={busy} onClick={() => onAction('reject')} style={buttonStyle(palette, false)}>{tx('拒绝', 'Reject')}</button>
+        <button type="button" disabled={busy} onClick={() => onAction('approve')} style={buttonStyle(palette, true)}>{busy ? tx('处理中…', 'Processing…') : tx('批准写入', 'Approve write')}</button>
       </div>
     </article>
   )

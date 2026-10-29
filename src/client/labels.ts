@@ -14,6 +14,7 @@
  * @module @domitor-syh/dsh-knowbase/client/labels
  */
 
+import { uiText } from './ui-locale.ts'
 import type { KnowledgeBaseView, SessionScopeView } from '../remote.ts'
 
 /**
@@ -43,7 +44,7 @@ export function scopeLabel(
   bases: readonly KnowledgeBaseView[],
 ): string {
   const count = scopeCount(scope, bases)
-  return count === 0 ? '知识库' : `知识库 · ${count}`
+  return count === 0 ? uiText('知识库', 'Knowledge bases') : uiText(`知识库 · ${count}`, `Knowledge bases · ${count}`)
 }
 
 /**
