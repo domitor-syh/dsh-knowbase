@@ -142,7 +142,7 @@ function SourceOverlay({ passages, onClose, owner }: { passages: readonly Source
             <strong style={{ fontSize: 15, fontWeight: 600 }}>{t('sources')}</strong>
             <span style={{ color: COLORS.muted, fontSize: 12 }}>{passages.length}</span>
           </div>
-          <button type="button" aria-label={t('close')} title={t('close')} onClick={onClose} style={{ ...control, width: 28, height: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+          <button type="button" className="kb-source-close" aria-label={t('close')} title={t('close')} onClick={onClose}>
             <Icon name="x" size={15} />
           </button>
         </header>

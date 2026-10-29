@@ -2,6 +2,10 @@ import type { Context } from '@deepseek-ai/cordis'
 
 /** Styles remain scoped to owned controls, except the documented footer adapter. */
 export const SOURCE_CSS = `
+.kb-source-close { box-sizing: border-box; flex: none; width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.kb-source-close:hover, .kb-source-close:focus-visible { background: var(--dsw-alias-border-l1); color: var(--dsw-alias-label-primary); }
+.kb-source-close:active { background: var(--dsw-alias-border-l2); color: var(--dsw-alias-label-primary); }
+.kb-source-close:focus-visible { outline: 1px solid var(--dsw-alias-label-secondary); outline-offset: 2px; }
 .kb-source-filter { position: relative; min-width: 0; }
 .kb-source-filter-trigger { box-sizing: border-box; width: 100%; min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 16px 6px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; line-height: 18px; text-align: left; cursor: pointer; outline: none; box-shadow: none; }
 .kb-source-filter-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
