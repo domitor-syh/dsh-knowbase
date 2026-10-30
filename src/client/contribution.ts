@@ -123,7 +123,7 @@ const proposalSchema = z.object({
 })
 
 // A file pushed from the browser. Bytes travel base64-encoded because the
-// channel carries lossless JSON only (see `../remote.ts` and `HANDOFF.md` §15).
+// channel carries lossless JSON only (see `../remote.ts`).
 const uploadedFileSchema = z.object({
   name: z.string(),
   base64: z.string(),

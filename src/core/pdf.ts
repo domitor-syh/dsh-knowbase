@@ -3,7 +3,7 @@
  *
  * Why a worker and not a plain call: the host's main thread is the one that
  * keeps the app responsive, and pdfjs parsing a hundred pages is CPU-bound for
- * seconds. The plan's rule (方案 §6) is explicit — 解析与推理放后台 worker，
+ * seconds. The implementation rule is explicit — 解析与推理放后台 worker，
  * UI 与 Host 主线程不做大文件同步解析 — and a spawned thread is the cheapest
  * way to honour it here.
  *

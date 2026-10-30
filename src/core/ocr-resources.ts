@@ -16,7 +16,7 @@
  * That separation is deliberate and load-bearing: a "check" button that quietly
  * started a 4.5 MB download would be downloading without being asked, and the
  * one rule this feature has is that nothing here talks to the network unless the
- * user pressed a button that says so (`HANDOFF.md` §15 ⑤, plan §11).
+ * user pressed a button that says so.
  *
  * ## Why the download is a state machine instead of a promise the page awaits
  *
@@ -54,9 +54,8 @@ export type OcrLang = (typeof OCR_LANGS)[number]
  * The package's own CDN mirror of `@tesseract.js-data`, which is the source
  * tesseract.js itself defaults to. Pinned to a full version and revision rather
  * than to `latest`: an unpinned URL would let the model behind a hash change
- * under a published plugin, and the recognition quality measured for this
- * version (95.8% recall on a Chinese sample — `HANDOFF.md` §16 「v16 Spike」)
- * would stop describing what the user actually gets.
+ * under a published plugin, and recognition behavior then differs from the version
+ * this code was tested against.
  */
 const PACK_ROOT = 'https://cdn.jsdelivr.net/npm/@tesseract.js-data'
 
@@ -96,7 +95,7 @@ export const OCR_PACKS: readonly OcrPack[] = [
  * Cache directory name, inside the vault root.
  *
  * Inside rather than beside the vault: `$DSH_HOME/knowbase` is the one directory
- * this plugin is entitled to write (`HANDOFF.md` §15 ②), and the vault is a
+ * this plugin is entitled to write, and the vault is a
  * plain folder the user can move or back up as a unit. The leading dot keeps it
  * out of the way, and the vault's own reconciliation ignores any directory whose
  * name does not parse as `<name>--<kbId>` (`./vault.ts`), so this one is never
@@ -215,7 +214,7 @@ export interface OcrDownloadOptions {
   readonly retryDelayMs?: number
 }
 
-/** Default attempt budget. The CDN fails intermittently — see `HANDOFF.md` §16 ⑤. */
+/** Default attempt budget. The CDN fails intermittently. */
 const DEFAULT_ATTEMPTS = 3
 /** Default per-attempt deadline. */
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -242,7 +241,7 @@ const gunzipAsync = promisify(gunzip)
  * nobody reads rather than a truncated model tesseract would load.
  *
  * The directory is created before the first byte: tesseract's own cache writing
- * silently does nothing when the directory is missing (`HANDOFF.md` §16 坑 64),
+ * silently does nothing when the directory is missing,
  * so a download that looked like it succeeded would leave the engine unable to
  * read what it had just fetched.
  *

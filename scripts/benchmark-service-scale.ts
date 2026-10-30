@@ -1,7 +1,7 @@
 /** O13 synthetic, memory-only KnowbaseService lifecycle. Output is exclusive-create. */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -12,7 +12,7 @@ import { createMemoryVaultFs, type VaultFileSystem } from '../src/vault-fs.ts'
 
 const SCRIPT = fileURLToPath(import.meta.url)
 const PROJECT = path.resolve(path.dirname(SCRIPT), '..')
-const OUTPUT = path.join(PROJECT, 'outputs', 'o13-service-scale.json')
+const OUTPUT = path.join(os.tmpdir(), `knowbase-service-scale-${randomUUID()}.json`)
 const SIZES = [100, 1000, 5000] as const
 const REPEATS = 3, WARMUP = 3, SAMPLES = 30, BASES = 4, HEAP_MIB = 1536
 const TEMP_PREFIX = 'knowbase-o13-'
@@ -216,7 +216,6 @@ async function readWorker(file: string) {
   }
 }
 async function main(output: string) {
-  assert.equal(output, OUTPUT, 'Explicit --output must be outputs/o13-service-scale.json')
   try { await lstat(output); throw new Error('Output exists; read and preserve/remove explicitly before rerunning') }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
   const hashes = await sourceHashes(), temporary = await mkdtemp(path.join(os.tmpdir(), TEMP_PREFIX))
@@ -257,7 +256,7 @@ async function main(output: string) {
         gcExposed: typeof globalThis.gc === 'function' },
       methodology: { sizesFiles: SIZES, bases: BASES, repeats: REPEATS, processIsolation: 'Fresh child for each size and repeat; serial workers',
         workers: { stdio: 'inherit', timeoutMs: 180000, nodeOptions: 'cleared', flags: ['--expose-gc', '--max-old-space-size=1536', '--experimental-strip-types'] },
-        invocation: 'node --expose-gc --max-old-space-size=1536 --experimental-strip-types scripts/benchmark-service-scale.ts --output outputs/o13-service-scale.json',
+        invocation: 'node --expose-gc --max-old-space-size=1536 --experimental-strip-types scripts/benchmark-service-scale.ts --output <report.json>',
         input: 'Deterministic UTF-8 .txt; 2046 characters each, 8 paragraphs; round-robin across four seeded MemoryStore bases',
         chunking: 'KnowbaseService defaults; no chunk options; actual counts/bytes from materials',
         cold: 'initialize() on seeded MemoryStore/createMemoryVaultFs; reconcile/extraction/chunking/indexing included; seeding excluded',
@@ -278,7 +277,7 @@ async function main(output: string) {
     assert(!/[A-Za-z]:\\\\|\\Users\\|\/Users\//.test(json), 'No absolute user paths in output')
     await mkdir(path.dirname(output), { recursive: true })
     await writeFile(output, json, { encoding: 'utf8', flag: 'wx' })
-    console.log('O13 complete: outputs/o13-service-scale.json')
+    console.log(`Service benchmark report: ${output}`)
   } finally {
     assert.equal(path.dirname(temporary), path.resolve(os.tmpdir()))
     assert(path.basename(temporary).startsWith(TEMP_PREFIX))
@@ -294,7 +293,7 @@ for (let i = 0; i < args.length; i++) {
   seen.add(key)
   if (key !== '--worker') { const value = args[++i]; assert(value && !value.startsWith('--'), `Missing value: ${key}`); values.set(key, value) }
 }
-assert.equal(seen.size, expected.length, 'Usage: --output outputs/o13-service-scale.json')
-const output = path.resolve(PROJECT, values.get('--output')!)
+if (isWorker) assert.equal(seen.size, expected.length, 'Worker requires --size, --repeat and --output')
+const output = path.resolve(PROJECT, values.get('--output') ?? OUTPUT)
 if (isWorker) await worker(Number(values.get('--size')), Number(values.get('--repeat')), output)
 else await main(output)

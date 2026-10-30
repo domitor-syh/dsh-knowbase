@@ -7,8 +7,7 @@
  * intentions: one reads two `stat` results and one spends 4.5 MB of someone's
  * bandwidth. The check is a button that only ever calls `getOcrStatus`, and the
  * download only ever starts when the button that says 「下载语言包」 is pressed —
- * nothing here downloads on mount, on failure, or on upload (`HANDOFF.md`
- * §16 ⑦).
+ * nothing here downloads on mount, on failure, or on upload.
  *
  * ## Why the page owns the state
  *
@@ -85,7 +84,7 @@ export interface OcrController {
  * The OCR state the page holds, including the polling loop.
  *
  * Polling lives here rather than in the Host because the Remote channel carries
- * plain request/response (lossless JSON only — `HANDOFF.md` §15 ④): a download
+ * plain request/response (lossless JSON only): a download
  * cannot push progress at the page, so the page asks. `startOcrDownload` returns
  * as soon as the download begins, which is what makes the first poll land while
  * there is still something to watch.
@@ -295,7 +294,7 @@ function statusLine(status: OcrStatusView | undefined): {
  *
  * The sentence about where recognition happens is not decoration: the plan's
  * rule is that image text is recognized locally and the plugin never sends a
- * picture anywhere (`HANDOFF.md` §16 ⑦), and a user who is about to download a
+ * picture anywhere, and a user who is about to download a
  * model is entitled to read that before they press the button.
  */
 export function OcrSection(props: {

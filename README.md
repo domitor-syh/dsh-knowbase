@@ -51,9 +51,9 @@
 - 纯拉丁词只做整词匹配（`port` 不会命中 `ports`）。
 - **资料标题进索引**，库名不进（否则该库每条片段都会命中库名）。
 - 调用方传入范围时，长度均值与 IDF 只统计该范围；未选中的库不影响当前结果分数。最终截取前对所有命中候选进行来源软分组和正文近似重复降权，避免相近文件的多个片段占满默认 6 个位置；仅让分数和覆盖率接近的候选竞争，不保证每个文件都有名额。单一相关文件仍可填满结果。同库同资料的 NFKC/空白等价正文只取一次，不合并不同出处，不改写引用原文。score/coverage 保留原始 BM25 值，返回顺序兼顾多样性，可能不是 score 降序。
-- 本轮借鉴文档分组与 MMR 的相关性/冗余平衡，使用正文词项 Jaccard（不是向量 MMR）；不新增模型下载或外部调用。实现、参考来源、参数、合成质量与延迟对比见 [来源多样性评估](<outputs/检索来源多样性评估.md>)。
-- `pnpm benchmark:retrieval` 运行纯内存合成语料（10 个已选文件 + 1 个范围外文件，26 问、top 3）。O-04 对照由 20/26 到 26/26，MRR@3 / mean Recall@3 由 8/9 到 1，负例准确率由 5/8 到 1；这是小型回归基准，不是生产准确率或规模性能测量。详见 [O-04 验收报告](<outputs/O-04-检索质量验收.md>)；源码仓库保留完整逐例结果与隔离旧实现复现树，安装包不含这些开发产物。
-- 排序与机器无关：`src/core/order.ts` 用 `Intl.Collator('zh-Hans-CN')` 钉死拼音序，判等退码位；CI 有一条「模拟非中文机器」的测试配置守这条。
+- 本轮借鉴文档分组与 MMR 的相关性/冗余平衡，使用正文词项 Jaccard（不是向量 MMR）；不新增模型下载或外部调用。`src/core/select-evidence.ts` 实现来源多样性选择，参数与取舍见源码注释及回归测试。
+- `pnpm benchmark:retrieval` 使用纯内存合成语料（10 个已选文件 + 1 个范围外文件、26 问、top 3），用于回归而非生产准确率声明。当前基线为 26/26、MRR@3 与 mean Recall@3 均为 1；这只是小型固定 fixture，不代表真实用户资料或任意规模的检索表现。
+- 排序与机器无关：`src/core/order.ts` 用 `Intl.Collator('zh-Hans-CN')` 固定拼音序，判等退码位；CI 有一条「模拟非中文机器」的测试配置守这条。
 
 ### 界面语言
 
@@ -201,37 +201,23 @@ dsh plugin --profile <profile> add /绝对路径/domitor-syh-dsh-knowbase-0.1.0.
 
 ```text
 .
-├── .github/workflows/   # CI 流水线
-├── outputs/             # 方案、阶段 0 核查报告、页面功能清单
-├── scripts/             # 构建、产物契约校验、真机探针
+├── .github/workflows/   # CI
+├── locale/              # Plugin Manager translations
+├── scripts/             # Build, verification, docs, and synthetic benchmarks
 ├── src/
-│   ├── client/          # Client 半边（浏览器）
-│   │   ├── knowbase-page.tsx    # 独立页面整页
-│   │   ├── page-style.ts        # 页面样式表 + 明暗两套 token
-│   │   ├── composer-toggle.tsx  # 输入区药丸 + 选库弹层
-│   │   ├── ocr-panel.tsx        # OCR 区块
-│   │   ├── reader-panel.tsx     # 右栏资料阅读器
-│   │   ├── citation-*.tsx       # 来源按钮与浮层
-│   │   ├── contribution.ts      # 手写的 Remote 原型描述符
-│   │   ├── api.ts               # UI 唯一的 Remote 入口
-│   │   ├── icons.tsx / theme.ts / labels.ts / spin.ts
-│   ├── core/            # 与宿主无关的领域逻辑
-│   │   ├── vault.ts / vault-fs.ts   # 文件式库模型
-│   │   ├── service.ts               # 入库、检索、范围解析
-│   │   ├── tokenize.ts / bm25.ts / chunk.ts / order.ts
-│   │   ├── pdf.ts / ocr.ts / ocr-resources.ts
-│   │   ├── session-scope.ts / shell.ts / model.ts
-│   ├── index.ts         # Host 半边入口与接线
-│   ├── pre-step.ts      # agent/pre-step 检索接缝
-│   ├── remote.ts / remote-methods.ts  # 类型化 Remote（清单单一来源）
-│   ├── store.ts         # storageDomain 持久化
-│   ├── commands.ts      # /kb 命令
-│   └── source.ts        # 插件专属消息来源声明
-├── tests/               # 单元测试（当前数量以 pnpm test 输出为准）
-├── cordis.patch.yml     # 作为 bundle 发布时的装配层
-├── dev.patch.yml        # 本地 --patch 开发叠加层
-├── scripts/build.mjs    # 构建入口（tsdown 四 target + 拷贝 OCR 引擎）
-└── HANDOFF.md           # 开发进度与交接报告（权威文档）
+│   ├── client/          # Web UI and localization
+│   ├── core/            # Host-independent domain logic
+│   ├── index.ts         # Host plugin entry
+│   ├── commands.ts      # /kb commands
+│   ├── knowledge-tools.ts
+│   ├── pre-step.ts      # Retrieval before model requests
+│   ├── remote.ts        # Typed Host/Client API
+│   └── store.ts         # Host persistence
+├── tests/               # Unit and integration tests
+├── cordis.patch.yml     # DSH bundle composition
+├── package.json
+├── pnpm-lock.yaml
+└── pnpm-workspace.yaml
 ```
 
 ---
@@ -251,45 +237,9 @@ pnpm build                     # tsdown 四 target + 拷贝 3 个 wasm 与第三
 pnpm verify                    # 产物契约：以宿主方式加载两个产物并检查 require 白名单
 ```
 
-O-13 的 [合成规模与 FTS5 评估](<outputs/O-13-合成规模与FTS5评估.md>) 及后续 [Map 范围统计与候选遍历优化](<outputs/O-13-范围统计与候选遍历优化.md>) 附可复现命令及逐次样本；`pnpm benchmark:compare --output=outputs/自选新文件.json` 对照冻结旧版与当前实现。完整规模测量按需运行，CI 只跑小规模正确性冒烟。当前生产检索保持内存 BM25。
+`pnpm benchmark:scale` 与 `pnpm benchmark:service-scale` 使用合成资料测量扩展成本；`pnpm benchmark:compare` 对照冻结 BM25 与当前实现。它们只用于本地实验，不设生产性能承诺。除非显式传入 `--output=<path>`，生成的 JSON 报告写入系统临时目录，不会落进仓库。`pnpm probe:fts5` 做内存 SQLite 兼容性检查，报告同样默认写入系统临时目录；CI 只运行较小的正确性冒烟测试。
 
-**沙箱 / CI 之外的本地跑测试**建议直接调入口并关掉文件级并行，否则偶发因临时目录 `EPERM` 少收集测试文件：
-
-```bash
-node node_modules/vitest/vitest.mjs run --no-file-parallelism
-```
-
-### 在隔离宿主里验证
-
-**有数据写入的开发探针默认使用隔离 profile。** 用户明确授权后，可以通过当前宿主的官方插件管理器更新 `desktop` 中已安装的插件；这不授权写入/删除真实知识库夹具，不手改 profile 文件，也不使用 CLI 绕过桌面独占限制。独立开发宿主可使用单独的 `DSH_HOME` 与 profile：
-
-```bash
-export DSH_HOME=$PWD/.dshdev
-dsh --profile kbdev --from-default-profile web
-dsh plugin --profile kbdev add /绝对路径/domitor-syh-dsh-knowbase-0.1.0.tgz
-dsh --profile kbdev --no-open --port 3111
-```
-
-`dsh plugin add` 会自动写进该 profile 的 `dsh.profile.bundles`，之后不需要 `--patch`。
-
-**部署后必须核对哈希**：对比本地 `lib/client.js`、`lib/index.js` 与 `<profile>/node_modules/@domitor-syh/dsh-knowbase/lib/` 下的副本。验收物是**安装副本**，不是 profile 的 `package.json`（那只是声明）。
-
-### 真机探针
-
-探针用 Node 自带的 `fetch` + `WebSocket` 直连 CDP，不依赖额外包。它们会真点按钮、真传文件、真发提问：
-
-| 探针 | 覆盖 |
-|---|---|
-| `probe-real-usage.mjs` | **端到端真实使用**：五种格式入库 → 提问 → 核对引用与内容准确性 → 「不该命中的说不认识」 |
-| `probe-files.mjs` | 知识库页面：建库、上传、删除、重扫、文件夹路径 |
-| `probe-multi-select.mjs` | 输入区药丸与选库弹层（含关闭态的首个操作） |
-| `probe-status-badge.mjs` | 五种来源状态徽标（自备夹具 + 自清索引；「未命中」用生僻字构造，保证真的是空集） |
-| `probe-retrieval-test.mjs` | 检索测试面板：范围切换、score 与覆盖率 |
-| `probe-reader.mjs` | 引用 → 右栏阅读器 → 命中段高亮 |
-| `probe-ocr.mjs` | OCR：检测不联网、真下载、取消即删、重扫后可检索 |
-| `probe-citation.mjs` | 来源按钮与浮层 |
-
-`probe-backup.mjs` 与 `probe-right-panel.mjs` **已过期**（它们验证的能力随文件模型移除 / 是一次性可行性 spike），保留仅作历史参考，不要再当门禁跑。
+开发时请使用独立的测试 profile 和合成资料，不要将真实资料、认证 URL、浏览器会话或 profile 文件加入版本控制。安装与运行方式请遵循目标版本 DSH 的官方文档。
 
 ---
 
@@ -310,31 +260,14 @@ Node 版本取 **24**，对齐目标宿主 `runtime.json` 自报的 `node 24.21.
 
 ---
 
-## 文档
+## 开发约定
 
-| 文档 | 说明 |
-|---|---|
-| [HANDOFF.md](HANDOFF.md) | **权威交接文档**：设计决策、逐版本变更、已踩过的坑、部署与验证流程。要改这个项目就先读它 |
-| [outputs/知识库页面功能清单.md](outputs/知识库页面功能清单.md) | 页面逐区块的功能清单、可展示字段、必须保留的探针钩子与文案承诺 |
-| [outputs/阶段0-兼容性核查报告.md](outputs/阶段0-兼容性核查报告.md) | 目标宿主接口的实测事实（与方案文档冲突时以它为准） |
-| [outputs/dsh-knowbase-MVP修订方案-v0.2.md](outputs/dsh-knowbase-MVP修订方案-v0.2.md) | MVP 范围与验收标准（历史方案，部分已被文件模型取代） |
-
----
-
-## 关键约束（改动前请先读）
-
-以下均在目标宿主上实测确证，细节见 [HANDOFF.md](HANDOFF.md) 第 7 节。
-
-- 只通过 dsh 官方 slots / Remote / Agent 接口接入，**不修改宿主核心、不用 DOM 注入绕过接口**。
-- 目标版本**没有** `systemPrompt.refreshContext`，`PromptContext` 也**没有** `required`；上下文注入走 `agent/pre-step` waterfall，把证据消息追加进 `next()` 返回的决策。**`next()` 必须永远 await 并尊重其结果**——覆盖别人的 `reject` 等于悄悄重启一个已被停掉的步骤。
-- Client↔Host 的业务通道是**自己接的类型化 Remote**：官方生成器对独立插件不可用，但产物本质只是 `zod schema + InvocationDescriptor[]`，手写即可（`src/client/contribution.ts`）。不能用装饰器；原型描述符里的 **`version: 1` 必须有**。方法清单的唯一来源是 `src/remote-methods.ts`。
-- 浏览器半边**只能用宿主模块表里已有的包**：非宿主依赖必须内联（`zod`），且不能用自动 JSX 运行时（`jsx: "react"`）。
-- **`inject` 里写不存在的服务名会让插件永久 pending 且零报错。** 只列已在目标宿主上确认存在的服务；可选服务（如 `theme`）必须用 `ctx.inject([...], scope => …)` 动态取。
-- `desktop` profile 被 Electron 应用独占，CLI 无法驱动。
-
----
+- 只通过 DSH 官方插件、Slot、Remote 和 Agent 接口接入，不修改宿主核心，也不注入 DOM 绕过接口。
+- Client 只依赖宿主提供的运行时模块；请先运行 `pnpm typecheck`、`pnpm test`、`pnpm build` 和 `pnpm verify` 再提交改动。
+- 变更宿主集成时，请以插件声明的最低支持 DSH 版本对应的官方 API 文档为准；不要依赖未公开的内部服务。
 
 ## 官方来源
+
 
 - 官方主页：https://www.deepseek.com/harness/
 - 官方仓库：https://github.com/deepseek-ai/deepseek-harness

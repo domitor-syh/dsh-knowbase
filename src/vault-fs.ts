@@ -4,7 +4,7 @@
  * `ctx.fs` cannot be used here: it resolves to the host's sandboxed filesystem,
  * whose `workspace-write` policy allows writes only under the session workspace
  * root and the platform temp areas, so `$DSH_HOME/knowbase` is refused outright
- * with `FS_SANDBOX_DENIED` (measured — see `HANDOFF.md` §15 ②). The host's own
+ * with `FS_SANDBOX_DENIED`. The host's own
  * Node process is not fenced, so this plugin writes its own data directory the
  * same way the host writes `storages/` and `attachments/`: with `node:fs`.
  *

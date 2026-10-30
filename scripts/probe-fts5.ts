@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { Bm25Index } from '../src/core/bm25.ts'
@@ -13,10 +14,9 @@ import { createCitationId } from '../src/core/citation-id.ts'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const args = process.argv.slice(2)
 const checkOnly = args.length === 1 && args[0] === '--check'
-assert.ok(checkOnly || (args.length === 2 && args[0] === '--output'),
-  'Usage: node scripts/probe-fts5.ts --check | --output outputs/o13-fts5-compatibility.json')
-const output = checkOnly ? undefined : path.resolve(root, args[1]!)
-if (output !== undefined) assert.equal(output, path.join(root, 'outputs', 'o13-fts5-compatibility.json'))
+assert.ok(checkOnly || args.length === 0 || (args.length === 2 && args[0] === '--output'),
+  'Usage: node scripts/probe-fts5.ts --check | --output <report.json>')
+const output = checkOnly ? undefined : args[1] ? path.resolve(args[1]) : path.join(tmpdir(), `knowbase-fts5-${randomUUID()}.json`)
 const sources = await Promise.all([
   'scripts/probe-fts5.ts', 'src/core/tokenize.ts', 'src/core/bm25.ts',
   'src/core/service.ts', 'src/core/citation-id.ts',
@@ -128,7 +128,7 @@ check('citation must retain original body rather than normalized indexed body', 
 db.close()
 const report = {
   schemaVersion: 1, kind: 'O13 synthetic in-memory FTS5 compatibility spike', generatedAt: new Date().toISOString(),
-  command: 'node --experimental-strip-types scripts/probe-fts5.ts --output outputs/o13-fts5-compatibility.json',
+  command: 'node --experimental-strip-types scripts/probe-fts5.ts --output <report.json>',
   runtime, sources, corpus: docs.map(([id, body]) => ({ id, body })), queryCases, tokenEvidence, scope, distinct,
   increments: { inserted, replaced, removed, caveat: 'Regular content-bearing FTS5 table only; external-content triggers, crash durability and storage migration are untested.' },
   normalization, citation, assertions, summary: { passed: assertions.filter(item => item.passed).length, total: assertions.length },

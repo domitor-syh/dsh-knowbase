@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { cpus, freemem, platform, release, tmpdir, totalmem } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -113,7 +113,7 @@ function main() {
   const samples = integer('--samples', 30, 200)
   const chars = integer('--chars', 600, 2000)
   const warmup = integer('--warmup', 5, 50)
-  const outputPath = args.get('--output')
+  const outputPath = args.get('--output') ?? join(tmpdir(), `knowbase-scale-${randomUUID()}.json`)
   assert.ok(outputPath, 'Supply --output=<new JSON path>')
   const sources = ['src/core/bm25.ts', 'src/core/tokenize.ts', 'src/core/order.ts', 'scripts/scale-corpus.ts', 'scripts/benchmark-scale.ts']
   const sourceHashes = Object.fromEntries(sources.map(source => [source, createHash('sha256').update(readFileSync(source)).digest('hex')]))

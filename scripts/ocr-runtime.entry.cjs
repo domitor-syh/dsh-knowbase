@@ -6,8 +6,7 @@
  * `ERR_PNPM_IGNORED_BUILDS`, and that decision lives in the *profile's*
  * `pnpm-workspace.yaml`, which a plugin cannot write. Shipping our own copy of
  * the engine removes it from the user's install tree, so there is no install
- * script to argue about and nothing for the user to do (`HANDOFF.md` §16
- * 「首装阻断 Spike」).
+ * script to argue about and nothing for the user to do (`ERR_PNPM_IGNORED_BUILDS`).
  *
  * Deliberately CommonJS and deliberately free of `import`/`export`: a bundler
  * only rewrites the `require` calls of a file it reads as CommonJS.

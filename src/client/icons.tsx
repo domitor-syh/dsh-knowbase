@@ -3,8 +3,8 @@
  *
  * Drawn rather than imported: the host's icon set lives in
  * `@deepseek-ai/dsh-client-ui-primitives`, and the page needs fourteen glyphs —
- * not worth a runtime dependency, and the bundle contract forbids one anyway
- * (see `HANDOFF.md` §5). Paths are the hand-off's, which are Lucide's, drawn at
+ * not worth a runtime dependency, and the bundle contract forbids one anyway.
+ * Paths follow the Lucide icon set, drawn at
  * `stroke-width: 1.5` on a 24-unit grid so they sit at the same weight as the
  * host's own chrome.
  *

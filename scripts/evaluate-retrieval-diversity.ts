@@ -1,5 +1,8 @@
 /** Reproducible synthetic quality/latency comparison; no user vault or model. */
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
 import { Bm25Index } from '../src/core/bm25.ts'
@@ -84,5 +87,9 @@ const report = { generatedAt: new Date().toISOString(), node: process.version,
   method: 'Same BM25 index and scope; baseline exact per-source dedup + top6 vs relevance-constrained source/body diversification. Synthetic fixtures, no claim about user corpus or semantic retrieval.',
   parameters: { relativeScoreFloor: 0.65, relativeCoverageFloor: 0.8, sourcePenalty: 0.5, bodyRedundancyPenalty: 0.25 },
   quality, performance: { entries: rows.length, samples: 30, warmups: 3, latency, crowdedSource: { entries: 201, latency: crowdedLatency } } }
-await writeFile(new URL('../outputs/retrieval-diversity-evaluation.json', import.meta.url), JSON.stringify(report, null, 2) + '\n')
+const args = process.argv.slice(2)
+assert(args.length === 0 || (args.length === 2 && args[0] === '--output'), 'Usage: --output <report.json>')
+const output = args[1] ? path.resolve(args[1]) : path.join(tmpdir(), `knowbase-diversity-${randomUUID()}.json`)
+await writeFile(output, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' })
+console.info(`Diversity report: ${output}`)
 console.log(JSON.stringify(report, null, 2))

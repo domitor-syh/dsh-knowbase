@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { cpus, freemem, platform, release, tmpdir, totalmem } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -342,7 +342,7 @@ function main(): void {
   const samples = integer('--samples', 30, 200)
   const warmup = integer('--warmup', 5, 50)
   const chars = integer('--chars', 600, 2000)
-  const outputPath = args.get('--output')
+  const outputPath = args.get('--output') ?? join(tmpdir(), `knowbase-comparison-${randomUUID()}.json`)
   assert.ok(outputPath, 'Supply --output=<new JSON path>')
   assert.equal(existsSync(resolve(outputPath)), false, 'Output exists; preserve prior measurements and use a new path')
   const sources = [

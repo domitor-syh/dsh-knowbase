@@ -4,7 +4,7 @@
  * ## Why a worker, like the PDF extractor
  *
  * Same reason as `./pdf.ts`: recognising a photograph is hundreds of
- * milliseconds of WASM, and the plan's rule (方案 §6) is that parsing and
+ * milliseconds of WASM, and the implementation rule is that parsing and
  * inference happen in a background worker while the host's main thread stays
  * responsive. Unlike pdfjs, tesseract.js already owns a worker of its own — so
  * the worker here is a thread that starts that worker, which is what keeps a
@@ -19,12 +19,11 @@
  * loading WASM at all, and without ever falling back to a download. `langPath`
  * is pointed at a directory that deliberately does not exist, so a missing pack
  * inside the worker fails as a read error instead of reaching for a CDN: the
- * plugin never fetches anything the user did not ask for (`HANDOFF.md` §15 ⑤).
+ * plugin never fetches anything the user did not ask for.
  *
  * ## Why the output is normalized here
  *
- * Tesseract inserts a space between adjacent Chinese characters (measured:
- * `HANDOFF.md` §16 ③). Those spaces would survive into the chunker and split a
+ * Tesseract inserts a space between adjacent Chinese characters (measured in the OCR integration tests). Those spaces would survive into the chunker and split a
  * sentence into fragments that retrieval can never match, so the text is
  * normalized in the one place every OCR result passes through.
  *
@@ -35,7 +34,7 @@
  * undecided build script — `ERR_PNPM_IGNORED_BUILDS` — while the setting it
  * wants belongs to the profile's `pnpm-workspace.yaml`, which a plugin cannot
  * write. A fresh `dsh plugin add` therefore failed before this plugin was ever
- * loaded (`HANDOFF.md` §16「首装阻断 Spike」). Both halves of the engine are
+ * loaded (initial install blocker). Both halves of the engine are
  * built into `lib/` instead — see {@link ocrEngine}.
  *
  * @module @domitor-syh/dsh-knowbase/core/ocr
@@ -81,7 +80,7 @@ export interface OcrEngine {
 
 /** Options for {@link extractImageText}. */
 export interface OcrExtractOptions {
-  /** Directory holding `<lang>.traineddata`; absolute — see `HANDOFF.md` §16 坑 63. */
+  /** Directory holding `<lang>.traineddata`; absolute path used by the OCR worker. */
   readonly cacheDir: string
   /** Languages to load. Defaults to the two packs the plugin manages. */
   readonly langs?: readonly string[]
@@ -101,7 +100,7 @@ const DEFAULT_TIMEOUT_MS = 60_000
  * component, so asking for the default `oem=3` would make tesseract print
  * `Failed loading language` at the model layer and fall back. It also prints a
  * harmless `Error opening data file` on stderr without a legacy component —
- * expected, not a failure (`HANDOFF.md` §16 ⑥).
+ * expected, not a failure (OCR worker configuration).
  */
 const OCR_OEM = 1
 
@@ -113,7 +112,7 @@ const OCR_OEM = 1
  * whose Chinese paragraph is interleaved with the matching English, PSM 6 split
  * the middle Chinese line into noise while the English came out intact, and the
  * engine's no-argument run was byte-identical to an explicit PSM 6
- * (`HANDOFF.md` §16 v46). AUTO (PSM 3) is tesseract's own general-purpose
+ * (OCR worker configuration). AUTO (PSM 3) is tesseract's own general-purpose
  * default and read that same screenshot correctly, so it is set rather than
  * left to the wrapper.
  */

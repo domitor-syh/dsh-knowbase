@@ -1,3 +1,9 @@
+# Generated benchmark reports and private development notes
+outputs/
+HANDOFF.md
+dev.patch.yml
+.cleanup-*.mjs
+
 # 依赖与构建产物
 node_modules/
 dist/

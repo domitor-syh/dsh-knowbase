@@ -46,7 +46,7 @@ const SERVICE_KEY = 'knowbase'
 /**
  * Largest file the browser may push through the Remote channel.
  *
- * The channel carries lossless JSON only (see `HANDOFF.md` §15 ④), so a file
+ * The channel carries lossless JSON only, so a file
  * travels base64-encoded inside a string — a third larger than the file, held
  * in memory on both sides at once. The cap is where that stops being reasonable
  * for a browser tab; past it the user is told to drop the file into the base's
@@ -513,8 +513,7 @@ export class KnowbaseRemote extends TypertRemoteService {
    *
    * This is the 「检测」 half, and it is a separate method on purpose: the button
    * that asks "do I have what I need?" must not be able to start a download, so
-   * the check is a method that cannot do anything else (plan §11, `HANDOFF.md`
-   * §16 ⑦).
+   * the check is a method that cannot do anything else.
    */
   async getOcrStatus(): Promise<OcrStatusView> {
     return ocrStatusView(await deps().ocr.status())

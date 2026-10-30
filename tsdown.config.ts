@@ -30,7 +30,7 @@ import { defineConfig } from 'tsdown'
  * which no plugin can write: a fresh `dsh plugin add` dies with
  * `ERR_PNPM_IGNORED_BUILDS` before the plugin is ever loaded. Inlining the
  * engine removes it from the user's install tree entirely, which is what makes
- * a first install work with no manual step (`HANDOFF.md` §16「首装阻断 Spike」).
+ * a first install work with no manual step (the OCR install contract).
  *
  * What the bundler cannot carry is the WASM: the three `tesseract-core` loaders
  * are inlined, but each builds its `.wasm` file name at runtime and reads it
