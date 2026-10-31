@@ -181,6 +181,7 @@ for (const name of CORE_WASM) {
 
 const licence = 'THIRD-PARTY-LICENSE-tesseract.txt'
 check(`lib/${licence} ships with the inlined engine`, sizeOf(licence) > 0, 'missing or empty')
+check('lib/THIRD-PARTY-NOTICES.txt ships with bundled dependencies', sizeOf('THIRD-PARTY-NOTICES.txt') > 0, 'missing or empty')
 
 // The engine must be *inlined*. A surviving `require('tesseract.js')` would mean
 // the profile still has to resolve it out of node_modules, which is the install

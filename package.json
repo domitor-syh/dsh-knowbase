@@ -114,6 +114,9 @@
     "lib/tesseract-core-simd.wasm",
     "lib/tesseract-core-relaxedsimd.wasm",
     "lib/THIRD-PARTY-LICENSE-tesseract.txt",
+    "lib/THIRD-PARTY-NOTICES.txt",
+    "docs/header.png",
+    "README.en.md",
     "cordis.patch.yml",
     "locale/*.json"
   ],

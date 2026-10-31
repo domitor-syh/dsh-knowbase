@@ -24,6 +24,7 @@ import { copyFileSync, rmSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { stageThirdPartyLicenses } from './stage-third-party-licenses.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const lib = resolve(root, 'lib')
@@ -59,6 +60,7 @@ for (const name of CORE_WASM) {
 const licence = resolve(lib, 'THIRD-PARTY-LICENSE-tesseract.txt')
 copyFileSync(require.resolve('tesseract.js/LICENSE.md'), licence)
 staged.push(licence)
+staged.push(stageThirdPartyLicenses(root, lib))
 
 for (const file of staged) {
   const bytes = statSync(file).size
