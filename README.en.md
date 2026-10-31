@@ -1,14 +1,10 @@
-<div align="center">
+<img src="./docs/header.png" alt="dsh-knowbase project banner" width="100%">
 
 # dsh-knowbase · Local Knowledge Base Plugin
-
-<img src="./docs/header.png" alt="dsh-knowbase project banner" width="100%">
 
 [中文](./README.md) · English
 
 [![npm](https://img.shields.io/npm/v/@domitor-syh/dsh-knowbase)](https://www.npmjs.com/package/@domitor-syh/dsh-knowbase) [![MIT License](https://img.shields.io/badge/license-MIT-green)](./LICENSE) [![Build](https://img.shields.io/github/actions/workflow/status/domitor-syh/dsh-knowbase/ci.yml?branch=main&label=build)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![CI](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.5-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.5)
-
-</div>
 
 A local knowledge base for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). Add your documents, retrieve relevant passages during conversations, and follow citations back to their sources.
 

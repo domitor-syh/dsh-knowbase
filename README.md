@@ -1,14 +1,10 @@
-<div align="center">
+<img src="./docs/header.png" alt="dsh-knowbase 项目头图" width="100%">
 
 # dsh-knowbase · 本地知识库插件
-
-<img src="./docs/header.png" alt="dsh-knowbase 项目头图" width="100%">
 
 中文 · [English](./README.en.md)
 
 [![npm](https://img.shields.io/npm/v/@domitor-syh/dsh-knowbase)](https://www.npmjs.com/package/@domitor-syh/dsh-knowbase) [![MIT License](https://img.shields.io/badge/license-MIT-green)](./LICENSE) [![Build](https://img.shields.io/github/actions/workflow/status/domitor-syh/dsh-knowbase/ci.yml?branch=main&label=build)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![CI](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.5-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.5)
-
-</div>
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）提供本地知识库：把文档加入知识库，在对话中自动检索相关内容，并通过引用查看资料出处。
 
