@@ -6,6 +6,8 @@
 
 [中文](./README.md) · English
 
+[![npm](https://img.shields.io/npm/v/@domitor-syh/dsh-knowbase)](https://www.npmjs.com/package/@domitor-syh/dsh-knowbase) [![MIT License](https://img.shields.io/badge/license-MIT-green)](./LICENSE) [![Build](https://img.shields.io/github/actions/workflow/status/domitor-syh/dsh-knowbase/ci.yml?branch=main&label=build)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![CI](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.5-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.5)
+
 </div>
 
 A local knowledge base for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). Add your documents, retrieve relevant passages during conversations, and follow citations back to their sources.
@@ -25,29 +27,19 @@ A local knowledge base for [DeepSeek Harness](https://github.com/deepseek-ai/dee
 
 Currently aligned with **DSH 0.2.1-rc.5**, with a declared compatibility range of `>=0.2.0-rc.2 <0.3.0-0`.
 
-Build and package the plugin from the repository root using Node.js 22.19.0 or later:
+**Web** (`dsh web`, install from npm):
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm build
-pnpm pack
+dsh plugin --profile web add @domitor-syh/dsh-knowbase
 ```
 
-Install the generated `domitor-syh-dsh-knowbase-0.1.0.tgz` into your target profile. Replace the path below with the package's absolute path.
+**Desktop**: Enter this package name in the plugin manager's installation dialog:
 
-**Web** (`dsh web`):
-
-```sh
-dsh plugin --profile web add /absolute/path/domitor-syh-dsh-knowbase-0.1.0.tgz
+```text
+@domitor-syh/dsh-knowbase
 ```
 
-**Desktop**:
-
-```sh
-dsh plugin --profile desktop add /absolute/path/domitor-syh-dsh-knowbase-0.1.0.tgz
-```
-
-After installation, restart `dsh web` and refresh the page, or restart the desktop app. When running DSH from source, prefix the installation command with `pnpm`.
+After installation, restart `dsh web` and refresh the page, or restart the desktop app. When running DSH from source, prefix the Web installation command with `pnpm`.
 
 ## Usage
 
@@ -85,10 +77,10 @@ Ask the Agent to prepare content as a text document proposal, then preview, appr
 | `/kb rescan [--force] [base]` | Rescan documents; `--force` reparses every file |
 | `/kb root` | Show the document root folder |
 
+The retrieval algorithm is being continuously improved…
+
 ## License and Acknowledgments
 
 This project is licensed under [MIT](./LICENSE).
 
 Image OCR is powered by [Tesseract.js](https://github.com/naptha/tesseract.js). Thanks to the project and its contributors. Tesseract.js is licensed under [Apache-2.0](https://github.com/naptha/tesseract.js/blob/v7.0.0/LICENSE.md), and its license text is included in the distributed plugin package.
-
-The retrieval algorithm is being continuously improved…

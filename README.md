@@ -6,6 +6,8 @@
 
 中文 · [English](./README.en.md)
 
+[![npm](https://img.shields.io/npm/v/@domitor-syh/dsh-knowbase)](https://www.npmjs.com/package/@domitor-syh/dsh-knowbase) [![MIT License](https://img.shields.io/badge/license-MIT-green)](./LICENSE) [![Build](https://img.shields.io/github/actions/workflow/status/domitor-syh/dsh-knowbase/ci.yml?branch=main&label=build)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![CI](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.5-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.5)
+
 </div>
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）提供本地知识库：把文档加入知识库，在对话中自动检索相关内容，并通过引用查看资料出处。
@@ -25,29 +27,19 @@
 
 当前适配 **DSH 0.2.1-rc.5**，声明的兼容范围为 `>=0.2.0-rc.2 <0.3.0-0`。
 
-在仓库根目录构建并打包（Node.js 22.19.0 或更高版本）：
+**Web 端**（`dsh web`，从 npm 安装）：
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm build
-pnpm pack
+dsh plugin --profile web add @domitor-syh/dsh-knowbase
 ```
 
-将生成的 `domitor-syh-dsh-knowbase-0.1.0.tgz` 安装到对应的 profile。请将下列路径替换为包文件的绝对路径。
+**桌面端**：在插件管理的安装入口填写包名：
 
-**Web 端**（`dsh web`）：
-
-```sh
-dsh plugin --profile web add /absolute/path/domitor-syh-dsh-knowbase-0.1.0.tgz
+```text
+@domitor-syh/dsh-knowbase
 ```
 
-**桌面端**：
-
-```sh
-dsh plugin --profile desktop add /absolute/path/domitor-syh-dsh-knowbase-0.1.0.tgz
-```
-
-安装后，Web 端重启 `dsh web` 并刷新页面；桌面端重启应用。从 DSH 源码运行时，在安装命令前加 `pnpm`。
+安装后，Web 端重启 `dsh web` 并刷新页面；桌面端重启应用。从 DSH 源码运行时，在 Web 安装命令前加 `pnpm`。
 
 ## 使用
 
@@ -85,10 +77,10 @@ dsh plugin --profile desktop add /absolute/path/domitor-syh-dsh-knowbase-0.1.0.t
 | `/kb rescan [--force] [库名]` | 重扫资料；`--force` 强制重新解析 |
 | `/kb root` | 查看资料根目录 |
 
+检索算法正在持续优化中……
+
 ## 许可证与致谢
 
 本项目采用 [MIT](./LICENSE) 许可证。
 
 图片文字识别基于 [Tesseract.js](https://github.com/naptha/tesseract.js)，感谢该项目及其贡献者。Tesseract.js 采用 [Apache-2.0](https://github.com/naptha/tesseract.js/blob/v7.0.0/LICENSE.md) 许可证，其许可文本随插件发布包一同分发。
-
-检索算法正在持续优化中……
