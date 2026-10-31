@@ -85,8 +85,10 @@ dsh plugin --profile desktop add /absolute/path/domitor-syh-dsh-knowbase-0.1.0.t
 | `/kb rescan [--force] [库名]` | 重扫资料；`--force` 强制重新解析 |
 | `/kb root` | 查看资料根目录 |
 
-## 许可证
+## 许可证与致谢
 
-[MIT](./LICENSE)
+本项目采用 [MIT](./LICENSE) 许可证。
+
+图片文字识别基于 [Tesseract.js](https://github.com/naptha/tesseract.js)，感谢该项目及其贡献者。Tesseract.js 采用 [Apache-2.0](https://github.com/naptha/tesseract.js/blob/v7.0.0/LICENSE.md) 许可证，其许可文本随插件发布包一同分发。
 
 检索算法正在持续优化中……

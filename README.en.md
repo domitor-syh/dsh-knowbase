@@ -85,8 +85,10 @@ Ask the Agent to prepare content as a text document proposal, then preview, appr
 | `/kb rescan [--force] [base]` | Rescan documents; `--force` reparses every file |
 | `/kb root` | Show the document root folder |
 
-## License
+## License and Acknowledgments
 
-[MIT](./LICENSE)
+This project is licensed under [MIT](./LICENSE).
+
+Image OCR is powered by [Tesseract.js](https://github.com/naptha/tesseract.js). Thanks to the project and its contributors. Tesseract.js is licensed under [Apache-2.0](https://github.com/naptha/tesseract.js/blob/v7.0.0/LICENSE.md), and its license text is included in the distributed plugin package.
 
 The retrieval algorithm is being continuously improved…
