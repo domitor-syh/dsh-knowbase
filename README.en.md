@@ -4,7 +4,9 @@
 
 [中文](./README.md) · English
 
-[![npm](https://img.shields.io/npm/v/@domitor-syh/dsh-knowbase)](https://www.npmjs.com/package/@domitor-syh/dsh-knowbase) [![MIT License](https://img.shields.io/badge/license-MIT-green)](./LICENSE) [![Build](https://img.shields.io/github/actions/workflow/status/domitor-syh/dsh-knowbase/ci.yml?branch=main&label=build)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![CI](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![DSH](https://img.shields.io/badge/DSH-0.2.1--rc.5-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.1-rc.5)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com) [![listed plugins](https://img.shields.io/endpoint?url=https://awesome-dsh-plugin.com/count.json)](https://awesome-dsh-plugin.com)
+
+[![npm](https://img.shields.io/npm/v/@domitor-syh/dsh-knowbase)](https://www.npmjs.com/package/@domitor-syh/dsh-knowbase) [![MIT License](https://img.shields.io/badge/license-MIT-green)](./LICENSE) [![Build](https://img.shields.io/github/actions/workflow/status/domitor-syh/dsh-knowbase/ci.yml?branch=main&label=build)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![CI](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/domitor-syh/dsh-knowbase/actions/workflows/ci.yml) [![DSH](https://img.shields.io/badge/DSH-0.2.2--rc.1-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.1)
 
 A local knowledge base for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). Add your documents, retrieve relevant passages during conversations, and follow citations back to their sources.
 
@@ -21,7 +23,7 @@ A local knowledge base for [DeepSeek Harness](https://github.com/deepseek-ai/dee
 
 ## Installation
 
-Currently aligned with **DSH 0.2.1-rc.5**, with a declared compatibility range of `>=0.2.0-rc.2 <0.3.0-0`.
+Latest compatibility target: **DSH 0.2.2-rc.1**, with a declared compatibility range of `>=0.2.0-rc.2 <0.3.0-0`.
 
 **Web** (`dsh web`, install from npm):
 
