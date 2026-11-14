@@ -2,6 +2,7 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { ToolRuntime, assertObjectJsonSchema, assertSupportedJsonSchema, validateJsonSchemaValue, type ToolExecutionInput } from '@deepseek-ai/dsh-tools'
+import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline'
 import { describe, expect, it, vi } from 'vitest'
 import { KnowbaseService, MemoryStore } from '../src/core/service.ts'
 import { SessionSelectionRegistry } from '../src/core/session-scope.ts'
@@ -13,7 +14,7 @@ import { createMemoryVaultFs } from '../src/vault-fs.ts'
 async function fixture() {
   const root = new Context()
   new SystemPrompt(root, {})
-  new ToolRuntime(root, {})
+  new ToolRuntime(root)
   const vaultRoot = path.resolve('knowledge-registry-fixture')
   const service = new KnowbaseService(new MemoryStore(), createMemoryVaultFs(vaultRoot), vaultRoot)
   await service.initialize()
@@ -34,15 +35,21 @@ async function fixture() {
   })
   await owner.await()
   const tools = root.tools
+  // 0.2.2-rc.3 moved batch scheduling into the executor, so the registry no longer
+  // offers a single-call `execute`. Drive the shared pipeline directly: it is the
+  // same prepare, dispatch, and settlement path every executor schedules with.
+  const pipeline = new ToolExecutionPipeline(root)
   let calls = 0
-  async function execute(name: string, args: unknown, agentId: string | undefined = 'session-a', signal = new AbortController().signal) {
-    return tools.execute({
+  async function execute(name: string, args: unknown, agentId: string | null = 'session-a', signal = new AbortController().signal) {
+    const prepared = await pipeline.prepare({
       callId: `registry-call-${++calls}`,
       name,
       arguments: args,
       signal,
-      ...(agentId === undefined ? {} : { agent: { id: agentId } }),
+      ...(agentId === null ? {} : { agent: { id: agentId } }),
     } as ToolExecutionInput)
+    if (prepared.kind !== 'dispatch') return pipeline.complete(prepared.exec, prepared)
+    return pipeline.complete(prepared.exec, await pipeline.dispatch(prepared.exec))
   }
   return { root, owner, tools, service, selection, base, deps, execute }
 }
@@ -120,7 +127,7 @@ describe('knowledge tools with the real Host tool registry', () => {
   it('fails closed without an agent, rejects extra arguments and reflects changed selection', async () => {
     const f = await fixture()
     try {
-      const noAgent = await f.tools.execute({ callId: 'no-agent', name: 'kb_list', arguments: {}, signal: new AbortController().signal } as ToolExecutionInput)
+      const noAgent = await f.execute('kb_list', {}, null)
       expect(noAgent.isError).toBe(false)
       if (!noAgent.isError) expect(noAgent.value).toMatchObject({ status: 'no_agent' })
       const invalid = await f.execute('kb_list', { agentId: 'session-a' })

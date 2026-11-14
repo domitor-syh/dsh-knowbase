@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { createPortal } from 'react-dom'
 import type { ProposalView } from '../remote.ts'
 import { knowbaseApi } from './api.ts'
 import { usePalette } from './theme.ts'
@@ -79,20 +80,26 @@ export function ProposalInbox({ sessionId }: Props): React.ReactElement | null {
       >
         <span aria-hidden="true">✎</span>{tx('待确认提案', 'Pending proposals')}{proposals.length > 0 ? ` · ${proposals.length}` : ''}
       </summary>
-      <div
-        role="dialog"
-        aria-label={tx('知识库写入提案', 'Knowledge base write proposals')}
-        style={{
-          position: 'fixed', left: 12, bottom: 52, zIndex: 90, width: 360, maxWidth: 'calc(100vw - 24px)',
-          boxSizing: 'border-box', border, borderRadius: 12, padding: 12,
-          background: palette.panel, color: palette.text, boxShadow: palette.shadow,
-        }}
-      >
-        {proposals.map(proposal => (
-          <ProposalCard key={proposal.id} proposal={proposal} busy={busy === proposal.id} onAction={action => void act(proposal, action)} palette={palette} />
-        ))}
-        {error !== '' && <p role="alert" style={{ color: palette.accent, fontSize: 12, margin: '8px 0 0' }}>{error === '提案操作失败。' ? tx('提案操作失败。', 'The proposal action failed.') : localizeError(error)}</p>}
-      </div>
+      {open &&
+        // The docked composer clips and transforms its own subtree, so the panel
+        // portals to the document body and anchors to the viewport instead.
+        createPortal(
+          <div
+            role="dialog"
+            aria-label={tx('知识库写入提案', 'Knowledge base write proposals')}
+            style={{
+              position: 'fixed', left: 12, bottom: 52, zIndex: 90, width: 360, maxWidth: 'calc(100vw - 24px)',
+              boxSizing: 'border-box', border, borderRadius: 12, padding: 12,
+              background: palette.panel, color: palette.text, boxShadow: palette.shadow,
+            }}
+          >
+            {proposals.map(proposal => (
+              <ProposalCard key={proposal.id} proposal={proposal} busy={busy === proposal.id} onAction={action => void act(proposal, action)} palette={palette} />
+            ))}
+            {error !== '' && <p role="alert" style={{ color: palette.accent, fontSize: 12, margin: '8px 0 0' }}>{error === '提案操作失败。' ? tx('提案操作失败。', 'The proposal action failed.') : localizeError(error)}</p>}
+          </div>,
+          document.body,
+        )}
     </details>
   )
 }
